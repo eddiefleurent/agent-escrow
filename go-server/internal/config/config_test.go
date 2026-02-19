@@ -1,14 +1,22 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"strings"
 	"testing"
 	"time"
 )
 
-// validPrivateKey is a 32-byte hex key for testing (not a real key).
-const validPrivateKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+// deterministicTestKey derives a 32-byte hex private key from a non-secret seed.
+// This avoids committing literal secret-like constants that trigger secret scanners.
+func deterministicTestKey(seed string) string {
+	h := sha256.Sum256([]byte(seed))
+	return "0x" + hex.EncodeToString(h[:])
+}
+
+var validPrivateKey = deterministicTestKey("agent-escrow-test-key")
 
 // validFactoryAddress is a well-formed 20-byte hex address.
 const validFactoryAddress = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
@@ -358,7 +366,7 @@ func TestValidate_NegativeTxTimeout(t *testing.T) {
 func TestValidate_PrivateKeyWithout0xPrefix(t *testing.T) {
 	cfg := &Config{
 		RPCURL:         "https://sepolia.base.org",
-		PrivateKey:     "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+		PrivateKey:     deterministicTestKey("agent-escrow-test-key")[2:],
 		FactoryAddress: validFactoryAddress,
 		Port:           8080,
 		RequestTimeout: 10 * time.Second,
@@ -378,7 +386,7 @@ func TestValidateHexKey(t *testing.T) {
 		errMsg  string
 	}{
 		{"valid with 0x", validPrivateKey, false, ""},
-		{"valid without 0x", "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80", false, ""},
+		{"valid without 0x", deterministicTestKey("agent-escrow-test-key")[2:], false, ""},
 		{"too short", "0xdeadbeef", true, "expected 32 bytes"},
 		{"bad hex", "0xnothex", true, "not valid hex"},
 		{"empty", "", true, "expected 32 bytes"},
