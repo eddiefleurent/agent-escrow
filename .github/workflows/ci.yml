@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  solidity:
+    name: Solidity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1.7
+
+      - name: Build
+        run: forge build
+
+      - name: Test
+        run: forge test -vv
+
+      - name: Invariant Test
+        run: forge test --match-contract TaskEscrowInvariantsTest -vv
+
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    needs: solidity
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache-dependency-path: go-server/go.sum
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1.7
+
+      - name: Build Contracts
+        run: forge build
+
+      - name: Copy ABIs
+        run: make go-abi
+
+      - name: Go Test
+        working-directory: go-server
+        run: go test ./...
+
+      - name: Go Build
+        working-directory: go-server
+        run: go build -o bin/server ./cmd/server/

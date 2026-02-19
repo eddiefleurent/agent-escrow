@@ -1,0 +1,14 @@
+cache/
+out/
+broadcast/
+go-server/bin/
+node_modules/
+
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+.env
+*.env
+!.env.example

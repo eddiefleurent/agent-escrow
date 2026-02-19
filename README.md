@@ -1,4 +1,4 @@
-# AI Delegation Marketplace
+# Agent Escrow
 
 A reference implementation of [**"Intelligent AI Delegation"**](https://arxiv.org/abs/2602.11865) (Tomašev, Franklin, Osindero -- Google DeepMind, 2026), a framework for task decomposition, delegation, verification, and settlement in open agentic economies.
 
