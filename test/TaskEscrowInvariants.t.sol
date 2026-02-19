@@ -123,35 +123,35 @@ contract TaskEscrowInvariantsTest is StdInvariant, Test {
 
         uint256 statusBefore = uint256(st);
 
-        vm.expectRevert();
+        vm.expectRevert(TaskEscrow.InvalidState.selector);
         vm.prank(buyer);
         escrow.approveByBuyer();
 
-        vm.expectRevert();
+        vm.expectRevert(TaskEscrow.InvalidState.selector);
         vm.prank(verifier);
         escrow.approveByVerifier();
 
-        vm.expectRevert();
+        vm.expectRevert(TaskEscrow.InvalidState.selector);
         vm.prank(verifier);
         escrow.rejectByVerifier("ipfs://reject");
 
-        vm.expectRevert();
+        vm.expectRevert(TaskEscrow.InvalidState.selector);
         vm.prank(buyer);
         escrow.dispute("ipfs://reason");
 
-        vm.expectRevert();
+        vm.expectRevert(TaskEscrow.InvalidState.selector);
         vm.prank(worker);
         escrow.escalateSilence("ipfs://silence");
 
-        vm.expectRevert();
+        vm.expectRevert(TaskEscrow.InvalidState.selector);
         vm.prank(arbitrator);
         escrow.resolveDispute(5000, "ipfs://resolution");
 
-        vm.expectRevert();
+        vm.expectRevert(TaskEscrow.InvalidState.selector);
         vm.prank(buyer);
         escrow.claimTimeoutRefund();
 
-        vm.expectRevert();
+        vm.expectRevert(TaskEscrow.InvalidState.selector);
         vm.prank(buyer);
         escrow.claimArbitratorTimeout();
 

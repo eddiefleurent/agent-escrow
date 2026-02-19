@@ -16,7 +16,10 @@ func (d *DB) CreateTask(title, description, specHash string) (*Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("insert task: %w", err)
 	}
-	id, _ := res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("last insert id: %w", err)
+	}
 	return d.GetTask(id)
 }
 
@@ -49,7 +52,10 @@ func (d *DB) CreateEscrow(e *Escrow) (*Escrow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("insert escrow: %w", err)
 	}
-	id, _ := res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("last insert id: %w", err)
+	}
 	return d.GetEscrow(id)
 }
 
@@ -174,6 +180,38 @@ func (d *DB) ListEscrows(role, address, status string) ([]*Escrow, error) {
 	return escrows, nil
 }
 
+func (d *DB) ListEscrowsByChainID(chainID int64) ([]*Escrow, error) {
+	query := `SELECT id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, created_at, updated_at FROM escrows WHERE chain_id = ? ORDER BY id DESC`
+
+	rows, err := d.db.Query(query, chainID)
+	if err != nil {
+		return nil, fmt.Errorf("list escrows by chain id: %w", err)
+	}
+	defer rows.Close()
+
+	var escrows []*Escrow
+	for rows.Next() {
+		e := &Escrow{}
+		var createdAt, updatedAt string
+		if err := rows.Scan(&e.ID, &e.TaskID, &e.ChainID, &e.FactoryAddress, &e.EscrowAddress, &e.EscrowID,
+			&e.Buyer, &e.Worker, &e.Verifier, &e.Arbitrator, &e.Amount, &e.Status,
+			&e.SubmissionDeadline, &e.ReviewPeriodSeconds, &e.DisputePeriodSeconds, &e.ArbitratorTimeoutSeconds,
+			&createdAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scan escrow: %w", err)
+		}
+		e.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at in ListEscrowsByChainID: %w", err)
+		}
+		e.UpdatedAt, err = time.Parse("2006-01-02 15:04:05", updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse updated_at in ListEscrowsByChainID: %w", err)
+		}
+		escrows = append(escrows, e)
+	}
+	return escrows, nil
+}
+
 // Submission queries
 
 func (d *DB) CreateSubmission(escrowID int64, submissionHash, submissionURI string) (*Submission, error) {
@@ -184,7 +222,10 @@ func (d *DB) CreateSubmission(escrowID int64, submissionHash, submissionURI stri
 	if err != nil {
 		return nil, fmt.Errorf("insert submission: %w", err)
 	}
-	id, _ := res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("last insert id: %w", err)
+	}
 	s := &Submission{}
 	var submittedAt string
 	err = d.db.QueryRow(
@@ -235,7 +276,10 @@ func (d *DB) CreateDispute(escrowID int64, raisedBy, reasonURI string) (*Dispute
 	if err != nil {
 		return nil, fmt.Errorf("insert dispute: %w", err)
 	}
-	id, _ := res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("last insert id: %w", err)
+	}
 	return d.getDispute(id)
 }
 
@@ -245,6 +289,10 @@ func (d *DB) UpdateDispute(id int64, resolutionURI string, workerAwardBps int) e
 		resolutionURI, workerAwardBps, id,
 	)
 	return err
+}
+
+func (d *DB) GetDispute(id int64) (*Dispute, error) {
+	return d.getDispute(id)
 }
 
 func (d *DB) getDispute(id int64) (*Dispute, error) {

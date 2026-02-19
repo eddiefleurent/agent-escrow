@@ -49,7 +49,7 @@ The paper defines five framework pillars, nine technical protocols, ethical cons
 |---|---|
 | Makefile (build, test, deploy, go-abi, go-build, go-test, test-all) | Complete |
 | Deploy script (`DeployFactory.s.sol`) | Complete |
-| CI workflow (`.github/workflows/ci.yml`) | Complete |
+| CI workflow (`.github/workflows/ci.yml`)  | Complete |
 | LICENSE (MIT) | Complete |
 | Documentation suite | Complete |
 
@@ -76,8 +76,8 @@ Single Go binary: MCP server + HTTP JSON API + event indexer. Eight MCP tools, n
 3. Chain health check with RPC connectivity verification -- complete (returns block number + chain ID, 503 on failure)
 4. Structured logging with request context -- complete (`log/slog` with JSON handler)
 5. Input validation and error propagation -- complete (ParseUint/SetString checks, time.Parse propagation, nil guards, bounds checks)
-6. Deploy to Base Sepolia -- record factory address, verify on explorer
-7. Reference agent demo -- minimal end-to-end flow showing an AI agent completing a task through escrow via MCP
+6. Deploy to Base Sepolia -- partially complete (deployment guide in [`DEPLOY_PHASE3.md`](DEPLOY_PHASE3.md); actual deployment pending)
+7. Reference agent demo -- partially complete (demo walkthrough documented in [`DEPLOY_PHASE3.md`](DEPLOY_PHASE3.md) Part 2; live demo pending)
 
 #### Remaining Hardening (Not Yet Started)
 

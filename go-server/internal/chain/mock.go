@@ -93,7 +93,10 @@ func (m *MockClient) BlockNumber(ctx context.Context) (uint64, error) {
 	return m.BlockNum, nil
 }
 
-func (m *MockClient) FilterLogs(_ context.Context, _ []common.Address, _ [][]common.Hash, _, _ uint64) ([]types.Log, error) {
+func (m *MockClient) FilterLogs(ctx context.Context, _ []common.Address, _ [][]common.Hash, _, _ uint64) ([]types.Log, error) {
+	if err := m.applyDelay(ctx); err != nil {
+		return nil, err
+	}
 	if m.LogsErr != nil {
 		return nil, m.LogsErr
 	}

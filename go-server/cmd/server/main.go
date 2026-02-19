@@ -29,7 +29,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Log validation warnings (errors already rejected by Load)
+	// Load() already runs Validate() and rejects fatal errors. This second call
+	// is intentional: it surfaces non-fatal warnings (e.g. offline mode) via slog.
 	if result := cfg.Validate(); len(result.Warnings) > 0 {
 		for _, w := range result.Warnings {
 			slog.Warn("config", "warning", w)

@@ -165,7 +165,10 @@ func TestCreateEscrow_ChainError(t *testing.T) {
 
 	body := `{
 		"title": "Test", "description": "x",
-		"buyer": "0x01", "worker": "0x02", "verifier": "0x03", "arbitrator": "0x04",
+		"buyer": "0x1000000000000000000000000000000000000001",
+		"worker": "0x2000000000000000000000000000000000000002",
+		"verifier": "0x3000000000000000000000000000000000000003",
+		"arbitrator": "0x4000000000000000000000000000000000000004",
 		"amount": "100", "submission_deadline": "1700000000",
 		"review_period_seconds": "86400", "dispute_period_seconds": "172800",
 		"arbitrator_timeout_seconds": "604800"

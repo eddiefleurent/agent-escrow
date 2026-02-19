@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"strconv"
@@ -95,6 +96,20 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	specHash := crypto.Keccak256Hash([]byte(req.Title + req.Description))
+
+	for _, pair := range []struct {
+		name, addr string
+	}{
+		{"buyer", req.Buyer},
+		{"worker", req.Worker},
+		{"verifier", req.Verifier},
+		{"arbitrator", req.Arbitrator},
+	} {
+		if !isValidAddress(pair.addr) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid %s address", pair.name)})
+			return
+		}
+	}
 
 	factory := common.HexToAddress(h.cfg.FactoryAddress)
 	params := chain.CreateEscrowParams{
@@ -402,8 +417,14 @@ func (h *Handlers) ResolveDispute(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
 }
 
+func isValidAddress(s string) bool {
+	return common.IsHexAddress(s) && s != "0x0000000000000000000000000000000000000000"
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Error("writeJSON encode failed", "status", status, "error", err)
+	}
 }

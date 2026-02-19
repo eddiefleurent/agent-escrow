@@ -261,6 +261,20 @@ func TestDisputes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update dispute: %v", err)
 	}
+
+	updated, err := db.GetDispute(disp.ID)
+	if err != nil {
+		t.Fatalf("get dispute after update: %v", err)
+	}
+	if updated.ResolutionURI != "ipfs://resolution" {
+		t.Fatalf("expected resolution URI 'ipfs://resolution', got %q", updated.ResolutionURI)
+	}
+	if updated.WorkerAwardBps == nil || *updated.WorkerAwardBps != 5000 {
+		t.Fatalf("expected worker award bps 5000, got %v", updated.WorkerAwardBps)
+	}
+	if updated.Status != "resolved" {
+		t.Fatalf("expected status 'resolved', got %q", updated.Status)
+	}
 }
 
 func TestChainLogIdempotent(t *testing.T) {

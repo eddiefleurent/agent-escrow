@@ -105,7 +105,7 @@ factory = new TaskEscrowFactory(protocolFeeBps, treasury, owner);
 ```
 
 On success, Forge prints the deployed contract address and transaction hash. Example output:
-```
+```text
 == Logs ==
   ...
 
@@ -265,8 +265,11 @@ With `MCP_TRANSPORT=stdio`, the server runs both the MCP server on stdin/stdout 
 Set a submission deadline 1 hour from now. The amount is in wei (0.001 ETH = 1000000000000000 wei).
 
 ```bash
-DEADLINE=$(date -d "+1 hour" +%s)   # Linux
-# DEADLINE=$(date -v+1H +%s)        # macOS
+# Linux/GNU date:
+DEADLINE=$(date -d "+1 hour" +%s)
+
+# macOS/BSD date (uncomment if on macOS):
+# DEADLINE=$(date -v+1H +%s)
 
 curl -s -X POST http://localhost:8080/api/v1/escrows \
   -H "Content-Type: application/json" \
@@ -464,7 +467,7 @@ The MCP tools return the same JSON payloads as the HTTP endpoints. The server ha
 
 ### 2.5 Full Lifecycle Summary
 
-```
+```text
 Agent calls create_escrow
     → Factory deploys TaskEscrow contract
     → Server returns escrow_id, escrow_address, chain_escrow_id

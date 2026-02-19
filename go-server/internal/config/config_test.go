@@ -21,7 +21,6 @@ func clearEnv(t *testing.T) {
 		"MCP_TRANSPORT", "CORS_ORIGINS",
 		"REQUEST_TIMEOUT", "TX_TIMEOUT",
 	} {
-		t.Setenv(key, "")
 		os.Unsetenv(key)
 	}
 }

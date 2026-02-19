@@ -105,8 +105,8 @@ func (idx *Indexer) RunOnce(ctx context.Context) error {
 		return fmt.Errorf("index factory events: %w", err)
 	}
 
-	// Index escrow events for all known escrows
-	escrows, err := idx.db.ListEscrows("", "", "")
+	// Index escrow events for escrows on this chain only
+	escrows, err := idx.db.ListEscrowsByChainID(idx.chainID)
 	if err != nil {
 		return fmt.Errorf("list escrows: %w", err)
 	}
@@ -296,9 +296,19 @@ func (idx *Indexer) handleSubmission(lg types.Log, dbEscrowID int64) error {
 		return fmt.Errorf("unpack SubmissionMade: %w", err)
 	}
 
-	submissionHash := fmt.Sprintf("0x%x", values[0].([32]byte))
-	submissionURI := values[1].(string)
+	if len(values) < 2 {
+		return fmt.Errorf("SubmissionMade: expected 2 values, got %d", len(values))
+	}
+	hashBytes, ok := values[0].([32]byte)
+	if !ok {
+		return fmt.Errorf("SubmissionMade: unexpected type for submissionHash: %T", values[0])
+	}
+	submissionURI, ok := values[1].(string)
+	if !ok {
+		return fmt.Errorf("SubmissionMade: unexpected type for submissionURI: %T", values[1])
+	}
 
+	submissionHash := fmt.Sprintf("0x%x", hashBytes)
 	_, err = idx.db.CreateSubmission(dbEscrowID, submissionHash, submissionURI)
 	return err
 }
@@ -336,10 +346,18 @@ func (idx *Indexer) handleDisputeResolved(lg types.Log, dbEscrowID int64) error 
 		return fmt.Errorf("unpack DisputeResolved: %w", err)
 	}
 
-	workerAwardBps := int(values[0].(uint16))
-	resolutionURI := values[1].(string)
+	if len(values) < 2 {
+		return fmt.Errorf("DisputeResolved: expected 2 values, got %d", len(values))
+	}
+	workerAwardBps, ok := values[0].(uint16)
+	if !ok {
+		return fmt.Errorf("DisputeResolved: unexpected type for workerAwardBps: %T", values[0])
+	}
+	resolutionURI, ok := values[1].(string)
+	if !ok {
+		return fmt.Errorf("DisputeResolved: unexpected type for resolutionURI: %T", values[1])
+	}
 
-	// Create a dispute resolution record
 	_, err = idx.db.CreateDispute(dbEscrowID, "arbitrator", resolutionURI)
 	if err != nil {
 		return err

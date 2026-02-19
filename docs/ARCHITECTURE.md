@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project implements the ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) paper (Tomašev, Franklin, Osindero -- Google DeepMind, 2026) as a working escrow-based delegation marketplace.
+This project implements the ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) paper ([DOI](https://doi.org/10.48550/arXiv.2602.11865)) (Tomašev, Franklin, Osindero -- Google DeepMind, 2026) as a working escrow-based delegation marketplace.
 
 The paper defines a comprehensive framework for task decomposition, delegation, verification, and settlement in open agentic economies. This document describes the system architecture, its grounding in the paper's framework, and the scalability path from settlement kernel to full marketplace.
 
@@ -161,6 +161,8 @@ Estimated gas costs per operation on Base (as of early 2026):
 | `approve` + settle | ~120,000 | < $0.01 |
 | **Happy-path total** | **~620,000** | **< $0.02** |
 | Dispute + resolve path | ~800,000 | < $0.03 |
+
+> **Note**: Gas costs are estimates and will vary with network congestion and L1 gas prices. Use `cast estimate` or the [Foundry gas estimation tools](https://book.getfoundry.sh/reference/cast/cast-estimate) to check current costs for your transactions.
 
 The **complexity floor** planned for V2 (roadmap item 12) formalizes this: a minimum escrow amount that ensures the task value justifies the gas + protocol fee overhead. On Base, that floor can be low enough ($1-$5) to support micro-delegation between AI agents.
 
