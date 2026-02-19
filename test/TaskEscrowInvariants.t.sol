@@ -125,6 +125,18 @@ contract TaskEscrowInvariantsTest is StdInvariant, Test {
 
         vm.expectRevert(TaskEscrow.InvalidState.selector);
         vm.prank(buyer);
+        escrow.fund{value: AMOUNT}();
+
+        vm.expectRevert(TaskEscrow.InvalidState.selector);
+        vm.prank(buyer);
+        escrow.cancelBeforeFunding();
+
+        vm.expectRevert(TaskEscrow.InvalidState.selector);
+        vm.prank(worker);
+        escrow.submit(keccak256("late-submission"), "ipfs://late");
+
+        vm.expectRevert(TaskEscrow.InvalidState.selector);
+        vm.prank(buyer);
         escrow.approveByBuyer();
 
         vm.expectRevert(TaskEscrow.InvalidState.selector);
