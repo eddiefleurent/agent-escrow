@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
@@ -36,6 +37,8 @@ func setup(t *testing.T) *testEnv {
 	cfg := &config.Config{
 		ChainID:        84532,
 		FactoryAddress: "0xFactoryAddr",
+		RequestTimeout: 10 * time.Second,
+		TxTimeout:      90 * time.Second,
 	}
 
 	idx := indexer.New(db, mock, cfg.FactoryAddress)
@@ -552,7 +555,7 @@ func TestResolveDispute_Success(t *testing.T) {
 	}
 }
 
-func TestCORS_Preflight(t *testing.T) {
+func TestCORS_Preflight_WildcardDefault(t *testing.T) {
 	env := setup(t)
 
 	req := httptest.NewRequest("OPTIONS", "/api/v1/health", nil)
@@ -563,7 +566,153 @@ func TestCORS_Preflight(t *testing.T) {
 		t.Fatalf("expected 204, got %d", rr.Code)
 	}
 	if rr.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Fatal("expected CORS header")
+		t.Fatalf("expected wildcard CORS header, got %q", rr.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestCORS_RestrictedOrigins_Allowed(t *testing.T) {
+	env := setup(t)
+	env.cfg.CORSOrigins = []string{"https://example.com", "https://app.example.com"}
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+
+	req := httptest.NewRequest("GET", "/api/v1/health", nil)
+	req.Header.Set("Origin", "https://example.com")
+	rr := httptest.NewRecorder()
+	env.mux.ServeHTTP(rr, req)
+
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "https://example.com" {
+		t.Fatalf("expected origin echo, got %q", got)
+	}
+	if rr.Header().Get("Vary") != "Origin" {
+		t.Fatal("expected Vary: Origin header for restricted CORS")
+	}
+}
+
+func TestCORS_RestrictedOrigins_Rejected(t *testing.T) {
+	env := setup(t)
+	env.cfg.CORSOrigins = []string{"https://example.com"}
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+
+	req := httptest.NewRequest("GET", "/api/v1/health", nil)
+	req.Header.Set("Origin", "https://evil.com")
+	rr := httptest.NewRecorder()
+	env.mux.ServeHTTP(rr, req)
+
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("expected no CORS header for rejected origin, got %q", got)
+	}
+}
+
+func TestCORS_RestrictedOrigins_Preflight(t *testing.T) {
+	env := setup(t)
+	env.cfg.CORSOrigins = []string{"https://app.example.com"}
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+
+	req := httptest.NewRequest("OPTIONS", "/api/v1/escrows", nil)
+	req.Header.Set("Origin", "https://app.example.com")
+	rr := httptest.NewRecorder()
+	env.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rr.Code)
+	}
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "https://app.example.com" {
+		t.Fatalf("expected origin echo on preflight, got %q", got)
+	}
+}
+
+func TestTimeout_GET_Exceeded(t *testing.T) {
+	env := setup(t)
+	env.mock.BlockNum = 1
+
+	// Reconfigure with a very short read timeout
+	env.cfg.RequestTimeout = 50 * time.Millisecond
+	env.cfg.TxTimeout = 90 * time.Second
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+
+	// Delay longer than the read timeout
+	env.mock.Delay = 200 * time.Millisecond
+
+	rr := env.request(t, "GET", "/api/v1/health", "")
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 on timeout, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	if !strings.Contains(rr.Body.String(), "request timeout") {
+		t.Fatalf("expected timeout error body, got: %s", rr.Body.String())
+	}
+}
+
+func TestTimeout_GET_WithinLimit(t *testing.T) {
+	env := setup(t)
+	env.mock.BlockNum = 99
+
+	env.cfg.RequestTimeout = 2 * time.Second
+	env.cfg.TxTimeout = 90 * time.Second
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+
+	rr := env.request(t, "GET", "/api/v1/health", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestTimeout_POST_UsesLongerTxTimeout(t *testing.T) {
+	env := setup(t)
+
+	task, err := env.db.CreateTask("Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(&storage.Escrow{
+		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
+		EscrowAddress: "0xEscrowAddr",
+		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Amount: "1000000000000000000", Status: "created",
+	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
+
+	// Short read timeout but long tx timeout; delay is between them
+	env.cfg.RequestTimeout = 50 * time.Millisecond
+	env.cfg.TxTimeout = 2 * time.Second
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+
+	env.mock.Delay = 100 * time.Millisecond
+
+	rr := env.request(t, "POST", "/api/v1/escrows/1/fund", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 (within tx timeout), got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestTimeout_POST_TxTimeoutExceeded(t *testing.T) {
+	env := setup(t)
+
+	task, err := env.db.CreateTask("Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(&storage.Escrow{
+		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
+		EscrowAddress: "0xEscrowAddr",
+		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Amount: "1000000000000000000", Status: "created",
+	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
+
+	env.cfg.RequestTimeout = 50 * time.Millisecond
+	env.cfg.TxTimeout = 50 * time.Millisecond
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+
+	env.mock.Delay = 200 * time.Millisecond
+
+	rr := env.request(t, "POST", "/api/v1/escrows/1/fund", "")
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 on tx timeout, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 

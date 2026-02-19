@@ -10,6 +10,7 @@ contract TaskEscrowFactory {
     error InvalidAmount();
     error InvalidDeadline();
     error Paused();
+    error NoPendingTransfer();
 
     event EscrowCreated(
         uint256 indexed escrowId,
@@ -22,6 +23,8 @@ contract TaskEscrowFactory {
     );
     event ProtocolFeeUpdated(uint16 oldFeeBps, uint16 newFeeBps);
     event TreasuryUpdated(address oldTreasury, address newTreasury);
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event FactoryPaused();
     event FactoryUnpaused();
 
@@ -30,6 +33,7 @@ contract TaskEscrowFactory {
     uint16 public protocolFeeBps;
     address public treasury;
     address public owner;
+    address public pendingOwner;
     bool public paused;
 
     constructor(uint16 _protocolFeeBps, address _treasury, address _owner) {
@@ -105,5 +109,20 @@ contract TaskEscrowFactory {
         paused = shouldPause;
         if (shouldPause) emit FactoryPaused();
         else emit FactoryUnpaused();
+    }
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert InvalidAddress();
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert Unauthorized();
+        if (pendingOwner == address(0)) revert NoPendingTransfer();
+        address oldOwner = owner;
+        owner = pendingOwner;
+        pendingOwner = address(0);
+        emit OwnershipTransferred(oldOwner, msg.sender);
     }
 }

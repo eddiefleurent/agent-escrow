@@ -25,7 +25,7 @@ The paper defines five framework pillars, nine technical protocols, ethical cons
 | Suite | Coverage |
 |---|---|
 | Unit tests (`TaskEscrow.t.sol`) | Happy path, dispute, timeout, verifier reject, silence escalation, arbitrator timeout, role checks |
-| Edge cases (`TaskEscrowEdgeCases.t.sol`) | Timing boundaries, invalid BPS, factory pause, fuzz: fund conservation + arbitrator timeout boundary |
+| Edge cases (`TaskEscrowEdgeCases.t.sol`) | Timing boundaries, invalid BPS, factory pause, fuzz: fund conservation + arbitrator timeout boundary, role distinctness (6 pair combos), two-step ownership transfer (7 tests) |
 | Invariants (`TaskEscrowInvariants.t.sol`) | Terminal state stickiness, balance conservation |
 
 ### Go Server
@@ -39,7 +39,7 @@ The paper defines five framework pillars, nine technical protocols, ethical cons
 | MCP server (`internal/mcpserver/`) | Complete |
 | HTTP API (`internal/api/`) | Complete |
 | Transaction receipt parsing (EscrowAddress/EscrowID) | Complete |
-| API handler tests with mock chain client | Complete (22 tests) |
+| API handler tests with mock chain client | Complete (29 tests) |
 | Structured logging (`log/slog`, JSON handler) | Complete |
 | Chain health check (`/api/v1/health` with RPC verification) | Complete |
 
@@ -82,14 +82,14 @@ Single Go binary: MCP server + HTTP JSON API + event indexer. Eight MCP tools, n
 #### Remaining Hardening (Not Yet Started)
 
 **Contract safety:**
-- **Reentrancy guard gas optimization** -- switch `_locked` from 0/1 to 1/2 pattern (avoids zero-to-nonzero SSTORE cost, aligns with OpenZeppelin convention)
-- **Role address distinctness checks** -- validate buyer/worker/verifier/arbitrator are distinct addresses in `TaskEscrow` constructor to prevent role collapse undermining escrow security
-- **Two-step ownership transfer** -- add `pendingOwner` + `acceptOwnership()` to `TaskEscrowFactory` to prevent permanent lockout on key loss/compromise
+- **Reentrancy guard gas optimization** -- complete (`_locked` uses 1/2 pattern: avoids zero-to-nonzero SSTORE cost, aligns with OpenZeppelin convention)
+- **Role address distinctness checks** -- complete (buyer/worker/verifier/arbitrator must be distinct addresses; reverts `RolesNotDistinct` on overlap)
+- **Two-step ownership transfer** -- complete (`transferOwnership` + `acceptOwnership` on `TaskEscrowFactory`; prevents permanent lockout on key loss/compromise)
 
 **Server hardening:**
-- **Configurable CORS origins** -- replace `Access-Control-Allow-Origin: *` with environment-configurable allowed origins for production deployments
-- **Request timeout middleware** -- add `http.TimeoutHandler` or equivalent to bound long-running requests (must accommodate chain tx polling which can take 30-60s)
-- **Config validation** -- validate required config fields (`RPC_URL`, `PRIVATE_KEY`, `FACTORY_ADDRESS`) at startup with clear error messages; must preserve offline mode when `RPC_URL` is intentionally empty
+- **Configurable CORS origins** -- complete (`CORS_ORIGINS` env var, comma-separated; empty = wildcard for dev; restricted mode echoes matched origin with `Vary: Origin`)
+- **Request timeout middleware** -- complete (route-aware `http.TimeoutHandler`: 10s default for reads via `REQUEST_TIMEOUT`, 90s for chain tx endpoints via `TX_TIMEOUT`; returns JSON `{"error":"request timeout"}` with 503 on expiry)
+- **Config validation** -- complete (`Validate()` method on `Config`: requires `PRIVATE_KEY` and `FACTORY_ADDRESS` when `RPC_URL` is set; validates hex format and byte length; checks port range and timeout positivity; offline mode preserved when `RPC_URL` is empty with warning; 25 tests)
 - **Indexer error propagation** -- surface fatal indexer errors to the main goroutine via error channel (currently logs per-tick errors but cannot signal unrecoverable failures)
 - **MockClient thread safety** -- protect mutable fields (`BlockNum`, `Logs`, `Receipt`, `StatusVal`, etc.) with mutex in read methods; currently safe for typical test patterns but would race under parallel test mutation
 - **SubmissionDeadline type consistency** -- change `Escrow.SubmissionDeadline` from `string` to `int64` (Unix timestamp) for consistency with `ReviewPeriodSeconds`/`DisputePeriodSeconds`/`ArbitratorTimeoutSeconds`; requires DB schema migration and updates across handlers, MCP tools, indexer, and tests

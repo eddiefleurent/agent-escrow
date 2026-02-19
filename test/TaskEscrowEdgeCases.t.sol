@@ -165,6 +165,140 @@ contract TaskEscrowEdgeCasesTest is Test {
         }
     }
 
+    // ── Role address distinctness checks ──
+
+    function testRolesNotDistinct_BuyerEqualsWorker() public {
+        vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
+        vm.prank(randomUser);
+        factory.createEscrow(
+            buyer, buyer, verifier, arbitrator, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT
+        );
+    }
+
+    function testRolesNotDistinct_BuyerEqualsVerifier() public {
+        vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
+        vm.prank(randomUser);
+        factory.createEscrow(
+            buyer, worker, buyer, arbitrator, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT
+        );
+    }
+
+    function testRolesNotDistinct_BuyerEqualsArbitrator() public {
+        vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
+        vm.prank(randomUser);
+        factory.createEscrow(
+            buyer, worker, verifier, buyer, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT
+        );
+    }
+
+    function testRolesNotDistinct_WorkerEqualsVerifier() public {
+        vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
+        vm.prank(randomUser);
+        factory.createEscrow(
+            buyer, worker, worker, arbitrator, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT
+        );
+    }
+
+    function testRolesNotDistinct_WorkerEqualsArbitrator() public {
+        vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
+        vm.prank(randomUser);
+        factory.createEscrow(
+            buyer, worker, verifier, worker, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT
+        );
+    }
+
+    function testRolesNotDistinct_VerifierEqualsArbitrator() public {
+        vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
+        vm.prank(randomUser);
+        factory.createEscrow(
+            buyer, worker, verifier, verifier, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT
+        );
+    }
+
+    // ── Two-step ownership transfer ──
+
+    function testTwoStepOwnershipTransfer() public {
+        address newOwner = makeAddr("newOwner");
+
+        vm.prank(owner);
+        factory.transferOwnership(newOwner);
+
+        assertEq(factory.pendingOwner(), newOwner);
+        assertEq(factory.owner(), owner);
+
+        vm.prank(newOwner);
+        factory.acceptOwnership();
+
+        assertEq(factory.owner(), newOwner);
+        assertEq(factory.pendingOwner(), address(0));
+    }
+
+    function testTransferOwnershipToZeroReverts() public {
+        vm.expectRevert(TaskEscrowFactory.InvalidAddress.selector);
+        vm.prank(owner);
+        factory.transferOwnership(address(0));
+    }
+
+    function testTransferOwnershipOnlyOwner() public {
+        vm.expectRevert(TaskEscrowFactory.Unauthorized.selector);
+        vm.prank(randomUser);
+        factory.transferOwnership(makeAddr("newOwner"));
+    }
+
+    function testAcceptOwnershipOnlyPendingOwner() public {
+        address newOwner = makeAddr("newOwner");
+        vm.prank(owner);
+        factory.transferOwnership(newOwner);
+
+        vm.expectRevert(TaskEscrowFactory.Unauthorized.selector);
+        vm.prank(randomUser);
+        factory.acceptOwnership();
+    }
+
+    function testAcceptOwnershipWithoutPendingReverts() public {
+        vm.expectRevert(TaskEscrowFactory.Unauthorized.selector);
+        vm.prank(randomUser);
+        factory.acceptOwnership();
+    }
+
+    function testNewOwnerCanAdminister() public {
+        address newOwner = makeAddr("newOwner");
+
+        vm.prank(owner);
+        factory.transferOwnership(newOwner);
+        vm.prank(newOwner);
+        factory.acceptOwnership();
+
+        vm.prank(newOwner);
+        factory.setProtocolFeeBps(200);
+        assertEq(factory.protocolFeeBps(), 200);
+
+        vm.expectRevert(TaskEscrowFactory.Unauthorized.selector);
+        vm.prank(owner);
+        factory.setProtocolFeeBps(300);
+    }
+
+    function testTransferOwnershipOverwritesPending() public {
+        address newOwner1 = makeAddr("newOwner1");
+        address newOwner2 = makeAddr("newOwner2");
+
+        vm.prank(owner);
+        factory.transferOwnership(newOwner1);
+        assertEq(factory.pendingOwner(), newOwner1);
+
+        vm.prank(owner);
+        factory.transferOwnership(newOwner2);
+        assertEq(factory.pendingOwner(), newOwner2);
+
+        vm.expectRevert(TaskEscrowFactory.Unauthorized.selector);
+        vm.prank(newOwner1);
+        factory.acceptOwnership();
+
+        vm.prank(newOwner2);
+        factory.acceptOwnership();
+        assertEq(factory.owner(), newOwner2);
+    }
+
     function _fundAndSubmit() internal {
         vm.prank(buyer);
         escrow.fund{value: AMOUNT}();

@@ -29,6 +29,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Log validation warnings (errors already rejected by Load)
+	if result := cfg.Validate(); len(result.Warnings) > 0 {
+		for _, w := range result.Warnings {
+			slog.Warn("config", "warning", w)
+		}
+	}
+
 	db, err := storage.Open(cfg.DatabaseURL)
 	if err != nil {
 		slog.Error("failed to open storage", "error", err)

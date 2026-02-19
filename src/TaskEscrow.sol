@@ -60,7 +60,12 @@ contract TaskEscrow {
     string public submissionURI;
     string public disputeReasonURI;
 
-    uint256 private _locked;
+    error RolesNotDistinct();
+
+    // Uses 1/2 pattern instead of 0/1 to avoid zero-to-nonzero SSTORE cost (20k vs 5k gas)
+    uint256 private constant _NOT_ENTERED = 1;
+    uint256 private constant _ENTERED = 2;
+    uint256 private _locked = _NOT_ENTERED;
 
     constructor(
         address _buyer,
@@ -80,6 +85,13 @@ contract TaskEscrow {
             revert InvalidAddress();
         }
         if (_treasurySnapshot == address(0)) revert InvalidAddress();
+        if (
+            _buyer == _worker || _buyer == _verifier || _buyer == _arbitrator
+                || _worker == _verifier || _worker == _arbitrator
+                || _verifier == _arbitrator
+        ) {
+            revert RolesNotDistinct();
+        }
         if (_amount == 0) revert InvalidAmount();
         if (_submissionDeadline <= block.timestamp) revert InvalidDeadline();
         if (_protocolFeeBpsSnapshot > 10_000) revert InvalidAwardBps();
@@ -100,10 +112,10 @@ contract TaskEscrow {
     }
 
     modifier nonReentrant() {
-        if (_locked == 1) revert Reentrancy();
-        _locked = 1;
+        if (_locked == _ENTERED) revert Reentrancy();
+        _locked = _ENTERED;
         _;
-        _locked = 0;
+        _locked = _NOT_ENTERED;
     }
 
     function fund() external payable nonReentrant {

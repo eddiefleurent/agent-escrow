@@ -3,6 +3,7 @@ package api
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -35,9 +36,24 @@ func recoveryMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
+// corsMiddleware checks the request Origin against allowedOrigins.
+// If allowedOrigins is empty, all origins are permitted ("*").
+func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
+	allowed := make(map[string]bool, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		allowed[o] = true
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+
+		if len(allowed) == 0 {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		} else if allowed[origin] {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
+
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
@@ -69,4 +85,22 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 		rw.WriteHeader(http.StatusOK)
 	}
 	return rw.ResponseWriter.Write(b)
+}
+
+// timeoutMiddleware applies request timeouts based on the HTTP method and path.
+// POST endpoints that interact with the chain use txTimeout (default 90s).
+// GET/read endpoints use requestTimeout (default 10s).
+func timeoutMiddleware(requestTimeout, txTimeout time.Duration, next http.Handler) http.Handler {
+	timeoutBody := `{"error":"request timeout"}`
+
+	readHandler := http.TimeoutHandler(next, requestTimeout, timeoutBody)
+	txHandler := http.TimeoutHandler(next, txTimeout, timeoutBody)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/") {
+			txHandler.ServeHTTP(w, r)
+			return
+		}
+		readHandler.ServeHTTP(w, r)
+	})
 }

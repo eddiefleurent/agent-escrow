@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -34,6 +35,9 @@ type MockClient struct {
 
 	// Track calls for assertions
 	SentTxs []MockTxRecord
+
+	// Delay applied before returning from chain methods (for timeout testing)
+	Delay time.Duration
 
 	// Per-method error overrides
 	CreateEscrowErr        error
@@ -67,7 +71,22 @@ func NewMockClient() *MockClient {
 func (m *MockClient) Address() common.Address { return m.addr }
 func (m *MockClient) ChainID() *big.Int       { return m.chainID }
 
-func (m *MockClient) BlockNumber(_ context.Context) (uint64, error) {
+func (m *MockClient) applyDelay(ctx context.Context) error {
+	if m.Delay <= 0 {
+		return nil
+	}
+	select {
+	case <-time.After(m.Delay):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (m *MockClient) BlockNumber(ctx context.Context) (uint64, error) {
+	if err := m.applyDelay(ctx); err != nil {
+		return 0, err
+	}
 	if m.BlockNumErr != nil {
 		return 0, m.BlockNumErr
 	}
@@ -112,7 +131,10 @@ func (m *MockClient) CreateEscrow(_ context.Context, _ common.Address, _ CreateE
 	return makeFakeTx(), nil
 }
 
-func (m *MockClient) Fund(_ context.Context, addr common.Address, amount *big.Int) (*types.Transaction, error) {
+func (m *MockClient) Fund(ctx context.Context, addr common.Address, amount *big.Int) (*types.Transaction, error) {
+	if err := m.applyDelay(ctx); err != nil {
+		return nil, err
+	}
 	if m.FundErr != nil {
 		return nil, m.FundErr
 	}

@@ -30,7 +30,8 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	mux.HandleFunc("POST /api/v1/escrows/{id}/resolve", h.ResolveDispute)
 
 	var handler http.Handler = mux
-	handler = corsMiddleware(handler)
+	handler = timeoutMiddleware(cfg.RequestTimeout, cfg.TxTimeout, handler)
+	handler = corsMiddleware(cfg.CORSOrigins, handler)
 	handler = loggingMiddleware(handler)
 	handler = recoveryMiddleware(handler)
 

@@ -16,7 +16,7 @@ jobs:
           submodules: recursive
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1.7
+        uses: foundry-rs/foundry-toolchain@v1.7.0
 
       - name: Build
         run: forge build
@@ -43,7 +43,7 @@ jobs:
           cache-dependency-path: go-server/go.sum
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1.7
+        uses: foundry-rs/foundry-toolchain@v1.7.0
 
       - name: Build Contracts
         run: forge build
