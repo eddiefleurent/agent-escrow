@@ -295,6 +295,18 @@ func (d *DB) GetDispute(id int64) (*Dispute, error) {
 	return d.getDispute(id)
 }
 
+// GetDisputeByEscrowID returns the most recent open (non-resolved) dispute for the given escrow.
+func (d *DB) GetDisputeByEscrowID(escrowID int64) (*Dispute, error) {
+	var disputeID int64
+	err := d.db.QueryRow(
+		`SELECT id FROM disputes WHERE escrow_id = ? AND status != 'resolved' ORDER BY id DESC LIMIT 1`, escrowID,
+	).Scan(&disputeID)
+	if err != nil {
+		return nil, fmt.Errorf("get dispute by escrow id: %w", err)
+	}
+	return d.getDispute(disputeID)
+}
+
 func (d *DB) getDispute(id int64) (*Dispute, error) {
 	disp := &Dispute{}
 	var createdAt string

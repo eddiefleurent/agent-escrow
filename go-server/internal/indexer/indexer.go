@@ -358,10 +358,20 @@ func (idx *Indexer) handleDisputeResolved(lg types.Log, dbEscrowID int64) error 
 		return fmt.Errorf("DisputeResolved: unexpected type for resolutionURI: %T", values[1])
 	}
 
-	_, err = idx.db.CreateDispute(dbEscrowID, "arbitrator", resolutionURI)
+	dispute, err := idx.db.GetDisputeByEscrowID(dbEscrowID)
 	if err != nil {
-		return err
+		slog.Warn("no existing dispute found for resolution, creating new record",
+			"escrow_id", dbEscrowID, "error", err)
+		_, createErr := idx.db.CreateDispute(dbEscrowID, "arbitrator", resolutionURI)
+		if createErr != nil {
+			return createErr
+		}
+		// Re-fetch to get the ID for the update call
+		dispute, err = idx.db.GetDisputeByEscrowID(dbEscrowID)
+		if err != nil {
+			return fmt.Errorf("get newly created dispute: %w", err)
+		}
 	}
-	_ = workerAwardBps
-	return nil
+
+	return idx.db.UpdateDispute(dispute.ID, resolutionURI, int(workerAwardBps))
 }
