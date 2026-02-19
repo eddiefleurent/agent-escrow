@@ -66,7 +66,7 @@ contract TaskEscrowHandler is Test {
     }
 
     function warpTime(uint32 jump) external {
-        uint256 delta = uint256(jump % 3 days);
+        uint256 delta = uint256(jump % 10 days);
         vm.warp(block.timestamp + delta);
     }
 }

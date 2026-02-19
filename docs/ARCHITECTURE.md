@@ -6,7 +6,7 @@ This project implements the ["Intelligent AI Delegation"](https://arxiv.org/abs/
 
 The paper defines a comprehensive framework for task decomposition, delegation, verification, and settlement in open agentic economies. This document describes the system architecture, its grounding in the paper's framework, and the scalability path from settlement kernel to full marketplace.
 
-```
+```text
 Settlement Kernel (V1)  →  Market Primitives (V2)  →  Delegation Intelligence (V3)  →  Ecosystem Maturity (V4)
      escrow + roles          bidding + reputation        DCTs + ZK + re-delegation       ethics + governance + DIDs
 ```

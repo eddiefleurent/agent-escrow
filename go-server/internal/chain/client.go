@@ -61,10 +61,16 @@ func (c *Client) ChainID() *big.Int {
 }
 
 func (c *Client) BlockNumber(ctx context.Context) (uint64, error) {
+	if c.eth == nil {
+		return 0, fmt.Errorf("chain client not connected (offline mode)")
+	}
 	return c.eth.BlockNumber(ctx)
 }
 
 func (c *Client) FilterLogs(ctx context.Context, addresses []common.Address, topics [][]common.Hash, fromBlock, toBlock uint64) ([]types.Log, error) {
+	if c.eth == nil {
+		return nil, fmt.Errorf("chain client not connected (offline mode)")
+	}
 	query := ethereum.FilterQuery{
 		FromBlock: new(big.Int).SetUint64(fromBlock),
 		ToBlock:   new(big.Int).SetUint64(toBlock),
@@ -75,6 +81,9 @@ func (c *Client) FilterLogs(ctx context.Context, addresses []common.Address, top
 }
 
 func (c *Client) SendTx(ctx context.Context, to common.Address, data []byte, value *big.Int) (*types.Transaction, error) {
+	if c.eth == nil {
+		return nil, fmt.Errorf("chain client not connected (offline mode)")
+	}
 	if c.key == nil {
 		return nil, fmt.Errorf("no private key configured")
 	}
@@ -127,6 +136,9 @@ func (c *Client) SendTx(ctx context.Context, to common.Address, data []byte, val
 }
 
 func (c *Client) CallContract(ctx context.Context, to common.Address, data []byte) ([]byte, error) {
+	if c.eth == nil {
+		return nil, fmt.Errorf("chain client not connected (offline mode)")
+	}
 	msg := ethereum.CallMsg{
 		To:   &to,
 		Data: data,
@@ -135,6 +147,9 @@ func (c *Client) CallContract(ctx context.Context, to common.Address, data []byt
 }
 
 func (c *Client) TransactionReceipt(ctx context.Context, txHash common.Hash) (*types.Receipt, error) {
+	if c.eth == nil {
+		return nil, fmt.Errorf("chain client not connected (offline mode)")
+	}
 	return c.eth.TransactionReceipt(ctx, txHash)
 }
 

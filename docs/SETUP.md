@@ -1,6 +1,7 @@
 # Setup
 
 ## Solidity Version Notes
+
 | Version | Key Feature / Change |
 |---|---|
 | 0.8.34 | High-severity bugfix for transient storage clearing in the IR pipeline. |

@@ -29,7 +29,10 @@ func (d *DB) GetTask(id int64) (*Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get task: %w", err)
 	}
-	t.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+	t.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse created_at in GetTask: %w", err)
+	}
 	return t, nil
 }
 
@@ -63,8 +66,14 @@ func (d *DB) GetEscrow(id int64) (*Escrow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get escrow: %w", err)
 	}
-	e.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-	e.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+	e.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse created_at in GetEscrow: %w", err)
+	}
+	e.UpdatedAt, err = time.Parse("2006-01-02 15:04:05", updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse updated_at in GetEscrow: %w", err)
+	}
 	return e, nil
 }
 
@@ -81,8 +90,14 @@ func (d *DB) GetEscrowByAddress(addr string) (*Escrow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get escrow by address: %w", err)
 	}
-	e.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-	e.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+	e.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse created_at in GetEscrowByAddress: %w", err)
+	}
+	e.UpdatedAt, err = time.Parse("2006-01-02 15:04:05", updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse updated_at in GetEscrowByAddress: %w", err)
+	}
 	return e, nil
 }
 
@@ -146,8 +161,14 @@ func (d *DB) ListEscrows(role, address, status string) ([]*Escrow, error) {
 			&createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan escrow: %w", err)
 		}
-		e.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-		e.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		e.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at in ListEscrows: %w", err)
+		}
+		e.UpdatedAt, err = time.Parse("2006-01-02 15:04:05", updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse updated_at in ListEscrows: %w", err)
+		}
 		escrows = append(escrows, e)
 	}
 	return escrows, nil
@@ -172,7 +193,10 @@ func (d *DB) CreateSubmission(escrowID int64, submissionHash, submissionURI stri
 	if err != nil {
 		return nil, fmt.Errorf("get submission: %w", err)
 	}
-	s.SubmittedAt, _ = time.Parse("2006-01-02 15:04:05", submittedAt)
+	s.SubmittedAt, err = time.Parse("2006-01-02 15:04:05", submittedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse submitted_at in CreateSubmission: %w", err)
+	}
 	return s, nil
 }
 
@@ -192,7 +216,10 @@ func (d *DB) GetSubmissionsByEscrow(escrowID int64) ([]*Submission, error) {
 		if err := rows.Scan(&s.ID, &s.EscrowID, &s.SubmissionHash, &s.SubmissionURI, &submittedAt); err != nil {
 			return nil, fmt.Errorf("scan submission: %w", err)
 		}
-		s.SubmittedAt, _ = time.Parse("2006-01-02 15:04:05", submittedAt)
+		s.SubmittedAt, err = time.Parse("2006-01-02 15:04:05", submittedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse submitted_at in GetSubmissionsByEscrow: %w", err)
+		}
 		subs = append(subs, s)
 	}
 	return subs, nil
@@ -224,15 +251,26 @@ func (d *DB) getDispute(id int64) (*Dispute, error) {
 	disp := &Dispute{}
 	var createdAt string
 	var resolvedAt sql.NullString
+	var nullBps sql.NullInt64
 	err := d.db.QueryRow(
 		`SELECT id, escrow_id, raised_by, reason_uri, resolution_uri, worker_award_bps, status, created_at, resolved_at FROM disputes WHERE id = ?`, id,
-	).Scan(&disp.ID, &disp.EscrowID, &disp.RaisedBy, &disp.ReasonURI, &disp.ResolutionURI, &disp.WorkerAwardBps, &disp.Status, &createdAt, &resolvedAt)
+	).Scan(&disp.ID, &disp.EscrowID, &disp.RaisedBy, &disp.ReasonURI, &disp.ResolutionURI, &nullBps, &disp.Status, &createdAt, &resolvedAt)
 	if err != nil {
 		return nil, fmt.Errorf("get dispute: %w", err)
 	}
-	disp.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+	if nullBps.Valid {
+		v := int(nullBps.Int64)
+		disp.WorkerAwardBps = &v
+	}
+	disp.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse created_at in getDispute: %w", err)
+	}
 	if resolvedAt.Valid {
-		t, _ := time.Parse("2006-01-02 15:04:05", resolvedAt.String)
+		t, err := time.Parse("2006-01-02 15:04:05", resolvedAt.String)
+		if err != nil {
+			return nil, fmt.Errorf("parse resolved_at in getDispute: %w", err)
+		}
 		disp.ResolvedAt = &t
 	}
 	return disp, nil

@@ -73,10 +73,26 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid amount"})
 		return
 	}
-	deadline, _ := strconv.ParseUint(req.SubmissionDeadline, 10, 64)
-	review, _ := strconv.ParseUint(req.ReviewPeriodSeconds, 10, 64)
-	dispute, _ := strconv.ParseUint(req.DisputePeriodSeconds, 10, 64)
-	arbTimeout, _ := strconv.ParseUint(req.ArbitratorTimeoutSeconds, 10, 64)
+	deadline, err := strconv.ParseUint(req.SubmissionDeadline, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid submission_deadline"})
+		return
+	}
+	review, err := strconv.ParseUint(req.ReviewPeriodSeconds, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid review_period_seconds"})
+		return
+	}
+	dispute, err := strconv.ParseUint(req.DisputePeriodSeconds, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid dispute_period_seconds"})
+		return
+	}
+	arbTimeout, err := strconv.ParseUint(req.ArbitratorTimeoutSeconds, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid arbitrator_timeout_seconds"})
+		return
+	}
 
 	specHash := crypto.Keccak256Hash([]byte(req.Title + req.Description))
 
@@ -188,7 +204,11 @@ func (h *Handlers) FundEscrow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	amount, _ := new(big.Int).SetString(escrow.Amount, 10)
+	amount, ok := new(big.Int).SetString(escrow.Amount, 10)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "malformed escrow amount in database"})
+		return
+	}
 	tx, err := h.chain.Fund(r.Context(), common.HexToAddress(escrow.EscrowAddress), amount)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
@@ -360,7 +380,11 @@ func (h *Handlers) ResolveDispute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bps, _ := strconv.ParseUint(req.WorkerAwardBps, 10, 16)
+	bps, err := strconv.ParseUint(req.WorkerAwardBps, 10, 16)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid worker_award_bps"})
+		return
+	}
 
 	escrow, err := h.db.GetEscrow(id)
 	if err != nil {

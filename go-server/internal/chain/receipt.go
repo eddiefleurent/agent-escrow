@@ -60,11 +60,14 @@ func parseEscrowCreated(receipt *types.Receipt) (*CreateEscrowResult, error) {
 		if len(lg.Topics) < 3 || lg.Topics[0] != escrowCreatedID {
 			continue
 		}
-		escrowID := new(big.Int).SetBytes(lg.Topics[1].Bytes()).Int64()
+		escrowIDBig := new(big.Int).SetBytes(lg.Topics[1].Bytes())
+		if !escrowIDBig.IsInt64() {
+			return nil, fmt.Errorf("escrowID overflows int64: %s", escrowIDBig.String())
+		}
 		escrowAddr := common.BytesToAddress(lg.Topics[2].Bytes())
 		return &CreateEscrowResult{
 			EscrowAddress: escrowAddr,
-			EscrowID:      escrowID,
+			EscrowID:      escrowIDBig.Int64(),
 		}, nil
 	}
 	return nil, fmt.Errorf("EscrowCreated event not found in receipt (tx %s)", receipt.TxHash.Hex())

@@ -247,7 +247,9 @@ func MakeEscrowCreatedReceipt(escrowID int64, escrowAddr, buyer common.Address) 
 
 func makeFakeTx() *types.Transaction {
 	var b [32]byte
-	rand.Read(b[:])
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("failed to generate random bytes for fake tx: " + err.Error())
+	}
 	return types.NewTransaction(0, common.Address{}, big.NewInt(0), 21000, big.NewInt(1), b[:])
 }
 

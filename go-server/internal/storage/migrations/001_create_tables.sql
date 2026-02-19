@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS escrows (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_escrows_address ON escrows(escrow_address);
 
+CREATE INDEX IF NOT EXISTS idx_escrows_chain_escrow ON escrows(chain_id, escrow_id);
+
 CREATE TABLE IF NOT EXISTS submissions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     escrow_id INTEGER NOT NULL REFERENCES escrows(id),

@@ -59,20 +59,28 @@ func main() {
 
 	router := api.NewRouter(db, chainClient, idx, cfg)
 	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Port),
-		Handler: router,
+		Addr:         fmt.Sprintf(":%d", cfg.Port),
+		Handler:      router,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
+	listenErrCh := make(chan error, 1)
 	go func() {
 		slog.Info("http server starting", "port", cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("http server failed", "error", err)
-			os.Exit(1)
+			listenErrCh <- err
 		}
 	}()
 
-	<-ctx.Done()
-	slog.Info("shutting down")
+	select {
+	case <-ctx.Done():
+		slog.Info("shutting down")
+	case err := <-listenErrCh:
+		slog.Error("http server failed", "error", err)
+		cancel()
+	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()

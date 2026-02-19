@@ -107,10 +107,22 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 	if !ok {
 		return textResult("invalid amount"), nil, nil
 	}
-	deadline, _ := strconv.ParseUint(args.SubmissionDeadline, 10, 64)
-	review, _ := strconv.ParseUint(args.ReviewPeriodSeconds, 10, 64)
-	dispute, _ := strconv.ParseUint(args.DisputePeriodSeconds, 10, 64)
-	arbTimeout, _ := strconv.ParseUint(args.ArbitratorTimeoutSeconds, 10, 64)
+	deadline, err := strconv.ParseUint(args.SubmissionDeadline, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid submission_deadline: %v", err)), nil, nil
+	}
+	review, err := strconv.ParseUint(args.ReviewPeriodSeconds, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid review_period_seconds: %v", err)), nil, nil
+	}
+	dispute, err := strconv.ParseUint(args.DisputePeriodSeconds, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid dispute_period_seconds: %v", err)), nil, nil
+	}
+	arbTimeout, err := strconv.ParseUint(args.ArbitratorTimeoutSeconds, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid arbitrator_timeout_seconds: %v", err)), nil, nil
+	}
 
 	specHash := crypto.Keccak256Hash([]byte(args.Title + args.Description))
 
@@ -182,7 +194,10 @@ func (s *Server) handleFundEscrow(ctx context.Context, req *mcp.CallToolRequest,
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
 
-	amount, _ := new(big.Int).SetString(escrow.Amount, 10)
+	amount, ok := new(big.Int).SetString(escrow.Amount, 10)
+	if !ok {
+		return textResult(fmt.Sprintf("malformed escrow amount in database: %q", escrow.Amount)), nil, nil
+	}
 	tx, err := s.chain.Fund(ctx, common.HexToAddress(escrow.EscrowAddress), amount)
 	if err != nil {
 		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil

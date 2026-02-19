@@ -22,13 +22,16 @@ func loggingMiddleware(next http.Handler) http.Handler {
 
 func recoveryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rw := &responseWriter{ResponseWriter: w, statusCode: 200}
 		defer func() {
 			if err := recover(); err != nil {
 				slog.Error("panic recovered", "error", err, "method", r.Method, "path", r.URL.Path)
-				http.Error(w, "internal server error", http.StatusInternalServerError)
+				if !rw.written {
+					http.Error(rw, "internal server error", http.StatusInternalServerError)
+				}
 			}
 		}()
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(rw, r)
 	})
 }
 
@@ -49,9 +52,21 @@ func corsMiddleware(next http.Handler) http.Handler {
 type responseWriter struct {
 	http.ResponseWriter
 	statusCode int
+	written    bool
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
+	if rw.written {
+		return
+	}
+	rw.written = true
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	if !rw.written {
+		rw.WriteHeader(http.StatusOK)
+	}
+	return rw.ResponseWriter.Write(b)
 }

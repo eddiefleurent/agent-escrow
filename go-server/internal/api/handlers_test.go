@@ -186,12 +186,18 @@ func TestCreateEscrow_InvalidJSON(t *testing.T) {
 func TestGetEscrow_Success(t *testing.T) {
 	env := setup(t)
 
-	task, _ := env.db.CreateTask("Task", "desc", "0xabc")
-	env.db.CreateEscrow(&storage.Escrow{
+	task, err := env.db.CreateTask("Task", "desc", "0xabc")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE1",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "created",
 	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
 
 	rr := env.request(t, "GET", "/api/v1/escrows/1", "")
 	if rr.Code != http.StatusOK {
@@ -225,17 +231,26 @@ func TestGetEscrow_InvalidID(t *testing.T) {
 func TestListEscrows_All(t *testing.T) {
 	env := setup(t)
 
-	task, _ := env.db.CreateTask("Task", "", "0x1")
-	env.db.CreateEscrow(&storage.Escrow{
+	task, err := env.db.CreateTask("Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE1",
 		Buyer: "0xB1", Worker: "0xW1", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "created",
 	})
-	env.db.CreateEscrow(&storage.Escrow{
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
+	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE2",
 		Buyer: "0xB2", Worker: "0xW2", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "200", Status: "funded",
 	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
 
 	rr := env.request(t, "GET", "/api/v1/escrows", "")
 	if rr.Code != http.StatusOK {
@@ -254,17 +269,26 @@ func TestListEscrows_All(t *testing.T) {
 func TestListEscrows_FilterByStatus(t *testing.T) {
 	env := setup(t)
 
-	task, _ := env.db.CreateTask("Task", "", "0x1")
-	env.db.CreateEscrow(&storage.Escrow{
+	task, err := env.db.CreateTask("Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE1",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "created",
 	})
-	env.db.CreateEscrow(&storage.Escrow{
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
+	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE2",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "200", Status: "funded",
 	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
 
 	rr := env.request(t, "GET", "/api/v1/escrows?status=funded", "")
 	if rr.Code != http.StatusOK {
@@ -272,7 +296,9 @@ func TestListEscrows_FilterByStatus(t *testing.T) {
 	}
 
 	var escrows []map[string]any
-	json.NewDecoder(rr.Body).Decode(&escrows)
+	if err := json.NewDecoder(rr.Body).Decode(&escrows); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
 	if len(escrows) != 1 {
 		t.Fatalf("expected 1 funded escrow, got %d", len(escrows))
 	}
@@ -281,13 +307,19 @@ func TestListEscrows_FilterByStatus(t *testing.T) {
 func TestFundEscrow_Success(t *testing.T) {
 	env := setup(t)
 
-	task, _ := env.db.CreateTask("Task", "", "0x1")
-	env.db.CreateEscrow(&storage.Escrow{
+	task, err := env.db.CreateTask("Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "1000000000000000000", Status: "created",
 	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
 
 	rr := env.request(t, "POST", "/api/v1/escrows/1/fund", "")
 	if rr.Code != http.StatusOK {
@@ -312,13 +344,19 @@ func TestFundEscrow_NotFound(t *testing.T) {
 func TestSubmitWork_Success(t *testing.T) {
 	env := setup(t)
 
-	task, _ := env.db.CreateTask("Task", "", "0x1")
-	env.db.CreateEscrow(&storage.Escrow{
+	task, err := env.db.CreateTask("Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "funded",
 	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
 
 	rr := env.request(t, "POST", "/api/v1/escrows/1/submit", `{"submission_uri": "ipfs://result"}`)
 	if rr.Code != http.StatusOK {
@@ -329,13 +367,19 @@ func TestSubmitWork_Success(t *testing.T) {
 func TestApproveWork_Buyer(t *testing.T) {
 	env := setup(t)
 
-	task, _ := env.db.CreateTask("Task", "", "0x1")
-	env.db.CreateEscrow(&storage.Escrow{
+	task, err := env.db.CreateTask("Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
 
 	rr := env.request(t, "POST", "/api/v1/escrows/1/approve", `{"role": "buyer"}`)
 	if rr.Code != http.StatusOK {
@@ -346,13 +390,19 @@ func TestApproveWork_Buyer(t *testing.T) {
 func TestApproveWork_Verifier(t *testing.T) {
 	env := setup(t)
 
-	task, _ := env.db.CreateTask("Task", "", "0x1")
-	env.db.CreateEscrow(&storage.Escrow{
+	task, err := env.db.CreateTask("Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
 
 	rr := env.request(t, "POST", "/api/v1/escrows/1/approve", `{"role": "verifier"}`)
 	if rr.Code != http.StatusOK {
@@ -363,13 +413,19 @@ func TestApproveWork_Verifier(t *testing.T) {
 func TestApproveWork_InvalidRole(t *testing.T) {
 	env := setup(t)
 
-	task, _ := env.db.CreateTask("Task", "", "0x1")
-	env.db.CreateEscrow(&storage.Escrow{
+	task, err := env.db.CreateTask("Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
 
 	rr := env.request(t, "POST", "/api/v1/escrows/1/approve", `{"role": "worker"}`)
 	if rr.Code != http.StatusBadRequest {
@@ -380,13 +436,19 @@ func TestApproveWork_InvalidRole(t *testing.T) {
 func TestDisputeWork_Buyer(t *testing.T) {
 	env := setup(t)
 
-	task, _ := env.db.CreateTask("Task", "", "0x1")
-	escrow, _ := env.db.CreateEscrow(&storage.Escrow{
+	task, err := env.db.CreateTask("Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	escrow, err := env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr1",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
 
 	body := `{"role": "buyer", "reason_uri": "ipfs://reason"}`
 	rr := env.request(t, "POST", escrowPath(escrow.ID, "dispute"), body)
@@ -398,13 +460,19 @@ func TestDisputeWork_Buyer(t *testing.T) {
 func TestDisputeWork_Verifier(t *testing.T) {
 	env := setup(t)
 
-	task, _ := env.db.CreateTask("Task", "", "0x1")
-	escrow, _ := env.db.CreateEscrow(&storage.Escrow{
+	task, err := env.db.CreateTask("Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	escrow, err := env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr2",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
 
 	body := `{"role": "verifier", "reason_uri": "ipfs://reason"}`
 	rr := env.request(t, "POST", escrowPath(escrow.ID, "dispute"), body)
@@ -416,13 +484,19 @@ func TestDisputeWork_Verifier(t *testing.T) {
 func TestDisputeWork_Worker(t *testing.T) {
 	env := setup(t)
 
-	task, _ := env.db.CreateTask("Task", "", "0x1")
-	escrow, _ := env.db.CreateEscrow(&storage.Escrow{
+	task, err := env.db.CreateTask("Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	escrow, err := env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr3",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
 
 	body := `{"role": "worker", "reason_uri": "ipfs://reason"}`
 	rr := env.request(t, "POST", escrowPath(escrow.ID, "dispute"), body)
@@ -434,13 +508,19 @@ func TestDisputeWork_Worker(t *testing.T) {
 func TestDisputeWork_InvalidRole(t *testing.T) {
 	env := setup(t)
 
-	task, _ := env.db.CreateTask("Task", "", "0x1")
-	env.db.CreateEscrow(&storage.Escrow{
+	task, err := env.db.CreateTask("Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
 
 	rr := env.request(t, "POST", "/api/v1/escrows/1/dispute", `{"role": "admin", "reason_uri": "x"}`)
 	if rr.Code != http.StatusBadRequest {
@@ -451,13 +531,19 @@ func TestDisputeWork_InvalidRole(t *testing.T) {
 func TestResolveDispute_Success(t *testing.T) {
 	env := setup(t)
 
-	task, _ := env.db.CreateTask("Task", "", "0x1")
-	env.db.CreateEscrow(&storage.Escrow{
+	task, err := env.db.CreateTask("Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "disputed",
 	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
 
 	body := `{"worker_award_bps": "5000", "resolution_uri": "ipfs://resolution"}`
 	rr := env.request(t, "POST", "/api/v1/escrows/1/resolve", body)

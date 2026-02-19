@@ -34,7 +34,7 @@ go-abi:
 go-build: go-abi
 	cd go-server && go build -o bin/server ./cmd/server/
 
-go-test:
+go-test: go-abi
 	cd go-server && go test ./...
 
 go-run: go-build

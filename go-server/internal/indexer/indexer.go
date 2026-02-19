@@ -44,11 +44,15 @@ type Indexer struct {
 }
 
 func New(db *storage.DB, chainClient chain.ChainClient, factoryAddress string) *Indexer {
+	var chainID int64
+	if chainClient != nil {
+		chainID = chainClient.ChainID().Int64()
+	}
 	return &Indexer{
 		db:             db,
 		chain:          chainClient,
 		factoryAddress: common.HexToAddress(factoryAddress),
-		chainID:        chainClient.ChainID().Int64(),
+		chainID:        chainID,
 	}
 }
 
@@ -150,7 +154,10 @@ func (idx *Indexer) processFactoryLog(lg types.Log) error {
 		return fmt.Errorf("unknown event: %w", err)
 	}
 
-	rawData, _ := json.Marshal(lg)
+	rawData, err := json.Marshal(lg)
+	if err != nil {
+		slog.Warn("failed to marshal factory log", "tx_hash", lg.TxHash.Hex(), "error", err)
+	}
 	if err := idx.db.CreateChainLog(lg.TxHash.Hex(), int(lg.Index), int64(lg.BlockNumber), event.Name, lg.Address.Hex(), string(rawData)); err != nil {
 		return err
 	}
@@ -167,7 +174,11 @@ func (idx *Indexer) handleEscrowCreated(lg types.Log) error {
 		return fmt.Errorf("insufficient topics")
 	}
 
-	escrowID := new(big.Int).SetBytes(lg.Topics[1].Bytes()).Int64()
+	escrowIDBig := new(big.Int).SetBytes(lg.Topics[1].Bytes())
+	if !escrowIDBig.IsInt64() {
+		return fmt.Errorf("escrowID overflows int64: %s", escrowIDBig.String())
+	}
+	escrowID := escrowIDBig.Int64()
 	escrowAddr := common.BytesToAddress(lg.Topics[2].Bytes())
 
 	// Non-indexed params are in data
@@ -176,10 +187,22 @@ func (idx *Indexer) handleEscrowCreated(lg types.Log) error {
 		return fmt.Errorf("unpack EscrowCreated: %w", err)
 	}
 
-	worker := values[0].(common.Address)
-	verifierAddr := values[1].(common.Address)
-	arbitratorAddr := values[2].(common.Address)
-	taskSpecHash := values[3].([32]byte)
+	worker, ok := values[0].(common.Address)
+	if !ok {
+		return fmt.Errorf("unexpected type for worker: %T", values[0])
+	}
+	verifierAddr, ok := values[1].(common.Address)
+	if !ok {
+		return fmt.Errorf("unexpected type for verifier: %T", values[1])
+	}
+	arbitratorAddr, ok := values[2].(common.Address)
+	if !ok {
+		return fmt.Errorf("unexpected type for arbitrator: %T", values[2])
+	}
+	taskSpecHash, ok := values[3].([32]byte)
+	if !ok {
+		return fmt.Errorf("unexpected type for taskSpecHash: %T", values[3])
+	}
 
 	buyer := common.BytesToAddress(lg.Topics[3].Bytes())
 
@@ -239,7 +262,10 @@ func (idx *Indexer) processEscrowLog(lg types.Log, dbEscrowID int64) error {
 		return nil // Unknown event, skip
 	}
 
-	rawData, _ := json.Marshal(lg)
+	rawData, err := json.Marshal(lg)
+	if err != nil {
+		slog.Warn("failed to marshal escrow log", "tx_hash", lg.TxHash.Hex(), "error", err)
+	}
 	if err := idx.db.CreateChainLog(lg.TxHash.Hex(), int(lg.Index), int64(lg.BlockNumber), event.Name, lg.Address.Hex(), string(rawData)); err != nil {
 		return err
 	}
@@ -278,6 +304,9 @@ func (idx *Indexer) handleSubmission(lg types.Log, dbEscrowID int64) error {
 }
 
 func (idx *Indexer) handleDispute(lg types.Log, dbEscrowID int64, eventName string) error {
+	if len(lg.Topics) < 2 {
+		return fmt.Errorf("handleDispute: insufficient topics (got %d, need >= 2)", len(lg.Topics))
+	}
 	raisedBy := common.BytesToAddress(lg.Topics[1].Bytes()).Hex()
 	reasonURI := ""
 

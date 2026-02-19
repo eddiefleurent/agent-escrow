@@ -75,8 +75,24 @@ Single Go binary: MCP server + HTTP JSON API + event indexer. Eight MCP tools, n
 2. API/MCP handler tests with mock chain client interface -- complete (22 tests, `ChainClient` interface, `MockClient`)
 3. Chain health check with RPC connectivity verification -- complete (returns block number + chain ID, 503 on failure)
 4. Structured logging with request context -- complete (`log/slog` with JSON handler)
-5. Deploy to Base Sepolia -- record factory address, verify on explorer
-6. Reference agent demo -- minimal end-to-end flow showing an AI agent completing a task through escrow via MCP
+5. Input validation and error propagation -- complete (ParseUint/SetString checks, time.Parse propagation, nil guards, bounds checks)
+6. Deploy to Base Sepolia -- record factory address, verify on explorer
+7. Reference agent demo -- minimal end-to-end flow showing an AI agent completing a task through escrow via MCP
+
+#### Remaining Hardening (Not Yet Started)
+
+**Contract safety:**
+- **Reentrancy guard gas optimization** -- switch `_locked` from 0/1 to 1/2 pattern (avoids zero-to-nonzero SSTORE cost, aligns with OpenZeppelin convention)
+- **Role address distinctness checks** -- validate buyer/worker/verifier/arbitrator are distinct addresses in `TaskEscrow` constructor to prevent role collapse undermining escrow security
+- **Two-step ownership transfer** -- add `pendingOwner` + `acceptOwnership()` to `TaskEscrowFactory` to prevent permanent lockout on key loss/compromise
+
+**Server hardening:**
+- **Configurable CORS origins** -- replace `Access-Control-Allow-Origin: *` with environment-configurable allowed origins for production deployments
+- **Request timeout middleware** -- add `http.TimeoutHandler` or equivalent to bound long-running requests (must accommodate chain tx polling which can take 30-60s)
+- **Config validation** -- validate required config fields (`RPC_URL`, `PRIVATE_KEY`, `FACTORY_ADDRESS`) at startup with clear error messages; must preserve offline mode when `RPC_URL` is intentionally empty
+- **Indexer error propagation** -- surface fatal indexer errors to the main goroutine via error channel (currently logs per-tick errors but cannot signal unrecoverable failures)
+- **MockClient thread safety** -- protect mutable fields (`BlockNum`, `Logs`, `Receipt`, `StatusVal`, etc.) with mutex in read methods; currently safe for typical test patterns but would race under parallel test mutation
+- **SubmissionDeadline type consistency** -- change `Escrow.SubmissionDeadline` from `string` to `int64` (Unix timestamp) for consistency with `ReviewPeriodSeconds`/`DisputePeriodSeconds`/`ArbitratorTimeoutSeconds`; requires DB schema migration and updates across handlers, MCP tools, indexer, and tests
 
 ### Phase 4 -- Market Primitives
 

@@ -40,7 +40,10 @@ func TestCreateAndGetTask(t *testing.T) {
 func TestCreateAndGetEscrow(t *testing.T) {
 	db := openTestDB(t)
 
-	task, _ := db.CreateTask("Task", "", "0x123")
+	task, err := db.CreateTask("Task", "", "0x123")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
 	escrow, err := db.CreateEscrow(&Escrow{
 		TaskID:                   task.ID,
 		ChainID:                  84532,
@@ -80,8 +83,11 @@ func TestCreateAndGetEscrow(t *testing.T) {
 func TestGetEscrowByAddress(t *testing.T) {
 	db := openTestDB(t)
 
-	task, _ := db.CreateTask("Task", "", "0x123")
-	db.CreateEscrow(&Escrow{
+	task, err := db.CreateTask("Task", "", "0x123")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = db.CreateEscrow(&Escrow{
 		TaskID:         task.ID,
 		ChainID:        84532,
 		FactoryAddress: "0xFactory",
@@ -93,6 +99,9 @@ func TestGetEscrowByAddress(t *testing.T) {
 		Amount:         "100",
 		Status:         "created",
 	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
 
 	got, err := db.GetEscrowByAddress("0xUniqueAddr")
 	if err != nil {
@@ -106,8 +115,11 @@ func TestGetEscrowByAddress(t *testing.T) {
 func TestUpdateEscrowStatus(t *testing.T) {
 	db := openTestDB(t)
 
-	task, _ := db.CreateTask("Task", "", "0x123")
-	escrow, _ := db.CreateEscrow(&Escrow{
+	task, err := db.CreateTask("Task", "", "0x123")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	escrow, err := db.CreateEscrow(&Escrow{
 		TaskID:         task.ID,
 		ChainID:        84532,
 		FactoryAddress: "0xFactory",
@@ -119,12 +131,18 @@ func TestUpdateEscrowStatus(t *testing.T) {
 		Amount:         "100",
 		Status:         "created",
 	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
 
 	if err := db.UpdateEscrowStatus(escrow.ID, "funded"); err != nil {
 		t.Fatalf("update status: %v", err)
 	}
 
-	got, _ := db.GetEscrow(escrow.ID)
+	got, err := db.GetEscrow(escrow.ID)
+	if err != nil {
+		t.Fatalf("get escrow: %v", err)
+	}
 	if got.Status != "funded" {
 		t.Fatalf("expected status 'funded', got %q", got.Status)
 	}
@@ -133,17 +151,26 @@ func TestUpdateEscrowStatus(t *testing.T) {
 func TestListEscrows(t *testing.T) {
 	db := openTestDB(t)
 
-	task, _ := db.CreateTask("Task", "", "0x123")
-	db.CreateEscrow(&Escrow{
+	task, err := db.CreateTask("Task", "", "0x123")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = db.CreateEscrow(&Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE1",
 		Buyer: "0xBuyer", Worker: "0xWorker", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "created",
 	})
-	db.CreateEscrow(&Escrow{
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
+	_, err = db.CreateEscrow(&Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE2",
 		Buyer: "0xBuyer", Worker: "0xOtherWorker", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "200", Status: "funded",
 	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
 
 	// List all
 	all, err := db.ListEscrows("", "", "")
@@ -176,12 +203,18 @@ func TestListEscrows(t *testing.T) {
 func TestSubmissions(t *testing.T) {
 	db := openTestDB(t)
 
-	task, _ := db.CreateTask("Task", "", "0x123")
-	escrow, _ := db.CreateEscrow(&Escrow{
+	task, err := db.CreateTask("Task", "", "0x123")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	escrow, err := db.CreateEscrow(&Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
 
 	sub, err := db.CreateSubmission(escrow.ID, "0xhash123", "ipfs://result")
 	if err != nil {
@@ -203,12 +236,18 @@ func TestSubmissions(t *testing.T) {
 func TestDisputes(t *testing.T) {
 	db := openTestDB(t)
 
-	task, _ := db.CreateTask("Task", "", "0x123")
-	escrow, _ := db.CreateEscrow(&Escrow{
+	task, err := db.CreateTask("Task", "", "0x123")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	escrow, err := db.CreateEscrow(&Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "disputed",
 	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
 
 	disp, err := db.CreateDispute(escrow.ID, "0xBuyer", "ipfs://reason")
 	if err != nil {
@@ -282,7 +321,10 @@ func TestCursor(t *testing.T) {
 	if err := db.SetCursor(84532, "indexer", 200); err != nil {
 		t.Fatalf("update cursor: %v", err)
 	}
-	block, _ = db.GetCursor(84532, "indexer")
+	block, err = db.GetCursor(84532, "indexer")
+	if err != nil {
+		t.Fatalf("get cursor: %v", err)
+	}
 	if block != 200 {
 		t.Fatalf("expected 200, got %d", block)
 	}

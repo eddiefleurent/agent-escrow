@@ -65,7 +65,7 @@ Always run `make test-all` before finishing changes. If tests fail, fix the root
 
 ## Key Directories
 
-```
+```text
 src/                      Solidity contracts
 test/                     Foundry tests
 script/                   Deploy scripts

@@ -9,7 +9,9 @@ contract DeployFactory is Script {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address treasury = vm.envAddress("TREASURY");
         address owner = vm.envAddress("OWNER");
-        uint16 protocolFeeBps = uint16(vm.envUint("PROTOCOL_FEE_BPS"));
+        uint256 rawFeeBps = vm.envUint("PROTOCOL_FEE_BPS");
+        require(rawFeeBps <= 10_000, "PROTOCOL_FEE_BPS exceeds 10000");
+        uint16 protocolFeeBps = uint16(rawFeeBps);
 
         vm.startBroadcast(deployerPrivateKey);
         factory = new TaskEscrowFactory(protocolFeeBps, treasury, owner);
