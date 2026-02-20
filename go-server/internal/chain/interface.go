@@ -22,6 +22,7 @@ type ChainClient interface {
 	// High-level escrow operations
 	CreateEscrow(ctx context.Context, factory common.Address, p CreateEscrowParams) (*types.Transaction, error)
 	Fund(ctx context.Context, escrow common.Address, amount *big.Int) (*types.Transaction, error)
+	ApproveERC20(ctx context.Context, token common.Address, spender common.Address, amount *big.Int) (*types.Transaction, error)
 	Submit(ctx context.Context, escrow common.Address, submissionHash [32]byte, submissionURI string) (*types.Transaction, error)
 	ApproveByBuyer(ctx context.Context, escrow common.Address) (*types.Transaction, error)
 	ApproveByVerifier(ctx context.Context, escrow common.Address) (*types.Transaction, error)

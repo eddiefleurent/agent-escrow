@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	abidata "github.com/eddiefleurent/agent-escrow/go-server/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -26,9 +27,12 @@ func parseABI(raw []byte) (abi.ABI, error) {
 	return parsed, nil
 }
 
+const erc20ApproveABI = `[{"inputs":[{"name":"spender","type":"address"},{"name":"amount","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}]`
+
 var (
 	FactoryABI abi.ABI
 	EscrowABI  abi.ABI
+	ERC20ABI   abi.ABI
 )
 
 func init() {
@@ -40,5 +44,9 @@ func init() {
 	EscrowABI, err = parseABI(abidata.EscrowJSON)
 	if err != nil {
 		panic(fmt.Sprintf("escrow abi: %v", err))
+	}
+	ERC20ABI, err = abi.JSON(strings.NewReader(erc20ApproveABI))
+	if err != nil {
+		panic(fmt.Sprintf("erc20 abi: %v", err))
 	}
 }
