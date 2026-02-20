@@ -29,17 +29,17 @@ const (
 
 // Status mappings from event names to escrow status strings
 var eventStatusMap = map[string]string{
-	"EscrowFunded":              "funded",
-	"SubmissionMade":            "submitted",
-	"Approved":                  "approved",
-	"Rejected":                  "disputed",
-	"Disputed":                  "disputed",
-	"SilenceEscalated":          "disputed",
-	"DisputeResolved":           "resolved",
-	"Settled":                   "settled",
-	"Refunded":                  "refunded",
-	"Cancelled":                 "cancelled",
-	"ArbitratorTimeoutClaimed":  "refunded",
+	"EscrowFunded":             "funded",
+	"SubmissionMade":           "submitted",
+	"Approved":                 "approved",
+	"Rejected":                 "disputed",
+	"Disputed":                 "disputed",
+	"SilenceEscalated":         "disputed",
+	"DisputeResolved":          "resolved",
+	"Settled":                  "settled",
+	"Refunded":                 "refunded",
+	"Cancelled":                "cancelled",
+	"ArbitratorTimeoutClaimed": "refunded",
 }
 
 type Indexer struct {

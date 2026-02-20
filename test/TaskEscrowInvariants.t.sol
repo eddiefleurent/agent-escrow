@@ -143,9 +143,8 @@ contract TaskEscrowInvariantsTest is StdInvariant, Test {
 
     function invariant_terminalStateIsSticky() public {
         TaskEscrow.Status st = escrow.status();
-        bool terminal = (
-            st == TaskEscrow.Status.Settled || st == TaskEscrow.Status.Refunded || st == TaskEscrow.Status.Cancelled
-        );
+        bool terminal =
+            (st == TaskEscrow.Status.Settled || st == TaskEscrow.Status.Refunded || st == TaskEscrow.Status.Cancelled);
         if (!terminal) return;
 
         uint256 statusBefore = uint256(st);

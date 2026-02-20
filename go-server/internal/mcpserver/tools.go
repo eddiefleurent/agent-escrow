@@ -26,7 +26,7 @@ type createEscrowArgs struct {
 	ReviewPeriodSeconds      string `json:"review_period_seconds" jsonschema:"Review period in seconds"`
 	DisputePeriodSeconds     string `json:"dispute_period_seconds" jsonschema:"Dispute period in seconds"`
 	ArbitratorTimeoutSeconds string `json:"arbitrator_timeout_seconds" jsonschema:"Arbitrator timeout in seconds"`
-	Token                    string `json:"token,omitempty" jsonschema:"ERC20 token address; omit or 0x0 for ETH"`
+	Token                    string `json:"token,omitempty" jsonschema:"ERC20 token address; omit or use 0x0000000000000000000000000000000000000000 for ETH"`
 }
 
 type escrowIDArgs struct {

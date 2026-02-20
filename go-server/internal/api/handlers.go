@@ -180,10 +180,10 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 	_ = h.idx.RunOnce(r.Context())
 
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"escrow_id":      escrow.ID,
-		"task_id":        task.ID,
-		"tx_hash":        tx.Hash().Hex(),
-		"escrow_address": result.EscrowAddress.Hex(),
+		"escrow_id":       escrow.ID,
+		"task_id":         task.ID,
+		"tx_hash":         tx.Hash().Hex(),
+		"escrow_address":  result.EscrowAddress.Hex(),
 		"chain_escrow_id": result.EscrowID,
 	})
 }

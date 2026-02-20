@@ -96,9 +96,8 @@ contract TaskEscrow {
         }
         if (p.treasurySnapshot == address(0)) revert InvalidAddress();
         if (
-            p.buyer == p.worker || p.buyer == p.verifier || p.buyer == p.arbitrator
-                || p.worker == p.verifier || p.worker == p.arbitrator
-                || p.verifier == p.arbitrator
+            p.buyer == p.worker || p.buyer == p.verifier || p.buyer == p.arbitrator || p.worker == p.verifier
+                || p.worker == p.arbitrator || p.verifier == p.arbitrator
         ) {
             revert RolesNotDistinct();
         }
@@ -293,13 +292,15 @@ contract TaskEscrow {
 
     /// @dev Safe ERC20 transfer that handles tokens not returning a bool (e.g. USDT).
     function _safeTransfer(IERC20 _token, address to, uint256 value) internal {
-        (bool success, bytes memory data) = address(_token).call(abi.encodeWithSelector(_token.transfer.selector, to, value));
+        (bool success, bytes memory data) =
+            address(_token).call(abi.encodeWithSelector(_token.transfer.selector, to, value));
         if (!success || (data.length > 0 && !abi.decode(data, (bool)))) revert TransferFailed();
     }
 
     /// @dev Safe ERC20 transferFrom that handles tokens not returning a bool (e.g. USDT).
     function _safeTransferFrom(IERC20 _token, address from, address to, uint256 value) internal {
-        (bool success, bytes memory data) = address(_token).call(abi.encodeWithSelector(_token.transferFrom.selector, from, to, value));
+        (bool success, bytes memory data) =
+            address(_token).call(abi.encodeWithSelector(_token.transferFrom.selector, from, to, value));
         if (!success || (data.length > 0 && !abi.decode(data, (bool)))) revert TransferFailed();
     }
 

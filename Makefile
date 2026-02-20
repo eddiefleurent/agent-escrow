@@ -1,4 +1,4 @@
-.PHONY: build test test-unit test-invariant fmt clean deploy-base-sepolia go-abi go-build go-test go-run go-fmt all test-all
+.PHONY: build test test-unit test-invariant fmt fmt-check sizes snapshot clean deploy-base-sepolia go-abi go-build go-test go-vet go-run go-fmt all test-all
 
 # Solidity targets
 build:
@@ -15,6 +15,17 @@ test-invariant:
 
 fmt:
 	forge fmt
+	cd go-server && gofmt -w .
+
+fmt-check:
+	forge fmt --check
+	@test -z "$$(cd go-server && gofmt -l .)" || (cd go-server && gofmt -l . && exit 1)
+
+sizes:
+	forge build --sizes
+
+snapshot:
+	forge snapshot
 
 clean:
 	forge clean
@@ -37,6 +48,9 @@ go-build: go-abi
 go-test: go-abi
 	cd go-server && go test ./...
 
+go-vet: go-abi
+	cd go-server && go vet ./...
+
 go-run: go-build
 	cd go-server && ./bin/server
 
@@ -46,4 +60,4 @@ go-fmt:
 # Combined targets
 all: build go-build
 
-test-all: test test-invariant go-test
+test-all: fmt-check test test-invariant go-vet go-test

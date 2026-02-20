@@ -34,11 +34,17 @@ This project implements the ["Intelligent AI Delegation"](https://arxiv.org/abs/
 ```bash
 make build          # forge build
 make test           # forge test -vv
+make test-unit      # forge test for TaskEscrow*.t.sol only (faster)
 make test-invariant # invariant tests
 make go-abi         # copy ABI artifacts from Foundry output to go-server/abi/
 make go-build       # compile Go binary (runs go-abi first)
 make go-test        # go test ./...
-make test-all       # all Solidity + Go tests
+make go-vet         # go vet ./...
+make go-run         # build and run the server locally
+make fmt            # forge fmt + gofmt -w (both Solidity and Go)
+make fmt-check      # lint formatting without writing (used in CI)
+make sizes          # show contract sizes (check proximity to 24KB limit)
+make test-all       # fmt-check + all Solidity + Go vet + Go tests
 ```
 
 Always run `make test-all` before finishing changes. If tests fail, fix the root cause, rerun, and report what changed.
@@ -93,3 +99,11 @@ make deploy-base-sepolia
 ```
 
 Verify contract source on block explorer after deployment. Record deployed addresses and tx hashes in docs.
+
+## ERC20 Token Support
+
+- `token == address(0)` (or `""` / `"0x0000000000000000000000000000000000000000"` in Go) means ETH-denominated escrow; any other address is ERC20.
+- ERC20 funding flow: `ApproveERC20` → `WaitMined` (check `receipt.Status == 1`) → `Fund(ctx, addr, nil)`.
+- ETH funding flow: `Fund(ctx, addr, amount)` with non-nil amount.
+- Comprehensive ERC20 tests live in `test/TaskEscrowERC20.t.sol`.
+- Contracts use `Params` structs (e.g., `CreateEscrowParams`) to reduce constructor argument count -- extend these structs rather than adding bare parameters.
