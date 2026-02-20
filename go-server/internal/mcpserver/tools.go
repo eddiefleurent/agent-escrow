@@ -127,9 +127,9 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 
 	specHash := crypto.Keccak256Hash([]byte(args.Title + args.Description))
 
-	tokenAddr := common.Address{}
+	var tokenAddr common.Address
 	if args.Token != "" {
-		if !common.IsHexAddress(args.Token) || common.HexToAddress(args.Token) == (common.Address{}) {
+		if !common.IsHexAddress(args.Token) {
 			return textResult("invalid token address"), nil, nil
 		}
 		tokenAddr = common.HexToAddress(args.Token)

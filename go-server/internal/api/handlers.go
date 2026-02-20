@@ -112,9 +112,9 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	tokenAddr := common.Address{}
+	var tokenAddr common.Address
 	if req.Token != "" {
-		if !isValidAddress(req.Token) {
+		if !common.IsHexAddress(req.Token) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid token address"})
 			return
 		}
