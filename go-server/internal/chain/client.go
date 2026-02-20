@@ -14,20 +14,23 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
+const defaultLogChunkSize = uint64(2000)
+
 type Client struct {
-	eth     *ethclient.Client
-	key     *ecdsa.PrivateKey
-	address common.Address
-	chainID *big.Int
-	mu      sync.Mutex
-	nonce   uint64
-	nonceOK bool
+	eth          *ethclient.Client
+	key          *ecdsa.PrivateKey
+	address      common.Address
+	chainID      *big.Int
+	mu           sync.Mutex
+	nonce        uint64
+	nonceOK      bool
+	logChunkSize uint64
 }
 
-func NewClient(rpcURL, privateKeyHex string, chainID int64) (*Client, error) {
+func NewClient(rpcURL, privateKeyHex string, chainID int64, opts ...ClientOption) (*Client, error) {
 	if rpcURL == "" {
 		// Allow nil client for testing/offline mode
-		return &Client{chainID: big.NewInt(chainID)}, nil
+		return &Client{chainID: big.NewInt(chainID), logChunkSize: defaultLogChunkSize}, nil
 	}
 
 	eth, err := ethclient.Dial(rpcURL)
@@ -36,8 +39,13 @@ func NewClient(rpcURL, privateKeyHex string, chainID int64) (*Client, error) {
 	}
 
 	c := &Client{
-		eth:     eth,
-		chainID: big.NewInt(chainID),
+		eth:          eth,
+		chainID:      big.NewInt(chainID),
+		logChunkSize: defaultLogChunkSize,
+	}
+
+	for _, opt := range opts {
+		opt(c)
 	}
 
 	if privateKeyHex != "" {
@@ -50,6 +58,19 @@ func NewClient(rpcURL, privateKeyHex string, chainID int64) (*Client, error) {
 	}
 
 	return c, nil
+}
+
+// ClientOption configures optional Client parameters.
+type ClientOption func(*Client)
+
+// WithLogChunkSize sets the maximum block range per eth_getLogs request.
+// Use a small value (e.g. 9) for free-tier RPC providers with strict limits.
+func WithLogChunkSize(size uint64) ClientOption {
+	return func(c *Client) {
+		if size > 0 {
+			c.logChunkSize = size
+		}
+	}
 }
 
 func (c *Client) Address() common.Address {
@@ -71,13 +92,29 @@ func (c *Client) FilterLogs(ctx context.Context, addresses []common.Address, top
 	if c.eth == nil {
 		return nil, fmt.Errorf("chain client not connected (offline mode)")
 	}
-	query := ethereum.FilterQuery{
-		FromBlock: new(big.Int).SetUint64(fromBlock),
-		ToBlock:   new(big.Int).SetUint64(toBlock),
-		Addresses: addresses,
-		Topics:    topics,
+	chunkSize := c.logChunkSize
+	if chunkSize == 0 {
+		chunkSize = defaultLogChunkSize
 	}
-	return c.eth.FilterLogs(ctx, query)
+	var all []types.Log
+	for from := fromBlock; from <= toBlock; from += chunkSize {
+		to := from + chunkSize - 1
+		if to > toBlock {
+			to = toBlock
+		}
+		query := ethereum.FilterQuery{
+			FromBlock: new(big.Int).SetUint64(from),
+			ToBlock:   new(big.Int).SetUint64(to),
+			Addresses: addresses,
+			Topics:    topics,
+		}
+		logs, err := c.eth.FilterLogs(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, logs...)
+	}
+	return all, nil
 }
 
 func (c *Client) SendTx(ctx context.Context, to common.Address, data []byte, value *big.Int) (*types.Transaction, error) {

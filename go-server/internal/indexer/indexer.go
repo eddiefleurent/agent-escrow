@@ -51,6 +51,7 @@ type Indexer struct {
 	pollInterval      time.Duration
 	maxConsecFailures int
 	fatalCh           chan error
+	startBlock        uint64 // initial fromBlock when cursor is 0; overrides defaultLookback
 }
 
 // Option configures optional Indexer parameters.
@@ -68,6 +69,14 @@ func WithMaxConsecutiveFailures(n int) Option {
 func WithPollInterval(d time.Duration) Option {
 	return func(idx *Indexer) {
 		idx.pollInterval = d
+	}
+}
+
+// WithStartBlock sets the block number to begin indexing from when no prior
+// cursor exists. Use this to skip scanning blocks before contract deployment.
+func WithStartBlock(block uint64) Option {
+	return func(idx *Indexer) {
+		idx.startBlock = block
 	}
 }
 
@@ -151,7 +160,9 @@ func (idx *Indexer) RunOnce(ctx context.Context) error {
 
 	fromBlock := uint64(cursor)
 	if fromBlock == 0 {
-		if currentBlock > defaultLookback {
+		if idx.startBlock > 0 {
+			fromBlock = idx.startBlock
+		} else if currentBlock > defaultLookback {
 			fromBlock = currentBlock - defaultLookback
 		}
 	} else {

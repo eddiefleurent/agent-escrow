@@ -20,6 +20,8 @@ type Config struct {
 	CORSOrigins    []string      // Allowed CORS origins; empty means allow all ("*")
 	RequestTimeout time.Duration // Timeout for read-only requests (default 10s)
 	TxTimeout      time.Duration // Timeout for chain transaction requests (default 90s)
+	LogChunkSize   uint64        // Max block range per eth_getLogs request (default 2000)
+	StartBlock     uint64        // Block to start indexing from (0 = use defaultLookback)
 }
 
 func Load() (*Config, error) {
@@ -73,6 +75,24 @@ func Load() (*Config, error) {
 		txTimeout = d
 	}
 
+	logChunkSize := uint64(2000)
+	if raw := os.Getenv("LOG_CHUNK_SIZE"); raw != "" {
+		v, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil || v == 0 {
+			return nil, fmt.Errorf("invalid LOG_CHUNK_SIZE: must be a positive integer")
+		}
+		logChunkSize = v
+	}
+
+	var startBlock uint64
+	if raw := os.Getenv("START_BLOCK"); raw != "" {
+		v, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid START_BLOCK: %w", err)
+		}
+		startBlock = v
+	}
+
 	cfg := &Config{
 		RPCURL:         os.Getenv("RPC_URL"),
 		PrivateKey:     os.Getenv("PRIVATE_KEY"),
@@ -84,6 +104,8 @@ func Load() (*Config, error) {
 		CORSOrigins:    corsOrigins,
 		RequestTimeout: requestTimeout,
 		TxTimeout:      txTimeout,
+		LogChunkSize:   logChunkSize,
+		StartBlock:     startBlock,
 	}
 
 	result := cfg.Validate()

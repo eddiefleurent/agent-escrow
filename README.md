@@ -4,6 +4,8 @@ A reference implementation of [**"Intelligent AI Delegation"**](https://arxiv.or
 
 The paper defines five framework pillars (dynamic assessment, adaptive execution, structural transparency, scalable market coordination, systemic resilience), nine technical protocols, ethical considerations, and protocol integration paths. This project implements the financial settlement kernel and builds toward a full delegation marketplace.
 
+**[→ Live demo on Base Sepolia](docs/DEMO_RUN.md)** -- factory deployed, escrow created, funded, submitted, approved, settled on-chain.
+
 ## Motivation
 
 As AI agents become more capable, the delegation problem becomes primary: not "can the agent do the task" but "how do we trust it did the task correctly, pay it fairly, and hold it accountable?"
@@ -85,7 +87,7 @@ export PRIVATE_KEY=0x...
 make go-run
 ```
 
-Optional environment variables: `CHAIN_ID` (default: 84532), `PORT` (default: 8080), `DATABASE_URL` (default: delegation.db), `MCP_TRANSPORT` (set to `stdio` to enable MCP server).
+Optional environment variables: `CHAIN_ID` (default: 84532), `PORT` (default: 8080), `DATABASE_URL` (default: delegation.db), `MCP_TRANSPORT` (set to `stdio` to enable MCP server), `START_BLOCK` (block to start indexing from -- set to your factory deploy block to avoid scanning from genesis), `LOG_CHUNK_SIZE` (max blocks per `eth_getLogs` request, default 2000 -- set to `9` for Alchemy free tier).
 
 ### Deploy to Base Sepolia
 
@@ -145,6 +147,9 @@ docs/                   Detailed documentation
 | [`docs/SPEC_V1.md`](docs/SPEC_V1.md) | Contract specification: state machine, interfaces, invariants, security |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Implementation status, delivery phases, paper framework mapping |
 | [`docs/SETUP.md`](docs/SETUP.md) | Environment setup, Solidity version notes, configuration reference |
+| [`docs/DEPLOY_PHASE3.md`](docs/DEPLOY_PHASE3.md) | Base Sepolia deployment guide and lifecycle walkthrough |
+| [`docs/DEPLOYMENTS.md`](docs/DEPLOYMENTS.md) | Deployed contract addresses |
+| [`docs/DEMO_RUN.md`](docs/DEMO_RUN.md) | Live demo run — transactions on Base Sepolia |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution guidelines |
 
 ## Citation

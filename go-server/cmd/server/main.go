@@ -44,13 +44,19 @@ func main() {
 	}
 	defer db.Close()
 
-	chainClient, err := chain.NewClient(cfg.RPCURL, cfg.PrivateKey, cfg.ChainID)
+	chainClient, err := chain.NewClient(cfg.RPCURL, cfg.PrivateKey, cfg.ChainID,
+		chain.WithLogChunkSize(cfg.LogChunkSize),
+	)
 	if err != nil {
 		slog.Error("failed to create chain client", "error", err)
 		os.Exit(1)
 	}
 
-	idx := indexer.New(db, chainClient, cfg.FactoryAddress)
+	idxOpts := []indexer.Option{}
+	if cfg.StartBlock > 0 {
+		idxOpts = append(idxOpts, indexer.WithStartBlock(cfg.StartBlock))
+	}
+	idx := indexer.New(db, chainClient, cfg.FactoryAddress, idxOpts...)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()

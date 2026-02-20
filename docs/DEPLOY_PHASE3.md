@@ -187,6 +187,7 @@ export FACTORY_ADDRESS=0x<YOUR_DEPLOYED_FACTORY_ADDRESS>
 export PRIVATE_KEY=0x<YOUR_PRIVATE_KEY>
 export CHAIN_ID=84532
 export PORT=8080
+export START_BLOCK=<DEPLOY_BLOCK_NUMBER>   # skip scanning before deployment
 
 make go-run
 ```
@@ -218,6 +219,7 @@ The `block_number` confirms the server can reach Base Sepolia via RPC. The `chai
 | `Wrong chain ID` | `BASE_SEPOLIA_RPC_URL` points to a different network | Verify with `cast chain-id --rpc-url $BASE_SEPOLIA_RPC_URL` -- should return `84532` |
 | Verification fails: `NOTOK` | Wrong constructor args or missing API key | Double-check the constructor args match exactly what you deployed with. Ensure the BaseScan API key is valid. |
 | Health returns 503 `degraded` | RPC_URL is unreachable or rate-limited | Check the RPC URL is correct. Try a different provider (Alchemy, Infura). The public endpoint can be rate-limited under load. |
+| Indexer crashes with `eth_getLogs` block range error | Free-tier RPC limits block range per request | Set `LOG_CHUNK_SIZE=9` when using Alchemy free tier. The indexer will chunk requests automatically. |
 | `failed to create chain client` | Invalid `PRIVATE_KEY` format | Must be hex-encoded with `0x` prefix, 64 hex characters (32 bytes) |
 | Forge script hangs | RPC timeout | Add `--timeout 120` to the forge script command, or switch to a faster RPC provider |
 
@@ -233,7 +235,9 @@ This walkthrough shows an AI agent completing a full escrow lifecycle -- from ta
 - Go server running and healthy (`/api/v1/health` returns `"status": "ok"`)
 - Server wallet has Base Sepolia ETH for transaction gas
 
-For this demo, the server's single private key acts as all roles (buyer, worker, verifier, arbitrator). In production, each role would have a separate key.
+The contract enforces that all four roles (buyer, worker, verifier, arbitrator) are **distinct addresses**. For this demo, the server wallet acts as the **buyer** and three separate test wallets are used for worker, verifier, and arbitrator. Actions that require the buyer's signature (create, fund, approve) go through the HTTP API. Actions that require a different role's signature (submit, resolve) use `cast send` with that role's private key directly.
+
+In production, each role would be a separate agent with its own key.
 
 ### 2.1 Start the Server
 
