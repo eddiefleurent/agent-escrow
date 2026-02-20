@@ -1,47 +1,58 @@
 # Agent Escrow
 
-A reference implementation of [**"Intelligent AI Delegation"**](https://arxiv.org/abs/2602.11865) (Tomašev, Franklin, Osindero -- Google DeepMind, 2026), a framework for task decomposition, delegation, verification, and settlement in open agentic economies.
+Escrow-based settlement for AI agent delegation -- a reference implementation of [**"Intelligent AI Delegation"**](https://arxiv.org/abs/2602.11865) (Tomašev, Franklin, Osindero -- Google DeepMind, 2026).
 
-The paper defines five framework pillars (dynamic assessment, adaptive execution, structural transparency, scalable market coordination, systemic resilience), nine technical protocols, ethical considerations, and protocol integration paths. This project implements the financial settlement kernel and builds toward a full delegation marketplace.
+The paper defines a framework for task decomposition, delegation, verification, and settlement in open agentic economies. It identifies a critical gap: existing agent protocols (MCP, A2A, AP2, UCP) handle communication and coordination but lack **conditional settlement**, **verifiable task completion**, and **dispute resolution**. This project implements the financial settlement kernel that fills that gap, and builds toward the paper's full vision across four delivery phases.
 
-**[→ Live demo on Base Sepolia](docs/DEMO_RUN.md)** -- factory deployed, escrow created, funded, submitted, approved, settled on-chain.
+Deployed and tested on Base Sepolia. **[See the live demo with on-chain transactions.](docs/DEMO_RUN.md)**
 
-## Motivation
+## Why This Exists
 
 As AI agents become more capable, the delegation problem becomes primary: not "can the agent do the task" but "how do we trust it did the task correctly, pay it fairly, and hold it accountable?"
 
-Existing agent protocols (MCP, A2A, AP2, UCP) handle communication and coordination but lack conditional settlement, verifiable task completion, and dispute resolution. This project addresses that gap with an escrow-based settlement layer.
+- **Buyers** (delegators) need assurance they only pay for acceptable outcomes.
+- **Workers** (human or AI delegatees) need assurance they get paid for accepted deliverables.
+- **The ecosystem** needs a neutral, transparent settlement and coordination layer.
 
-- **Buyers** require assurance they only pay for acceptable outcomes.
-- **Workers** (human or AI) require assurance they will be paid for accepted deliverables.
-- **The ecosystem** requires a neutral, transparent settlement and coordination layer.
+Smart-contract escrow solves this by making payment conditional on verified completion, with dispute resolution as a fallback. The contract is the custodian -- not a marketplace operator, not a trusted third party.
 
 ## Architecture
 
-Smart-contract escrow for AI task delegation. Buyers fund escrow, workers deliver, verifiers check quality, arbitrators resolve disputes. Settlement occurs on-chain; everything else remains off-chain.
+![System Architecture](docs/diagrams/architecture.png)
 
-**On-chain**: `TaskEscrowFactory` + `TaskEscrow` on Base (Ethereum L2). Nine-state lifecycle with role-gated transitions, deadline enforcement, dispute resolution, and timeout safety nets.
+On-chain: `TaskEscrowFactory` deploys `TaskEscrow` instances on Base (Ethereum L2). Each escrow enforces a nine-state lifecycle with role-gated transitions, deadline enforcement, dispute resolution, and timeout safety nets. Supports both ETH and ERC20 tokens (USDC, etc.).
 
-**Off-chain**: Single Go binary serving an MCP server (primary agent interface), JSON REST API, and background event indexer. SQLite storage, no external dependencies.
+Off-chain: Single Go binary serving an MCP server (primary agent interface), JSON REST API, and background event indexer. SQLite storage, no external dependencies beyond an RPC endpoint.
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   Go Server Binary                  │
-│                                                     │
-│  ┌─────────────┐  ┌──────────┐  ┌───────────────┐  │
-│  │  MCP Server  │  │ HTTP API │  │ Event Indexer │  │
-│  │   (stdio)    │  │ (JSON)   │  │  (background) │  │
-│  └──────┬───────┘  └────┬─────┘  └───────┬───────┘  │
-│         └───────────┬───┘                │          │
-│              ┌──────┴──────┐    ┌────────┴───────┐  │
-│              │ Chain Client│    │   SQLite DB    │  │
-│              └──────┬──────┘    └────────────────┘  │
-└─────────────────────┼───────────────────────────────┘
-                      │
-              ┌───────┴────────┐
-              │  Base Sepolia  │
-              └────────────────┘
-```
+The design principle: **settle on-chain, everything else off-chain**. Bidding, matching, reputation, task decomposition, and agent orchestration remain off-chain where they can iterate independently.
+
+## Escrow Lifecycle
+
+Each escrow follows a nine-state machine with multiple resolution paths:
+
+![Escrow State Machine](docs/diagrams/state-machine.png)
+
+The happy path is straightforward: create, fund, submit, approve, settle. But real delegation needs failure handling -- the state machine covers buyer disputes, verifier rejections, worker silence escalation, arbitrator resolution, and timeout-based refunds.
+
+![Lifecycle Sequence](docs/diagrams/lifecycle-sequence.png)
+
+## Live Demo
+
+The full escrow lifecycle has been executed on Base Sepolia with real transactions:
+
+| Step | Description | Tx |
+|---|---|---|
+| 1 | Deploy factory | [`0x3c2c097...`](https://sepolia.basescan.org/tx/0x3c2c097585317e8871eb74f4c89aa6ca8979d6cf8a89dae8087cb8dbd2f2f7e2) |
+| 2 | Create escrow (0.001 ETH, 4 roles) | [`0x702a7e1...`](https://sepolia.basescan.org/tx/0x702a7e1df4f2cdf0f8fbb2970ee7bbbe4fa95d6ca8551209eee26fb1926fe4c6) |
+| 3 | Buyer funds escrow | [`0x803fc9e...`](https://sepolia.basescan.org/tx/0x803fc9e18e7a14cc69e5fcdd680ea0b1bfef1c1edfee1c046e85ac111b9f858b) |
+| 4 | Worker submits deliverable | [`0x5265f57...`](https://sepolia.basescan.org/tx/0x5265f57d5aae19bab7eafa306eebe06da63e364b0bd0c2627c25dfad2c509ca1) |
+| 5 | Buyer approves, settlement executes | [`0x214d16c...`](https://sepolia.basescan.org/tx/0x214d16cb6ac0a33e2c8348ae8902cb5b9e3c561826473433b1424640aea0bb46) |
+
+Worker received 99% (0.00099 ETH). Treasury received 1% protocol fee. Escrow balance: 0.
+
+Factory: [`0xf10a696e7dfC8B923ddeA2E01B07D0B01a75cf34`](https://sepolia.basescan.org/address/0xf10a696e7dfC8B923ddeA2E01B07D0B01a75cf34) on Base Sepolia.
+
+Full details: [`docs/DEMO_RUN.md`](docs/DEMO_RUN.md)
 
 ## Paper Mapping
 
@@ -55,7 +66,7 @@ Each design decision traces to the paper. The settlement kernel (V1) covers the 
 | Scalable Market Coordination (§4.3, 4.6) | Designated verifier/arbitrator | Reputation + credentials | Market stability mechanisms |
 | Systemic Resilience (§4.7, 4.9) | Role gates + reentrancy guard | DCTs + Sybil resistance | Tiered service levels |
 
-Full mapping: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/ROADMAP.md`](docs/ROADMAP.md).
+Full mapping with paper section references: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Quick Start
 
@@ -68,12 +79,12 @@ Full mapping: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/ROADMAP.
 
 ```bash
 make build          # compile Solidity contracts
-make test           # run Foundry unit + edge case tests
-make test-invariant # run invariant tests
+make test           # Foundry unit + edge case tests
+make test-invariant # invariant / fuzz tests
 
 make go-abi         # copy ABI artifacts from Foundry output
 make go-build       # compile Go binary
-make go-test        # run Go tests
+make go-test        # Go tests
 
 make test-all       # everything at once
 ```
@@ -87,7 +98,9 @@ export PRIVATE_KEY=0x...
 make go-run
 ```
 
-Optional environment variables: `CHAIN_ID` (default: 84532), `PORT` (default: 8080), `DATABASE_URL` (default: delegation.db), `MCP_TRANSPORT` (set to `stdio` to enable MCP server), `START_BLOCK` (block to start indexing from -- set to your factory deploy block to avoid scanning from genesis), `LOG_CHUNK_SIZE` (max blocks per `eth_getLogs` request, default 2000 -- set to `9` for Alchemy free tier).
+The server starts the HTTP API on port 8080 and the event indexer in the background. Set `MCP_TRANSPORT=stdio` to also enable the MCP server for agent integration.
+
+See [`docs/SETUP.md`](docs/SETUP.md) for the full configuration reference.
 
 ### Deploy to Base Sepolia
 
@@ -100,43 +113,73 @@ export BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
 make deploy-base-sepolia
 ```
 
-## MCP Tools (Agent Interface)
+## Agent Integration
+
+### MCP Tools
+
+The MCP server is the primary interface for AI agents. Any MCP-compatible client (Claude, GPT, custom agents) can use escrow without Solidity or wallet libraries -- the server handles chain interaction.
 
 | Tool | Description |
 |---|---|
-| `create_escrow` | Create task + escrow via factory |
+| `create_escrow` | Create task + escrow via factory (ETH or ERC20) |
 | `fund_escrow` | Buyer funds escrow |
 | `submit_work` | Worker submits hash + URI |
-| `approve_work` | Buyer/verifier approves |
+| `approve_work` | Buyer or verifier approves |
 | `dispute_work` | Buyer disputes or verifier rejects |
 | `resolve_dispute` | Arbitrator resolves with BPS split |
 | `get_escrow` | Read escrow state |
-| `list_escrows` | Filter by role/status |
+| `list_escrows` | Filter by role, address, or status |
 
-## HTTP API
+### HTTP API
 
 ```
 GET  /api/v1/health               Health check
 POST /api/v1/escrows              Create escrow
 GET  /api/v1/escrows              List (query: role, address, status)
-GET  /api/v1/escrows/{id}         Get escrow
-POST /api/v1/escrows/{id}/fund    Fund
+GET  /api/v1/escrows/{id}         Get escrow details
+POST /api/v1/escrows/{id}/fund    Fund escrow
 POST /api/v1/escrows/{id}/submit  Submit work
-POST /api/v1/escrows/{id}/approve Approve
-POST /api/v1/escrows/{id}/dispute Dispute
-POST /api/v1/escrows/{id}/resolve Resolve
+POST /api/v1/escrows/{id}/approve Approve submission
+POST /api/v1/escrows/{id}/dispute Dispute submission
+POST /api/v1/escrows/{id}/resolve Resolve dispute
 ```
+
+## Implementation Status
+
+**V1 -- Settlement Kernel**: Complete. Contracts deployed, full test suite (unit, fuzz, invariant), Go server with MCP + HTTP + indexer, live on Base Sepolia.
+
+**V2 -- Market Primitives**: In progress. ERC20/USDC payment support is complete. Next: worker stake, milestone-based escrow, backup agent clause, on-chain reputation, bidding protocol.
+
+**V3 -- Delegation Intelligence**: Planned. DCTs, ZK verification, checkpoint/resume, tiered service levels, multi-verifier quorum.
+
+**V4 -- Ethical Safeguards**: Planned. Curriculum-aware task routing, liability firebreaks, governance safety floors.
+
+Full roadmap with paper traceability: [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Project Structure
 
 ```
-src/                    Solidity contracts
-test/                   Foundry tests
-script/                 Deploy scripts
-go-server/              Go server (MCP + API + indexer)
+src/                    Solidity contracts (TaskEscrowFactory, TaskEscrow)
+test/                   Foundry tests (unit, fuzz, invariant)
+script/                 Deployment scripts
+go-server/
   cmd/server/           Entrypoint
-  internal/             Chain client, storage, indexer, MCP, API
-docs/                   Detailed documentation
+  internal/
+    chain/              go-ethereum client, ABI bindings
+    storage/            SQLite schema, queries, models
+    indexer/            Event polling → DB reconciliation
+    mcpserver/          MCP server + tool handlers
+    api/                HTTP JSON API + middleware
+  abi/                  Embedded ABI artifacts
+docs/
+  diagrams/             PlantUML sources + generated PNGs
+  ARCHITECTURE.md       System design, paper grounding, scalability analysis
+  SPEC_V1.md            Contract specification: state machine, interfaces, invariants
+  ROADMAP.md            Delivery phases, paper framework mapping
+  SETUP.md              Environment setup, configuration reference
+  DEMO_RUN.md           Live demo — transactions on Base Sepolia
+  DEPLOYMENTS.md        Deployed contract addresses
+  DEPLOY_PHASE3.md      Deployment guide and lifecycle walkthrough
 ```
 
 ## Documentation
@@ -145,11 +188,10 @@ docs/                   Detailed documentation
 |---|---|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System design, paper grounding, scalability analysis |
 | [`docs/SPEC_V1.md`](docs/SPEC_V1.md) | Contract specification: state machine, interfaces, invariants, security |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Implementation status, delivery phases, paper framework mapping |
-| [`docs/SETUP.md`](docs/SETUP.md) | Environment setup, Solidity version notes, configuration reference |
-| [`docs/DEPLOY_PHASE3.md`](docs/DEPLOY_PHASE3.md) | Base Sepolia deployment guide and lifecycle walkthrough |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Implementation phases, paper framework mapping, success metrics |
+| [`docs/SETUP.md`](docs/SETUP.md) | Environment setup, configuration reference |
+| [`docs/DEMO_RUN.md`](docs/DEMO_RUN.md) | Live demo run with on-chain transactions |
 | [`docs/DEPLOYMENTS.md`](docs/DEPLOYMENTS.md) | Deployed contract addresses |
-| [`docs/DEMO_RUN.md`](docs/DEMO_RUN.md) | Live demo run — transactions on Base Sepolia |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution guidelines |
 
 ## Citation

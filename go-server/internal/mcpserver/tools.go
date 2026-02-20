@@ -199,7 +199,10 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 }
 
 func (s *Server) handleFundEscrow(ctx context.Context, req *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, _ := strconv.ParseInt(args.EscrowID, 10, 64)
+	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+	}
 	escrow, err := s.db.GetEscrow(escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
@@ -244,7 +247,10 @@ func (s *Server) handleFundEscrow(ctx context.Context, req *mcp.CallToolRequest,
 }
 
 func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest, args submitArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, _ := strconv.ParseInt(args.EscrowID, 10, 64)
+	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+	}
 	escrow, err := s.db.GetEscrow(escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
@@ -264,7 +270,10 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 }
 
 func (s *Server) handleApproveWork(ctx context.Context, req *mcp.CallToolRequest, args approveArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, _ := strconv.ParseInt(args.EscrowID, 10, 64)
+	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+	}
 	escrow, err := s.db.GetEscrow(escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
@@ -292,7 +301,10 @@ func (s *Server) handleApproveWork(ctx context.Context, req *mcp.CallToolRequest
 }
 
 func (s *Server) handleDisputeWork(ctx context.Context, req *mcp.CallToolRequest, args disputeArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, _ := strconv.ParseInt(args.EscrowID, 10, 64)
+	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+	}
 	escrow, err := s.db.GetEscrow(escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
@@ -327,8 +339,14 @@ func (s *Server) handleDisputeWork(ctx context.Context, req *mcp.CallToolRequest
 }
 
 func (s *Server) handleResolveDispute(ctx context.Context, req *mcp.CallToolRequest, args resolveArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, _ := strconv.ParseInt(args.EscrowID, 10, 64)
-	bps, _ := strconv.ParseUint(args.WorkerAwardBps, 10, 16)
+	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+	}
+	bps, err := strconv.ParseUint(args.WorkerAwardBps, 10, 16)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid worker_award_bps: %v", err)), nil, nil
+	}
 
 	escrow, err := s.db.GetEscrow(escrowID)
 	if err != nil {
@@ -345,7 +363,10 @@ func (s *Server) handleResolveDispute(ctx context.Context, req *mcp.CallToolRequ
 }
 
 func (s *Server) handleGetEscrow(ctx context.Context, req *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, _ := strconv.ParseInt(args.EscrowID, 10, 64)
+	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+	}
 	escrow, err := s.db.GetEscrow(escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
