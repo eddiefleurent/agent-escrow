@@ -6,143 +6,58 @@ The paper defines five framework pillars, nine technical protocols, ethical cons
 
 ---
 
-## Implementation Status
-
-### Contracts
-
-| Item | Status |
-|---|---|
-| `TaskEscrow` state machine (9 states) | Complete |
-| Immutable roles (buyer/worker/verifier/arbitrator) | Complete |
-| Arbitrator timeout (`claimArbitratorTimeout`) | Complete |
-| Protocol fee snapshotting | Complete |
-| Verifier reject + worker silence escalation | Complete |
-| `cancelBeforeFunding` pre-funding exit | Complete |
-| `TaskEscrowFactory` with pause/fee/treasury admin | Complete |
-
-### Test Suites
-
-| Suite | Coverage |
-|---|---|
-| Unit tests (`TaskEscrow.t.sol`) | Happy path, dispute, timeout, verifier reject, silence escalation, arbitrator timeout, role checks |
-| Edge cases (`TaskEscrowEdgeCases.t.sol`) | Timing boundaries, invalid BPS, factory pause, fuzz: fund conservation + arbitrator timeout boundary, role distinctness (6 pair combos), two-step ownership transfer (7 tests) |
-| Invariants (`TaskEscrowInvariants.t.sol`) | Terminal state stickiness, balance conservation |
-
-### Go Server
-
-| Component | Status |
-|---|---|
-| Chain client (`internal/chain/`) | Complete |
-| `ChainClient` interface for testability | Complete |
-| Storage layer (`internal/storage/`) | Complete |
-| Event indexer (`internal/indexer/`) | Complete |
-| MCP server (`internal/mcpserver/`) | Complete |
-| HTTP API (`internal/api/`) | Complete |
-| Transaction receipt parsing (EscrowAddress/EscrowID) | Complete |
-| Structured logging (`log/slog`, JSON handler) | Complete |
-| Chain health check (`/api/v1/health` with RPC verification) | Complete |
-| Input validation and error propagation | Complete |
-| Configurable CORS origins | Complete |
-| Request timeout middleware (route-aware) | Complete |
-| Config validation (`Validate()` with 25 tests) | Complete |
-| Indexer error propagation (fatal channel, 10 tests) | Complete |
-| MockClient thread safety (`sync.RWMutex`) | Complete |
-| SubmissionDeadline type consistency (`int64`) | Complete |
-| Go test suite | Complete (76 tests across 4 packages) |
-
-### Infrastructure
-
-| Item | Status |
-|---|---|
-| Makefile (build, test, deploy, go-abi, go-build, go-test, go-run, go-fmt, test-all) | Complete |
-| Deploy script (`DeployFactory.s.sol`) | Complete |
-| CI workflow (`.github/workflows/ci.yml`)  | Complete |
-| LICENSE (MIT) | Complete |
-| Documentation suite | Complete |
-
----
-
 ## Delivery Phases
 
-### Phase 0 -- Specification
+### V1 -- Settlement Kernel ✓
 
-Finalized state machine, role semantics, and edge-case handling. Documented threat model, invariant checklist, and paper traceability.
+The foundation: specification, contracts, off-chain server, and production hardening.
 
-### Phase 1 -- Contract MVP
+- **Specification**: state machine, role semantics, threat model, invariant checklist, paper traceability
+- **Contracts**: `TaskEscrowFactory` + `TaskEscrow` with the full 9-state machine, immutable roles, protocol fee snapshotting, arbitrator timeout; Foundry unit, edge case, fuzz, and invariant test suites
+- **Off-chain server**: single Go binary -- MCP server + HTTP JSON API + SQLite event indexer; eight MCP tools, nine HTTP endpoints, go-ethereum chain client with ABI bindings
+- **Hardening**: receipt parsing, `ChainClient` interface + `MockClient`, health check with RPC verification, structured logging, input validation, CORS, route-aware timeouts, config validation, indexer error propagation, contract reentrancy optimization, role distinctness, two-step ownership transfer
 
-Implemented `TaskEscrowFactory` and `TaskEscrow`. Added arbitrator timeout (identified as the primary correctness gap from paper review). Foundry unit, edge case, fuzz, and invariant tests. Deploy script ready.
-
-### Phase 2 -- Off-Chain Server
-
-Single Go binary: MCP server + HTTP JSON API + event indexer. Eight MCP tools, nine HTTP endpoints, SQLite storage, chain client with go-ethereum bindings.
-
-### Phase 3 -- Hardening
-
-All hardening items complete. Deployment and live demo pending (guide in [`DEPLOY_PHASE3.md`](DEPLOY_PHASE3.md)).
-
-**Server hardening:**
-1. Transaction receipt parsing for `EscrowAddress` and `EscrowID` -- complete
-2. API/MCP handler tests with mock chain client interface -- complete (22 tests, `ChainClient` interface, `MockClient`)
-3. Chain health check with RPC connectivity verification -- complete (returns block number + chain ID, 503 on failure)
-4. Structured logging with request context -- complete (`log/slog` with JSON handler)
-5. Input validation and error propagation -- complete (ParseUint/SetString checks, time.Parse propagation, nil guards, bounds checks)
-6. Configurable CORS origins -- complete (`CORS_ORIGINS` env var, comma-separated; empty = wildcard for dev; restricted mode echoes matched origin with `Vary: Origin`)
-7. Request timeout middleware -- complete (route-aware `http.TimeoutHandler`: 10s default for reads via `REQUEST_TIMEOUT`, 90s for chain tx endpoints via `TX_TIMEOUT`; returns JSON `{"error":"request timeout"}` with 503 on expiry)
-8. Config validation -- complete (`Validate()` method on `Config`: requires `PRIVATE_KEY` and `FACTORY_ADDRESS` when `RPC_URL` is set; validates hex format and byte length; checks port range and timeout positivity; offline mode preserved when `RPC_URL` is empty with warning; 25 tests)
-9. Indexer error propagation -- complete (fatal errors surfaced via buffered `Err()` channel after configurable consecutive failure threshold; `main.go` selects on indexer error channel for graceful shutdown; `WithMaxConsecutiveFailures` + `WithPollInterval` options; 10 tests)
-10. MockClient thread safety -- complete (`sync.RWMutex` on all interface methods; read methods acquire `RLock`, write methods acquire full `Lock`; `Lock()`/`Unlock()` exposed for tests that mutate mid-flight; race detector clean)
-11. SubmissionDeadline type consistency -- complete (`Escrow.SubmissionDeadline` changed from `string` to `int64` Unix timestamp for consistency with `ReviewPeriodSeconds`/`DisputePeriodSeconds`/`ArbitratorTimeoutSeconds`; DB schema, models, handlers, MCP tools, indexer, and tests updated)
-
-**Contract safety:**
-12. Reentrancy guard gas optimization -- complete (`_locked` uses 1/2 pattern: avoids zero-to-nonzero SSTORE cost, aligns with OpenZeppelin convention)
-13. Role address distinctness checks -- complete (buyer/worker/verifier/arbitrator must be distinct addresses; reverts `RolesNotDistinct` on overlap)
-14. Two-step ownership transfer -- complete (`transferOwnership` + `acceptOwnership` on `TaskEscrowFactory`; prevents permanent lockout on key loss/compromise)
-
-**Deployment:**
-15. Deploy to Base Sepolia -- deployment guide in [`DEPLOY_PHASE3.md`](DEPLOY_PHASE3.md); actual deployment pending
-16. Reference agent demo -- demo walkthrough documented in [`DEPLOY_PHASE3.md`](DEPLOY_PHASE3.md) Part 2; live demo pending
-
-### Phase 4 -- Market Primitives
+### V2 -- Market Primitives (Current)
 
 Marketplace layer built on top of the settlement kernel.
 
-7. **ERC20/USDC payment support** -- extend escrow to accept ERC20 tokens alongside ETH
-8. **Worker stake activation** -- enable the reserved `workerStake` field as anti-Sybil bond (paper §4.8: delegatee posts financial stake into escrow prior to execution)
-9. **Milestone-based escrow** -- multiple submission/approval checkpoints within a single escrow with partial payouts (paper §4.4: smart contracts with pre-agreed executable clauses for adaptive coordination)
-10. **Backup agent clause** -- pre-designated fallback worker if primary defaults, with penalty coverage (paper §4.4: backup agent auto-re-allocation on failed ZK checkpoint)
-11. **On-chain reputation seed** -- factory-level outcome recording per address: tasks completed, disputed, failed (paper §4.6 Table 3: immutable ledger approach)
-12. **Complexity floor parameter** -- minimum escrow amount to justify delegation overhead, gas + protocol fee (paper §4.3: complexity floor below which delegation overhead exceeds task value)
-13. **Task_RFQ + Bid_Object bidding protocol** -- off-chain bidding with on-chain escrow formalization on bid acceptance (paper §6.1: Task_RFQ broadcast + signed Bid_Objects)
-14. **A2A settlement adapter** -- agent card advertising escrow capability; `verification_policy` + `escrow_trigger` fields (paper §6: A2A Task object extension)
-15. **AP2 mandate-to-escrow bridge** -- AP2 mandate authorization triggers escrow funding (paper §6: AP2 stake-on-bid + conditional settlement)
-16. **Real-time event subscriptions** -- WebSocket/SSE stream for escrow lifecycle events (paper §4.5: configurable granularity L0-L3)
-17. **Emergency response protocol** -- credential revocation propagation, contract freeze with fund recovery path (paper §4.9: rapid incident response, recursive credential revocation across chains)
+1. **ERC20/USDC payment support** ✓ -- escrow accepts ERC20 tokens alongside ETH; token field propagated through contracts, storage, indexer, API, and MCP tools
+2. **Worker stake activation** -- enable the reserved `workerStake` field as anti-Sybil bond (paper §4.8: delegatee posts financial stake into escrow prior to execution)
+3. **Milestone-based escrow** -- multiple submission/approval checkpoints within a single escrow with partial payouts (paper §4.4: smart contracts with pre-agreed executable clauses for adaptive coordination)
+4. **Backup agent clause** -- pre-designated fallback worker if primary defaults, with penalty coverage (paper §4.4: backup agent auto-re-allocation on failed ZK checkpoint)
+5. **On-chain reputation seed** -- factory-level outcome recording per address: tasks completed, disputed, failed (paper §4.6 Table 3: immutable ledger approach)
+6. **Complexity floor parameter** -- minimum escrow amount to justify delegation overhead, gas + protocol fee (paper §4.3: complexity floor below which delegation overhead exceeds task value)
+7. **Task_RFQ + Bid_Object bidding protocol** -- off-chain bidding with on-chain escrow formalization on bid acceptance (paper §6.1: Task_RFQ broadcast + signed Bid_Objects)
+8. **A2A settlement adapter** -- agent card advertising escrow capability; `verification_policy` + `escrow_trigger` fields (paper §6: A2A Task object extension)
+9. **AP2 mandate-to-escrow bridge** -- AP2 mandate authorization triggers escrow funding (paper §6: AP2 stake-on-bid + conditional settlement)
+10. **Real-time event subscriptions** -- WebSocket/SSE stream for escrow lifecycle events (paper §4.5: configurable granularity L0-L3)
+11. **Emergency response protocol** -- credential revocation propagation, contract freeze with fund recovery path (paper §4.9: rapid incident response, recursive credential revocation across chains)
 
-### Phase 5 -- Delegation Intelligence
+### V3 -- Delegation Intelligence
 
 Full marketplace intelligence and the paper's advanced coordination mechanisms.
 
-18. **Delegation Capability Tokens (DCTs)** -- attenuated permission tokens based on Macaroons/Biscuits, scoped to escrow lifecycle; invalidated on settlement/refund (paper §6.1: restriction chaining across delegation chains)
-19. **Verifiable credentials for bidding** -- agents present signed capability attestations during Task_RFQ; delegator filters by domain-specific credentials (paper §4.6 Table 3: Web of Trust with DIDs)
-20. **Attestation chains** -- recursive verification across delegation chains (A -> B -> C); each link produces signed attestation of sub-task completion (paper §4.8: transitive liability, chain of custody)
-21. **ZK verification slot** -- optional `proofHash` field on submission for formally verifiable tasks; supports zk-SNARKs/groth16 (paper §4.8: cryptographic verification for trustless automated verification)
-22. **Checkpoint/resume** -- standardized state snapshots for mid-task agent swaps; periodic `state_snapshot` commits to shared storage (paper §6.1: checkpoint artifacts + partial compensation clauses)
-23. **Tiered service levels** -- low-assurance (optimistic) vs high-assurance (verified) delegation paths with different fee/verification structures (paper §5.3: ensure safety does not become a luxury good)
-24. **Market stability mechanisms** -- cooldown periods for re-bidding, damping factors on reputation updates, increasing fees on frequent re-delegation (paper §4.4: prevent oscillation and cascading re-allocations)
-25. **Contract-first decomposition tooling** -- MCP tool that helps agents decompose tasks to match available market capabilities; recursive decomposition until sub-tasks match verification capabilities (paper §4.1: decompose until units match formal proofs or automated tests)
-26. **Multi-verifier quorum** -- multiple independent verifiers for high-criticality tasks; Schelling point consensus (paper §4.8: game-theoretic verification consensus)
-27. **UCP fulfillment provider** -- expose escrow lifecycle as UCP-compatible fulfillment backend for commercial agent transactions (paper §6: UCP architecture extension for abstract computational tasks)
+12. **Delegation Capability Tokens (DCTs)** -- attenuated permission tokens based on Macaroons/Biscuits, scoped to escrow lifecycle; invalidated on settlement/refund (paper §6.1: restriction chaining across delegation chains)
+13. **Verifiable credentials for bidding** -- agents present signed capability attestations during Task_RFQ; delegator filters by domain-specific credentials (paper §4.6 Table 3: Web of Trust with DIDs)
+14. **Attestation chains** -- recursive verification across delegation chains (A -> B -> C); each link produces signed attestation of sub-task completion (paper §4.8: transitive liability, chain of custody)
+15. **ZK verification slot** -- optional `proofHash` field on submission for formally verifiable tasks; supports zk-SNARKs/groth16 (paper §4.8: cryptographic verification for trustless automated verification)
+16. **Checkpoint/resume** -- standardized state snapshots for mid-task agent swaps; periodic `state_snapshot` commits to shared storage (paper §6.1: checkpoint artifacts + partial compensation clauses)
+17. **Tiered service levels** -- low-assurance (optimistic) vs high-assurance (verified) delegation paths with different fee/verification structures (paper §5.3: ensure safety does not become a luxury good)
+18. **Market stability mechanisms** -- cooldown periods for re-bidding, damping factors on reputation updates, increasing fees on frequent re-delegation (paper §4.4: prevent oscillation and cascading re-allocations)
+19. **Contract-first decomposition tooling** -- MCP tool that helps agents decompose tasks to match available market capabilities; recursive decomposition until sub-tasks match verification capabilities (paper §4.1: decompose until units match formal proofs or automated tests)
+20. **Multi-verifier quorum** -- multiple independent verifiers for high-criticality tasks; Schelling point consensus (paper §4.8: game-theoretic verification consensus)
+21. **UCP fulfillment provider** -- expose escrow lifecycle as UCP-compatible fulfillment backend for commercial agent transactions (paper §6: UCP architecture extension for abstract computational tasks)
 
-### Phase 6 -- Ethical Safeguards and Ecosystem Maturity
+### V4 -- Ethical Safeguards and Ecosystem Maturity
 
 The paper's ethical dimensions (Section 5) and ecosystem-level concerns.
 
-28. **Curriculum-aware task routing** -- track human skill progression; strategically allocate tasks at the boundary of expanding skill sets; AI co-execution with progressive withdrawal (paper §5.6: zone of proximal development, prevent de-skilling)
-29. **Liability firebreaks** -- pre-defined contractual stop-gaps in long delegation chains where an agent must assume full non-transitive liability or halt and request updated authority (paper §5.2: prevent accountability vacuum)
-30. **Cognitive friction calibration** -- context-aware friction: seamless execution for low-criticality tasks, mandatory justification and manual intervention for high-uncertainty scenarios; alarm fatigue mitigation (paper §5.1: balance cognitive friction against alarm fatigue)
-31. **Decentralized identifiers (DIDs)** -- each agent and human participant holds a DID for signing all messages; non-repudiation of communications and contractual agreements (paper §4.9: cryptographic identity layer)
-32. **Insurance/liability framework** -- insurance providers safeguard human participation in agentic markets for damages not preempted by technical mechanisms (paper §4.9: insurance for human participants)
-33. **Governance layer** -- safety floors for specific task classes (financial transactions, health data) that cannot be bypassed for efficiency; mandatory verification steps (paper §5.3: governance enforces safety floors)
+22. **Curriculum-aware task routing** -- track human skill progression; strategically allocate tasks at the boundary of expanding skill sets; AI co-execution with progressive withdrawal (paper §5.6: zone of proximal development, prevent de-skilling)
+23. **Liability firebreaks** -- pre-defined contractual stop-gaps in long delegation chains where an agent must assume full non-transitive liability or halt and request updated authority (paper §5.2: prevent accountability vacuum)
+24. **Cognitive friction calibration** -- context-aware friction: seamless execution for low-criticality tasks, mandatory justification and manual intervention for high-uncertainty scenarios; alarm fatigue mitigation (paper §5.1: balance cognitive friction against alarm fatigue)
+25. **Decentralized identifiers (DIDs)** -- each agent and human participant holds a DID for signing all messages; non-repudiation of communications and contractual agreements (paper §4.9: cryptographic identity layer)
+26. **Insurance/liability framework** -- insurance providers safeguard human participation in agentic markets for damages not preempted by technical mechanisms (paper §4.9: insurance for human participants)
+27. **Governance layer** -- safety floors for specific task classes (financial transactions, health data) that cannot be bypassed for efficiency; mandatory verification steps (paper §5.3: governance enforces safety floors)
 
 ---
 
@@ -216,7 +131,7 @@ How each version maps to the five pillars from ["Intelligent AI Delegation"](htt
 
 **Paper**: Extend existing protocols rather than compete with them. MCP lacks a policy/accountability layer. A2A lacks verification and escrow. AP2 lacks conditional settlement. UCP lacks abstract task delegation support.
 
-| Protocol | Gap (per paper) | Integration | Phase |
+| Protocol | Gap (per paper) | Integration | Version |
 |---|---|---|---|
 | **MCP** | No liability, reputation, trust, or conditional settlement | MCP server with 8 escrow tools; future: monitoring stream (L0-L3), DCT-scoped tool permissions | V1 (complete), V2-V3 |
 | **A2A** | No verification slots, no escrow, assumes trust | Settlement adapter agent card; `verification_policy` + `escrow_trigger` on A2A Task objects | V2 |
