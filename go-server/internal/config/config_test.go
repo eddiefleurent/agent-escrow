@@ -233,6 +233,32 @@ func TestLoad_InvalidPort(t *testing.T) {
 	}
 }
 
+func TestLoad_InvalidRequestTimeout(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("REQUEST_TIMEOUT", "not-a-duration")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid REQUEST_TIMEOUT")
+	}
+	if !strings.Contains(err.Error(), "REQUEST_TIMEOUT") {
+		t.Errorf("expected error mentioning REQUEST_TIMEOUT, got: %v", err)
+	}
+}
+
+func TestLoad_InvalidTxTimeout(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("TX_TIMEOUT", "not-a-duration")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid TX_TIMEOUT")
+	}
+	if !strings.Contains(err.Error(), "TX_TIMEOUT") {
+		t.Errorf("expected error mentioning TX_TIMEOUT, got: %v", err)
+	}
+}
+
 func TestLoad_CORSOrigins(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("CORS_ORIGINS", "https://example.com, https://other.com")

@@ -22,6 +22,21 @@ contract TaskEscrowHandler is Test {
         arbitrator = _arbitrator;
     }
 
+    function fund() external {
+        vm.prank(buyer);
+        try escrow.fund{value: 1 ether}() {} catch {}
+    }
+
+    function cancelBeforeFunding() external {
+        vm.prank(buyer);
+        try escrow.cancelBeforeFunding() {} catch {}
+    }
+
+    function submit(bytes32 hash) external {
+        vm.prank(worker);
+        try escrow.submit(hash, "ipfs://submission") {} catch {}
+    }
+
     function approveByBuyer() external {
         vm.prank(buyer);
         try escrow.approveByBuyer() {} catch {}

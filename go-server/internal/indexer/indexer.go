@@ -2,7 +2,9 @@ package indexer
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -207,8 +209,12 @@ func (idx *Indexer) handleEscrowCreated(lg types.Log) error {
 	buyer := common.BytesToAddress(lg.Topics[3].Bytes())
 
 	// Check if escrow already exists (e.g. created via API/MCP handler with on-chain fields already set)
-	if _, err := idx.db.GetEscrowByAddress(escrowAddr.Hex()); err == nil {
+	_, err = idx.db.GetEscrowByAddress(escrowAddr.Hex())
+	if err == nil {
 		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("check existing escrow %s: %w", escrowAddr.Hex(), err)
 	}
 
 	// Escrow was created externally (not via our handlers) -- index it from the event

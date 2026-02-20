@@ -177,6 +177,9 @@ func (d *DB) ListEscrows(role, address, status string) ([]*Escrow, error) {
 		}
 		escrows = append(escrows, e)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list escrows: %w", err)
+	}
 	return escrows, nil
 }
 
@@ -208,6 +211,9 @@ func (d *DB) ListEscrowsByChainID(chainID int64) ([]*Escrow, error) {
 			return nil, fmt.Errorf("parse updated_at in ListEscrowsByChainID: %w", err)
 		}
 		escrows = append(escrows, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate escrows by chain id: %w", err)
 	}
 	return escrows, nil
 }
@@ -262,6 +268,9 @@ func (d *DB) GetSubmissionsByEscrow(escrowID int64) ([]*Submission, error) {
 			return nil, fmt.Errorf("parse submitted_at in GetSubmissionsByEscrow: %w", err)
 		}
 		subs = append(subs, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate submissions: %w", err)
 	}
 	return subs, nil
 }
