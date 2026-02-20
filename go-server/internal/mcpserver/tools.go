@@ -21,11 +21,12 @@ type createEscrowArgs struct {
 	Worker                   string `json:"worker" jsonschema:"Worker address"`
 	Verifier                 string `json:"verifier" jsonschema:"Verifier address"`
 	Arbitrator               string `json:"arbitrator" jsonschema:"Arbitrator address"`
-	Amount                   string `json:"amount" jsonschema:"Amount in wei"`
+	Amount                   string `json:"amount" jsonschema:"Amount in wei (ETH) or smallest unit (ERC20)"`
 	SubmissionDeadline       string `json:"submission_deadline" jsonschema:"Unix timestamp for submission deadline"`
 	ReviewPeriodSeconds      string `json:"review_period_seconds" jsonschema:"Review period in seconds"`
 	DisputePeriodSeconds     string `json:"dispute_period_seconds" jsonschema:"Dispute period in seconds"`
 	ArbitratorTimeoutSeconds string `json:"arbitrator_timeout_seconds" jsonschema:"Arbitrator timeout in seconds"`
+	Token                    string `json:"token,omitempty" jsonschema:"ERC20 token address; omit or 0x0 for ETH"`
 }
 
 type escrowIDArgs struct {
@@ -126,6 +127,11 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 
 	specHash := crypto.Keccak256Hash([]byte(args.Title + args.Description))
 
+	tokenAddr := common.Address{}
+	if args.Token != "" {
+		tokenAddr = common.HexToAddress(args.Token)
+	}
+
 	factory := common.HexToAddress(s.cfg.FactoryAddress)
 	params := chain.CreateEscrowParams{
 		Buyer:                    common.HexToAddress(args.Buyer),
@@ -138,6 +144,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		DisputePeriodSeconds:     dispute,
 		TaskSpecHash:             specHash,
 		ArbitratorTimeoutSeconds: arbTimeout,
+		Token:                    tokenAddr,
 	}
 
 	tx, err := s.chain.CreateEscrow(ctx, factory, params)
@@ -166,6 +173,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		Verifier:                 args.Verifier,
 		Arbitrator:               args.Arbitrator,
 		Amount:                   args.Amount,
+		Token:                    tokenAddr.Hex(),
 		Status:                   "created",
 		SubmissionDeadline:       int64(deadline),
 		ReviewPeriodSeconds:      int64(review),
@@ -198,7 +206,25 @@ func (s *Server) handleFundEscrow(ctx context.Context, req *mcp.CallToolRequest,
 	if !ok {
 		return textResult(fmt.Sprintf("malformed escrow amount in database: %q", escrow.Amount)), nil, nil
 	}
-	tx, err := s.chain.Fund(ctx, common.HexToAddress(escrow.EscrowAddress), amount)
+
+	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
+	isERC20 := escrow.Token != "" && escrow.Token != "0x0000000000000000000000000000000000000000"
+
+	if isERC20 {
+		tokenAddr := common.HexToAddress(escrow.Token)
+		_, err := s.chain.ApproveERC20(ctx, tokenAddr, escrowAddr, amount)
+		if err != nil {
+			return textResult(fmt.Sprintf("approve error: %v", err)), nil, nil
+		}
+		tx, err := s.chain.Fund(ctx, escrowAddr, nil)
+		if err != nil {
+			return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+		}
+		_ = s.idx.RunOnce(ctx)
+		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+	}
+
+	tx, err := s.chain.Fund(ctx, escrowAddr, amount)
 	if err != nil {
 		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
 	}
