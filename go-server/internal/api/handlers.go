@@ -114,6 +114,10 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 
 	tokenAddr := common.Address{}
 	if req.Token != "" {
+		if !isValidAddress(req.Token) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid token address"})
+			return
+		}
 		tokenAddr = common.HexToAddress(req.Token)
 	}
 
@@ -238,9 +242,18 @@ func (h *Handlers) FundEscrow(w http.ResponseWriter, r *http.Request) {
 
 	if isERC20 {
 		tokenAddr := common.HexToAddress(escrow.Token)
-		_, err := h.chain.ApproveERC20(r.Context(), tokenAddr, escrowAddr, amount)
+		approveTx, err := h.chain.ApproveERC20(r.Context(), tokenAddr, escrowAddr, amount)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("approve: %v", err)})
+			return
+		}
+		approveReceipt, err := chain.WaitMined(r.Context(), h.chain, approveTx.Hash())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("approve receipt: %v", err)})
+			return
+		}
+		if approveReceipt.Status != 1 {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "approve transaction reverted"})
 			return
 		}
 		tx, err := h.chain.Fund(r.Context(), escrowAddr, nil)

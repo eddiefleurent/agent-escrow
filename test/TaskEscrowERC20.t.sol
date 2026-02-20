@@ -87,6 +87,50 @@ contract MockERC20NoReturn {
     }
 }
 
+/// @dev ERC20 that takes a 1% fee on transfer (fee-on-transfer / deflationary token).
+contract MockFeeOnTransferERC20 is IERC20 {
+    string public name;
+    string public symbol;
+    uint8 public decimals;
+    uint256 public totalSupply;
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    constructor(string memory _name, string memory _symbol, uint8 _decimals) {
+        name = _name;
+        symbol = _symbol;
+        decimals = _decimals;
+    }
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+        totalSupply += amount;
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        require(balanceOf[msg.sender] >= amount, "insufficient balance");
+        uint256 fee = amount / 100;
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount - fee;
+        return true;
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        require(balanceOf[from] >= amount, "insufficient balance");
+        require(allowance[from][msg.sender] >= amount, "insufficient allowance");
+        uint256 fee = amount / 100;
+        balanceOf[from] -= amount;
+        allowance[from][msg.sender] -= amount;
+        balanceOf[to] += amount - fee;
+        return true;
+    }
+}
+
 contract TaskEscrowERC20Test is Test {
     TaskEscrowFactory internal factory;
     MockERC20 internal usdc;
@@ -397,6 +441,36 @@ contract TaskEscrowERC20Test is Test {
         assertEq(usdc.balanceOf(buyer), buyerBefore + buyerRefund);
         assertEq(usdc.balanceOf(treasury), treasuryBefore + fee);
         assertEq(usdc.balanceOf(address(escrow)), 0);
+    }
+
+    // ── Fee-on-transfer token rejection ──
+
+    function testFeeOnTransferTokenReverts() public {
+        MockFeeOnTransferERC20 fot = new MockFeeOnTransferERC20("FeeToken", "FOT", 6);
+        fot.mint(buyer, 10_000e6);
+
+        (, address addr) = factory.createEscrow(
+            TaskEscrowFactory.CreateParams({
+                buyer: buyer,
+                worker: worker,
+                verifier: verifier,
+                arbitrator: arbitrator,
+                amount: AMOUNT,
+                submissionDeadline: uint64(block.timestamp + 7 days),
+                reviewPeriodSeconds: REVIEW,
+                disputePeriodSeconds: DISPUTE,
+                taskSpecHash: keccak256("spec"),
+                arbitratorTimeoutSeconds: ARB_TIMEOUT,
+                token: address(fot)
+            })
+        );
+        TaskEscrow escrow = TaskEscrow(addr);
+
+        vm.startPrank(buyer);
+        fot.approve(address(escrow), AMOUNT);
+        vm.expectRevert(TaskEscrow.InsufficientReceived.selector);
+        escrow.fund();
+        vm.stopPrank();
     }
 
     // ── Non-standard ERC20 (no return value, like USDT) ──

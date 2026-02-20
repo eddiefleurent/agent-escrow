@@ -129,6 +129,9 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 
 	tokenAddr := common.Address{}
 	if args.Token != "" {
+		if !common.IsHexAddress(args.Token) || common.HexToAddress(args.Token) == (common.Address{}) {
+			return textResult("invalid token address"), nil, nil
+		}
 		tokenAddr = common.HexToAddress(args.Token)
 	}
 
@@ -212,9 +215,16 @@ func (s *Server) handleFundEscrow(ctx context.Context, req *mcp.CallToolRequest,
 
 	if isERC20 {
 		tokenAddr := common.HexToAddress(escrow.Token)
-		_, err := s.chain.ApproveERC20(ctx, tokenAddr, escrowAddr, amount)
+		approveTx, err := s.chain.ApproveERC20(ctx, tokenAddr, escrowAddr, amount)
 		if err != nil {
 			return textResult(fmt.Sprintf("approve error: %v", err)), nil, nil
+		}
+		approveReceipt, err := chain.WaitMined(ctx, s.chain, approveTx.Hash())
+		if err != nil {
+			return textResult(fmt.Sprintf("approve receipt error: %v", err)), nil, nil
+		}
+		if approveReceipt.Status != 1 {
+			return textResult("approve transaction reverted"), nil, nil
 		}
 		tx, err := s.chain.Fund(ctx, escrowAddr, nil)
 		if err != nil {

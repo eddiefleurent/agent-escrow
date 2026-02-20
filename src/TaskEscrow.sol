@@ -29,6 +29,7 @@ contract TaskEscrow {
     error Reentrancy();
     error ArbitratorTimeoutNotReached();
     error ETHNotAccepted();
+    error InsufficientReceived();
 
     event EscrowFunded(address indexed buyer, uint256 amount);
     event SubmissionMade(address indexed worker, bytes32 submissionHash, string submissionURI);
@@ -136,7 +137,9 @@ contract TaskEscrow {
             if (msg.value != amount) revert InvalidAmount();
         } else {
             if (msg.value != 0) revert ETHNotAccepted();
+            uint256 balanceBefore = IERC20(token).balanceOf(address(this));
             _safeTransferFrom(IERC20(token), msg.sender, address(this), amount);
+            if (IERC20(token).balanceOf(address(this)) - balanceBefore != amount) revert InsufficientReceived();
         }
 
         status = Status.Funded;
