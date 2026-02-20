@@ -167,7 +167,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		Arbitrator:               args.Arbitrator,
 		Amount:                   args.Amount,
 		Status:                   "created",
-		SubmissionDeadline:       args.SubmissionDeadline,
+		SubmissionDeadline:       int64(deadline),
 		ReviewPeriodSeconds:      int64(review),
 		DisputePeriodSeconds:     int64(dispute),
 		ArbitratorTimeoutSeconds: int64(arbTimeout),

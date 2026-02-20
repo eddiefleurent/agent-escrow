@@ -23,7 +23,7 @@ type Escrow struct {
 	Arbitrator               string
 	Amount                   string
 	Status                   string
-	SubmissionDeadline       string
+	SubmissionDeadline       int64
 	ReviewPeriodSeconds      int64
 	DisputePeriodSeconds     int64
 	ArbitratorTimeoutSeconds int64

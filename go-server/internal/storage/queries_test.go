@@ -56,7 +56,7 @@ func TestCreateAndGetEscrow(t *testing.T) {
 		Arbitrator:               "0xArbitrator",
 		Amount:                   "1000000000000000000",
 		Status:                   "created",
-		SubmissionDeadline:       "1700000000",
+		SubmissionDeadline:       1700000000,
 		ReviewPeriodSeconds:      86400,
 		DisputePeriodSeconds:     172800,
 		ArbitratorTimeoutSeconds: 604800,

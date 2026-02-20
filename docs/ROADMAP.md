@@ -92,7 +92,7 @@ Single Go binary: MCP server + HTTP JSON API + event indexer. Eight MCP tools, n
 - **Config validation** -- complete (`Validate()` method on `Config`: requires `PRIVATE_KEY` and `FACTORY_ADDRESS` when `RPC_URL` is set; validates hex format and byte length; checks port range and timeout positivity; offline mode preserved when `RPC_URL` is empty with warning; 25 tests)
 - **Indexer error propagation** -- complete (fatal errors surfaced via buffered `Err()` channel after configurable consecutive failure threshold; `main.go` selects on indexer error channel for graceful shutdown; `WithMaxConsecutiveFailures` + `WithPollInterval` options; 10 tests)
 - **MockClient thread safety** -- complete (`sync.RWMutex` on all interface methods; read methods acquire `RLock`, write methods acquire full `Lock`; `Lock()`/`Unlock()` exposed for tests that mutate mid-flight; race detector clean)
-- **SubmissionDeadline type consistency** -- change `Escrow.SubmissionDeadline` from `string` to `int64` (Unix timestamp) for consistency with `ReviewPeriodSeconds`/`DisputePeriodSeconds`/`ArbitratorTimeoutSeconds`; requires DB schema migration and updates across handlers, MCP tools, indexer, and tests
+- **SubmissionDeadline type consistency** -- complete (`Escrow.SubmissionDeadline` changed from `string` to `int64` Unix timestamp for consistency with `ReviewPeriodSeconds`/`DisputePeriodSeconds`/`ArbitratorTimeoutSeconds`; DB schema, models, handlers, MCP tools, indexer, and tests updated)
 
 ### Phase 4 -- Market Primitives
 

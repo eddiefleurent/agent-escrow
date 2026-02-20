@@ -298,7 +298,7 @@ func (idx *Indexer) handleEscrowCreated(lg types.Log) error {
 		Arbitrator:         arbitratorAddr.Hex(),
 		Amount:             "0",
 		Status:             "created",
-		SubmissionDeadline: "0",
+		SubmissionDeadline: 0,
 	})
 	return err
 }

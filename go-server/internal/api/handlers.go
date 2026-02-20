@@ -155,7 +155,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		Arbitrator:               req.Arbitrator,
 		Amount:                   req.Amount,
 		Status:                   "created",
-		SubmissionDeadline:       req.SubmissionDeadline,
+		SubmissionDeadline:       int64(deadline),
 		ReviewPeriodSeconds:      int64(review),
 		DisputePeriodSeconds:     int64(dispute),
 		ArbitratorTimeoutSeconds: int64(arbTimeout),

@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS escrows (
     arbitrator TEXT NOT NULL,
     amount TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'created',
-    submission_deadline TEXT NOT NULL,
+    submission_deadline INTEGER NOT NULL,
     review_period_seconds INTEGER NOT NULL,
     dispute_period_seconds INTEGER NOT NULL,
     arbitrator_timeout_seconds INTEGER NOT NULL DEFAULT 604800,
