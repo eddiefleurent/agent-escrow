@@ -21,21 +21,25 @@ const (
 	cursorKey       = "indexer"
 	defaultLookback = 250
 	pollInterval    = 15 * time.Second
+
+	// DefaultMaxConsecutiveFailures is the number of consecutive RunOnce failures
+	// before the indexer considers itself fatally broken and signals via Err().
+	DefaultMaxConsecutiveFailures = 5
 )
 
 // Status mappings from event names to escrow status strings
 var eventStatusMap = map[string]string{
-	"EscrowFunded":            "funded",
-	"SubmissionMade":          "submitted",
-	"Approved":                "approved",
-	"Rejected":                "disputed",
-	"Disputed":                "disputed",
-	"SilenceEscalated":        "disputed",
-	"DisputeResolved":         "resolved",
-	"Settled":                 "settled",
-	"Refunded":                "refunded",
-	"Cancelled":               "cancelled",
-	"ArbitratorTimeoutClaimed": "refunded",
+	"EscrowFunded":              "funded",
+	"SubmissionMade":            "submitted",
+	"Approved":                  "approved",
+	"Rejected":                  "disputed",
+	"Disputed":                  "disputed",
+	"SilenceEscalated":          "disputed",
+	"DisputeResolved":           "resolved",
+	"Settled":                   "settled",
+	"Refunded":                  "refunded",
+	"Cancelled":                 "cancelled",
+	"ArbitratorTimeoutClaimed":  "refunded",
 }
 
 type Indexer struct {
@@ -43,24 +47,63 @@ type Indexer struct {
 	chain          chain.ChainClient
 	factoryAddress common.Address
 	chainID        int64
+
+	pollInterval      time.Duration
+	maxConsecFailures int
+	fatalCh           chan error
 }
 
-func New(db *storage.DB, chainClient chain.ChainClient, factoryAddress string) *Indexer {
+// Option configures optional Indexer parameters.
+type Option func(*Indexer)
+
+// WithMaxConsecutiveFailures overrides the default consecutive failure threshold
+// before the indexer signals a fatal error. Values <= 0 disable fatal signalling.
+func WithMaxConsecutiveFailures(n int) Option {
+	return func(idx *Indexer) {
+		idx.maxConsecFailures = n
+	}
+}
+
+// WithPollInterval overrides the default poll interval between indexer ticks.
+func WithPollInterval(d time.Duration) Option {
+	return func(idx *Indexer) {
+		idx.pollInterval = d
+	}
+}
+
+func New(db *storage.DB, chainClient chain.ChainClient, factoryAddress string, opts ...Option) *Indexer {
 	var chainID int64
 	if chainClient != nil {
 		chainID = chainClient.ChainID().Int64()
 	}
-	return &Indexer{
-		db:             db,
-		chain:          chainClient,
-		factoryAddress: common.HexToAddress(factoryAddress),
-		chainID:        chainID,
+	idx := &Indexer{
+		db:                db,
+		chain:             chainClient,
+		factoryAddress:    common.HexToAddress(factoryAddress),
+		chainID:           chainID,
+		pollInterval:      pollInterval,
+		maxConsecFailures: DefaultMaxConsecutiveFailures,
+		fatalCh:           make(chan error, 1),
 	}
+	for _, opt := range opts {
+		opt(idx)
+	}
+	return idx
+}
+
+// Err returns a channel that receives a fatal error when the indexer has failed
+// too many times consecutively. The channel is buffered (size 1) so the sender
+// never blocks. Callers should select on this channel alongside context
+// cancellation to detect unrecoverable indexer failures.
+func (idx *Indexer) Err() <-chan error {
+	return idx.fatalCh
 }
 
 func (idx *Indexer) Run(ctx context.Context) {
-	ticker := time.NewTicker(pollInterval)
+	ticker := time.NewTicker(idx.pollInterval)
 	defer ticker.Stop()
+
+	var consecutiveFailures int
 
 	for {
 		select {
@@ -68,7 +111,24 @@ func (idx *Indexer) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := idx.RunOnce(ctx); err != nil {
-				slog.Error("indexer poll failed", "error", err)
+				consecutiveFailures++
+				slog.Error("indexer poll failed",
+					"error", err,
+					"consecutive_failures", consecutiveFailures,
+					"max_consecutive_failures", idx.maxConsecFailures,
+				)
+				if idx.maxConsecFailures > 0 && consecutiveFailures >= idx.maxConsecFailures {
+					fatalErr := fmt.Errorf("indexer fatal: %d consecutive failures (last: %w)", consecutiveFailures, err)
+					slog.Error("indexer signalling fatal error", "error", fatalErr)
+					select {
+					case idx.fatalCh <- fatalErr:
+					default:
+						// Channel already has an error queued; don't block.
+					}
+					return
+				}
+			} else {
+				consecutiveFailures = 0
 			}
 		}
 	}

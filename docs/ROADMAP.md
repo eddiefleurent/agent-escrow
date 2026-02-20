@@ -90,7 +90,7 @@ Single Go binary: MCP server + HTTP JSON API + event indexer. Eight MCP tools, n
 - **Configurable CORS origins** -- complete (`CORS_ORIGINS` env var, comma-separated; empty = wildcard for dev; restricted mode echoes matched origin with `Vary: Origin`)
 - **Request timeout middleware** -- complete (route-aware `http.TimeoutHandler`: 10s default for reads via `REQUEST_TIMEOUT`, 90s for chain tx endpoints via `TX_TIMEOUT`; returns JSON `{"error":"request timeout"}` with 503 on expiry)
 - **Config validation** -- complete (`Validate()` method on `Config`: requires `PRIVATE_KEY` and `FACTORY_ADDRESS` when `RPC_URL` is set; validates hex format and byte length; checks port range and timeout positivity; offline mode preserved when `RPC_URL` is empty with warning; 25 tests)
-- **Indexer error propagation** -- surface fatal indexer errors to the main goroutine via error channel (currently logs per-tick errors but cannot signal unrecoverable failures)
+- **Indexer error propagation** -- complete (fatal errors surfaced via buffered `Err()` channel after configurable consecutive failure threshold; `main.go` selects on indexer error channel for graceful shutdown; `WithMaxConsecutiveFailures` + `WithPollInterval` options; 10 tests)
 - **MockClient thread safety** -- protect mutable fields (`BlockNum`, `Logs`, `Receipt`, `StatusVal`, etc.) with mutex in read methods; currently safe for typical test patterns but would race under parallel test mutation
 - **SubmissionDeadline type consistency** -- change `Escrow.SubmissionDeadline` from `string` to `int64` (Unix timestamp) for consistency with `ReviewPeriodSeconds`/`DisputePeriodSeconds`/`ArbitratorTimeoutSeconds`; requires DB schema migration and updates across handlers, MCP tools, indexer, and tests
 

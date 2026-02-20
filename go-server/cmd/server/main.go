@@ -88,6 +88,9 @@ func main() {
 	case err := <-listenErrCh:
 		slog.Error("http server failed", "error", err)
 		cancel()
+	case err := <-idx.Err():
+		slog.Error("indexer fatal failure, initiating shutdown", "error", err)
+		cancel()
 	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
