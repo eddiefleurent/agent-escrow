@@ -158,7 +158,7 @@ func (idx *Indexer) processFactoryLog(lg types.Log) error {
 
 	rawData, err := json.Marshal(lg)
 	if err != nil {
-		slog.Warn("failed to marshal factory log", "tx_hash", lg.TxHash.Hex(), "error", err)
+		return fmt.Errorf("marshal factory log: %w", err)
 	}
 	if err := idx.db.CreateChainLog(lg.TxHash.Hex(), int(lg.Index), int64(lg.BlockNumber), event.Name, lg.Address.Hex(), string(rawData)); err != nil {
 		return err
@@ -217,7 +217,10 @@ func (idx *Indexer) handleEscrowCreated(lg types.Log) error {
 		return fmt.Errorf("check existing escrow %s: %w", escrowAddr.Hex(), err)
 	}
 
-	// Escrow was created externally (not via our handlers) -- index it from the event
+	// Escrow was created externally (not via our handlers) -- index it from the event.
+	// Amount is stored as "0" because the EscrowCreated event does not include the funded
+	// amount and the ChainClient interface does not expose BalanceAt. The correct amount
+	// will be set when the indexer later processes the EscrowFunded event for this escrow.
 	task, err := idx.db.CreateTask("Indexed task", "", fmt.Sprintf("0x%x", taskSpecHash))
 	if err != nil {
 		return fmt.Errorf("create task: %w", err)
@@ -270,7 +273,7 @@ func (idx *Indexer) processEscrowLog(lg types.Log, dbEscrowID int64) error {
 
 	rawData, err := json.Marshal(lg)
 	if err != nil {
-		slog.Warn("failed to marshal escrow log", "tx_hash", lg.TxHash.Hex(), "error", err)
+		return fmt.Errorf("marshal escrow log: %w", err)
 	}
 	if err := idx.db.CreateChainLog(lg.TxHash.Hex(), int(lg.Index), int64(lg.BlockNumber), event.Name, lg.Address.Hex(), string(rawData)); err != nil {
 		return err

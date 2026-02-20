@@ -112,7 +112,10 @@ func (d *DB) UpdateEscrowStatus(id int64, status string) error {
 		`UPDATE escrows SET status = ?, updated_at = datetime('now') WHERE id = ?`,
 		status, id,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("UpdateEscrowStatus: %w", err)
+	}
+	return nil
 }
 
 // UpdateEscrowOnChainFields sets the on-chain address and ID after the creation tx is mined.
@@ -121,7 +124,10 @@ func (d *DB) UpdateEscrowOnChainFields(id int64, escrowAddress string, escrowID 
 		`UPDATE escrows SET escrow_address = ?, escrow_id = ?, updated_at = datetime('now') WHERE id = ?`,
 		escrowAddress, escrowID, id,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("UpdateEscrowOnChainFields: %w", err)
+	}
+	return nil
 }
 
 func (d *DB) ListEscrows(role, address, status string) ([]*Escrow, error) {
