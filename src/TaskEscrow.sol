@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.34;
 
+import {IERC20} from "./interfaces/IERC20.sol";
+
 contract TaskEscrow {
     enum Status {
         Created,
@@ -26,6 +28,7 @@ contract TaskEscrow {
     error TransferFailed();
     error Reentrancy();
     error ArbitratorTimeoutNotReached();
+    error ETHNotAccepted();
 
     event EscrowFunded(address indexed buyer, uint256 amount);
     event SubmissionMade(address indexed worker, bytes32 submissionHash, string submissionURI);
@@ -38,6 +41,9 @@ contract TaskEscrow {
     event Settled(uint256 workerNet, uint256 buyerRefund, uint256 protocolFee);
     event Refunded(uint256 amount);
     event Cancelled();
+
+    /// @dev address(0) means ETH-denominated escrow; non-zero means ERC20
+    address public immutable token;
 
     address public immutable buyer;
     address public immutable worker;
@@ -62,52 +68,56 @@ contract TaskEscrow {
 
     error RolesNotDistinct();
 
+    struct Params {
+        address buyer;
+        address worker;
+        address verifier;
+        address arbitrator;
+        uint256 amount;
+        uint64 submissionDeadline;
+        uint64 reviewPeriodSeconds;
+        uint64 disputePeriodSeconds;
+        bytes32 taskSpecHash;
+        uint16 protocolFeeBpsSnapshot;
+        address treasurySnapshot;
+        uint64 arbitratorTimeoutSeconds;
+        address token;
+    }
+
     // Uses 1/2 pattern instead of 0/1 to avoid zero-to-nonzero SSTORE cost (20k vs 5k gas)
     uint256 private constant _NOT_ENTERED = 1;
     uint256 private constant _ENTERED = 2;
     uint256 private _locked = _NOT_ENTERED;
 
-    constructor(
-        address _buyer,
-        address _worker,
-        address _verifier,
-        address _arbitrator,
-        uint256 _amount,
-        uint64 _submissionDeadline,
-        uint64 _reviewPeriodSeconds,
-        uint64 _disputePeriodSeconds,
-        bytes32 _taskSpecHash,
-        uint16 _protocolFeeBpsSnapshot,
-        address _treasurySnapshot,
-        uint64 _arbitratorTimeoutSeconds
-    ) {
-        if (_buyer == address(0) || _worker == address(0) || _verifier == address(0) || _arbitrator == address(0)) {
+    constructor(Params memory p) {
+        if (p.buyer == address(0) || p.worker == address(0) || p.verifier == address(0) || p.arbitrator == address(0)) {
             revert InvalidAddress();
         }
-        if (_treasurySnapshot == address(0)) revert InvalidAddress();
+        if (p.treasurySnapshot == address(0)) revert InvalidAddress();
         if (
-            _buyer == _worker || _buyer == _verifier || _buyer == _arbitrator
-                || _worker == _verifier || _worker == _arbitrator
-                || _verifier == _arbitrator
+            p.buyer == p.worker || p.buyer == p.verifier || p.buyer == p.arbitrator
+                || p.worker == p.verifier || p.worker == p.arbitrator
+                || p.verifier == p.arbitrator
         ) {
             revert RolesNotDistinct();
         }
-        if (_amount == 0) revert InvalidAmount();
-        if (_submissionDeadline <= block.timestamp) revert InvalidDeadline();
-        if (_protocolFeeBpsSnapshot > 10_000) revert InvalidAwardBps();
+        if (p.amount == 0) revert InvalidAmount();
+        if (p.submissionDeadline <= block.timestamp) revert InvalidDeadline();
+        if (p.protocolFeeBpsSnapshot > 10_000) revert InvalidAwardBps();
 
-        buyer = _buyer;
-        worker = _worker;
-        verifier = _verifier;
-        arbitrator = _arbitrator;
-        amount = _amount;
-        submissionDeadline = _submissionDeadline;
-        reviewPeriodSeconds = _reviewPeriodSeconds;
-        disputePeriodSeconds = _disputePeriodSeconds;
-        taskSpecHash = _taskSpecHash;
-        protocolFeeBpsSnapshot = _protocolFeeBpsSnapshot;
-        treasurySnapshot = _treasurySnapshot;
-        arbitratorTimeoutSeconds = _arbitratorTimeoutSeconds;
+        buyer = p.buyer;
+        worker = p.worker;
+        verifier = p.verifier;
+        arbitrator = p.arbitrator;
+        amount = p.amount;
+        submissionDeadline = p.submissionDeadline;
+        reviewPeriodSeconds = p.reviewPeriodSeconds;
+        disputePeriodSeconds = p.disputePeriodSeconds;
+        taskSpecHash = p.taskSpecHash;
+        protocolFeeBpsSnapshot = p.protocolFeeBpsSnapshot;
+        treasurySnapshot = p.treasurySnapshot;
+        arbitratorTimeoutSeconds = p.arbitratorTimeoutSeconds;
+        token = p.token;
         status = Status.Created;
     }
 
@@ -121,10 +131,16 @@ contract TaskEscrow {
     function fund() external payable nonReentrant {
         if (msg.sender != buyer) revert Unauthorized();
         if (status != Status.Created) revert InvalidState();
-        if (msg.value != amount) revert InvalidAmount();
+
+        if (token == address(0)) {
+            if (msg.value != amount) revert InvalidAmount();
+        } else {
+            if (msg.value != 0) revert ETHNotAccepted();
+            _safeTransferFrom(IERC20(token), msg.sender, address(this), amount);
+        }
 
         status = Status.Funded;
-        emit EscrowFunded(msg.sender, msg.value);
+        emit EscrowFunded(msg.sender, amount);
     }
 
     function cancelBeforeFunding() external {
@@ -211,7 +227,7 @@ contract TaskEscrow {
         if (block.timestamp <= submissionDeadline) revert WindowNotOpen();
 
         status = Status.Refunded;
-        _sendETH(buyer, amount);
+        _send(buyer, amount);
         emit Refunded(amount);
     }
 
@@ -223,7 +239,7 @@ contract TaskEscrow {
         }
 
         status = Status.Refunded;
-        _sendETH(buyer, amount);
+        _send(buyer, amount);
         emit ArbitratorTimeoutClaimed(msg.sender, uint64(block.timestamp));
         emit Refunded(amount);
     }
@@ -244,8 +260,8 @@ contract TaskEscrow {
         uint256 workerNet = grossWorker - fee;
 
         status = Status.Settled;
-        _sendETH(worker, workerNet);
-        if (fee > 0) _sendETH(treasurySnapshot, fee);
+        _send(worker, workerNet);
+        if (fee > 0) _send(treasurySnapshot, fee);
         emit Settled(workerNet, 0, fee);
     }
 
@@ -256,15 +272,32 @@ contract TaskEscrow {
         uint256 workerNet = workerGross - fee;
 
         status = Status.Settled;
-        if (workerNet > 0) _sendETH(worker, workerNet);
-        if (buyerRefund > 0) _sendETH(buyer, buyerRefund);
-        if (fee > 0) _sendETH(treasurySnapshot, fee);
+        if (workerNet > 0) _send(worker, workerNet);
+        if (buyerRefund > 0) _send(buyer, buyerRefund);
+        if (fee > 0) _send(treasurySnapshot, fee);
         emit Settled(workerNet, buyerRefund, fee);
     }
 
-    function _sendETH(address to, uint256 value) internal {
-        (bool ok,) = payable(to).call{value: value}("");
-        if (!ok) revert TransferFailed();
+    /// @dev Transfers ETH or ERC20 depending on the escrow's token mode.
+    function _send(address to, uint256 value) internal {
+        if (token == address(0)) {
+            (bool ok,) = payable(to).call{value: value}("");
+            if (!ok) revert TransferFailed();
+        } else {
+            _safeTransfer(IERC20(token), to, value);
+        }
+    }
+
+    /// @dev Safe ERC20 transfer that handles tokens not returning a bool (e.g. USDT).
+    function _safeTransfer(IERC20 _token, address to, uint256 value) internal {
+        (bool success, bytes memory data) = address(_token).call(abi.encodeWithSelector(_token.transfer.selector, to, value));
+        if (!success || (data.length > 0 && !abi.decode(data, (bool)))) revert TransferFailed();
+    }
+
+    /// @dev Safe ERC20 transferFrom that handles tokens not returning a bool (e.g. USDT).
+    function _safeTransferFrom(IERC20 _token, address from, address to, uint256 value) internal {
+        (bool success, bytes memory data) = address(_token).call(abi.encodeWithSelector(_token.transferFrom.selector, from, to, value));
+        if (!success || (data.length > 0 && !abi.decode(data, (bool)))) revert TransferFailed();
     }
 
     function _reviewWindowEnds() internal view returns (uint256) {

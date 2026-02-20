@@ -19,7 +19,8 @@ contract TaskEscrowFactory {
         address worker,
         address verifier,
         address arbitrator,
-        bytes32 taskSpecHash
+        bytes32 taskSpecHash,
+        address token
     );
     event ProtocolFeeUpdated(uint16 oldFeeBps, uint16 newFeeBps);
     event TreasuryUpdated(address oldTreasury, address newTreasury);
@@ -54,41 +55,47 @@ contract TaskEscrowFactory {
         _;
     }
 
-    function createEscrow(
-        address buyer,
-        address worker,
-        address verifier,
-        address arbitrator,
-        uint256 amount,
-        uint64 submissionDeadline,
-        uint64 reviewPeriodSeconds,
-        uint64 disputePeriodSeconds,
-        bytes32 taskSpecHash,
-        uint64 arbitratorTimeoutSeconds
-    ) external whenNotPaused returns (uint256 escrowId, address escrow) {
-        if (amount == 0) revert InvalidAmount();
-        if (submissionDeadline <= block.timestamp) revert InvalidDeadline();
+    struct CreateParams {
+        address buyer;
+        address worker;
+        address verifier;
+        address arbitrator;
+        uint256 amount;
+        uint64 submissionDeadline;
+        uint64 reviewPeriodSeconds;
+        uint64 disputePeriodSeconds;
+        bytes32 taskSpecHash;
+        uint64 arbitratorTimeoutSeconds;
+        address token;
+    }
+
+    function createEscrow(CreateParams calldata p) external whenNotPaused returns (uint256 escrowId, address escrow) {
+        if (p.amount == 0) revert InvalidAmount();
+        if (p.submissionDeadline <= block.timestamp) revert InvalidDeadline();
 
         TaskEscrow instance = new TaskEscrow(
-            buyer,
-            worker,
-            verifier,
-            arbitrator,
-            amount,
-            submissionDeadline,
-            reviewPeriodSeconds,
-            disputePeriodSeconds,
-            taskSpecHash,
-            protocolFeeBps,
-            treasury,
-            arbitratorTimeoutSeconds
+            TaskEscrow.Params({
+                buyer: p.buyer,
+                worker: p.worker,
+                verifier: p.verifier,
+                arbitrator: p.arbitrator,
+                amount: p.amount,
+                submissionDeadline: p.submissionDeadline,
+                reviewPeriodSeconds: p.reviewPeriodSeconds,
+                disputePeriodSeconds: p.disputePeriodSeconds,
+                taskSpecHash: p.taskSpecHash,
+                protocolFeeBpsSnapshot: protocolFeeBps,
+                treasurySnapshot: treasury,
+                arbitratorTimeoutSeconds: p.arbitratorTimeoutSeconds,
+                token: p.token
+            })
         );
 
         escrowId = nextEscrowId++;
         escrow = address(instance);
         escrowById[escrowId] = escrow;
 
-        emit EscrowCreated(escrowId, escrow, buyer, worker, verifier, arbitrator, taskSpecHash);
+        emit EscrowCreated(escrowId, escrow, p.buyer, p.worker, p.verifier, p.arbitrator, p.taskSpecHash, p.token);
     }
 
     function setProtocolFeeBps(uint16 newFeeBps) external onlyOwner {

@@ -107,18 +107,7 @@ contract TaskEscrowEdgeCasesTest is Test {
 
         vm.expectRevert(TaskEscrowFactory.Paused.selector);
         vm.prank(randomUser);
-        factory.createEscrow(
-            buyer,
-            worker,
-            verifier,
-            arbitrator,
-            AMOUNT,
-            uint64(block.timestamp + 7 days),
-            REVIEW,
-            DISPUTE,
-            keccak256("spec-2"),
-            ARB_TIMEOUT
-        );
+        factory.createEscrow(TaskEscrowFactory.CreateParams(buyer, worker, verifier, arbitrator, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec-2"), ARB_TIMEOUT, address(0)));
     }
 
     function testFuzz_DisputeSettlementConservesFunds(uint16 workerAwardBps) public {
@@ -170,49 +159,37 @@ contract TaskEscrowEdgeCasesTest is Test {
     function testRolesNotDistinct_BuyerEqualsWorker() public {
         vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
         vm.prank(randomUser);
-        factory.createEscrow(
-            buyer, buyer, verifier, arbitrator, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT
-        );
+        factory.createEscrow(TaskEscrowFactory.CreateParams(buyer, buyer, verifier, arbitrator, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT, address(0)));
     }
 
     function testRolesNotDistinct_BuyerEqualsVerifier() public {
         vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
         vm.prank(randomUser);
-        factory.createEscrow(
-            buyer, worker, buyer, arbitrator, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT
-        );
+        factory.createEscrow(TaskEscrowFactory.CreateParams(buyer, worker, buyer, arbitrator, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT, address(0)));
     }
 
     function testRolesNotDistinct_BuyerEqualsArbitrator() public {
         vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
         vm.prank(randomUser);
-        factory.createEscrow(
-            buyer, worker, verifier, buyer, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT
-        );
+        factory.createEscrow(TaskEscrowFactory.CreateParams(buyer, worker, verifier, buyer, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT, address(0)));
     }
 
     function testRolesNotDistinct_WorkerEqualsVerifier() public {
         vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
         vm.prank(randomUser);
-        factory.createEscrow(
-            buyer, worker, worker, arbitrator, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT
-        );
+        factory.createEscrow(TaskEscrowFactory.CreateParams(buyer, worker, worker, arbitrator, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT, address(0)));
     }
 
     function testRolesNotDistinct_WorkerEqualsArbitrator() public {
         vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
         vm.prank(randomUser);
-        factory.createEscrow(
-            buyer, worker, verifier, worker, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT
-        );
+        factory.createEscrow(TaskEscrowFactory.CreateParams(buyer, worker, verifier, worker, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT, address(0)));
     }
 
     function testRolesNotDistinct_VerifierEqualsArbitrator() public {
         vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
         vm.prank(randomUser);
-        factory.createEscrow(
-            buyer, worker, verifier, verifier, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT
-        );
+        factory.createEscrow(TaskEscrowFactory.CreateParams(buyer, worker, verifier, verifier, AMOUNT, uint64(block.timestamp + 7 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT, address(0)));
     }
 
     // ── Two-step ownership transfer ──
@@ -308,9 +285,25 @@ contract TaskEscrowEdgeCasesTest is Test {
     }
 
     function _createEscrow(uint64 submissionDeadline) internal returns (TaskEscrow created) {
+        return _createEscrowWithToken(submissionDeadline, address(0));
+    }
+
+    function _createEscrowWithToken(uint64 submissionDeadline, address tokenAddr) internal returns (TaskEscrow created) {
         vm.prank(randomUser);
         (, address escrowAddress) = factory.createEscrow(
-            buyer, worker, verifier, arbitrator, AMOUNT, submissionDeadline, REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT
+            TaskEscrowFactory.CreateParams({
+                buyer: buyer,
+                worker: worker,
+                verifier: verifier,
+                arbitrator: arbitrator,
+                amount: AMOUNT,
+                submissionDeadline: submissionDeadline,
+                reviewPeriodSeconds: REVIEW,
+                disputePeriodSeconds: DISPUTE,
+                taskSpecHash: keccak256("spec"),
+                arbitratorTimeoutSeconds: ARB_TIMEOUT,
+                token: tokenAddr
+            })
         );
         return TaskEscrow(escrowAddress);
     }

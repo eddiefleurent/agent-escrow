@@ -111,7 +111,19 @@ contract TaskEscrowInvariantsTest is StdInvariant, Test {
 
         vm.prank(address(0xBEEF));
         (, address escrowAddr) = factory.createEscrow(
-            buyer, worker, verifier, arbitrator, AMOUNT, uint64(block.timestamp + 30 days), REVIEW, DISPUTE, keccak256("spec"), ARB_TIMEOUT
+            TaskEscrowFactory.CreateParams({
+                buyer: buyer,
+                worker: worker,
+                verifier: verifier,
+                arbitrator: arbitrator,
+                amount: AMOUNT,
+                submissionDeadline: uint64(block.timestamp + 30 days),
+                reviewPeriodSeconds: REVIEW,
+                disputePeriodSeconds: DISPUTE,
+                taskSpecHash: keccak256("spec"),
+                arbitratorTimeoutSeconds: ARB_TIMEOUT,
+                token: address(0)
+            })
         );
         escrow = TaskEscrow(escrowAddr);
 
