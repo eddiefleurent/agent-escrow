@@ -22,6 +22,7 @@ type Escrow struct {
 	Verifier                 string
 	Arbitrator               string
 	Amount                   string
+	Token                    string // ERC20 token address; empty or "0x0000000000000000000000000000000000000000" for ETH
 	Status                   string
 	SubmissionDeadline       int64
 	ReviewPeriodSeconds      int64

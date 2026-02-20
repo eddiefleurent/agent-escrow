@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS escrows (
     verifier TEXT NOT NULL,
     arbitrator TEXT NOT NULL,
     amount TEXT NOT NULL,
+    token TEXT NOT NULL DEFAULT '0x0000000000000000000000000000000000000000',
     status TEXT NOT NULL DEFAULT 'created',
     submission_deadline INTEGER NOT NULL,
     review_period_seconds INTEGER NOT NULL,
