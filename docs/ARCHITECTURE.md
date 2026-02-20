@@ -407,6 +407,9 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 | `PORT` | No | `8080` | HTTP server port |
 | `DATABASE_URL` | No | `delegation.db` | SQLite database path |
 | `MCP_TRANSPORT` | No | -- | Set to `stdio` to enable MCP server |
+| `CORS_ORIGINS` | No | `*` (wildcard) | Comma-separated allowed origins; empty = allow all |
+| `REQUEST_TIMEOUT` | No | `10s` | Timeout for read-only HTTP requests |
+| `TX_TIMEOUT` | No | `90s` | Timeout for chain transaction HTTP requests |
 
 ### Design Decisions
 

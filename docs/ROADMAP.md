@@ -39,15 +39,22 @@ The paper defines five framework pillars, nine technical protocols, ethical cons
 | MCP server (`internal/mcpserver/`) | Complete |
 | HTTP API (`internal/api/`) | Complete |
 | Transaction receipt parsing (EscrowAddress/EscrowID) | Complete |
-| API handler tests with mock chain client | Complete (29 tests) |
 | Structured logging (`log/slog`, JSON handler) | Complete |
 | Chain health check (`/api/v1/health` with RPC verification) | Complete |
+| Input validation and error propagation | Complete |
+| Configurable CORS origins | Complete |
+| Request timeout middleware (route-aware) | Complete |
+| Config validation (`Validate()` with 25 tests) | Complete |
+| Indexer error propagation (fatal channel, 10 tests) | Complete |
+| MockClient thread safety (`sync.RWMutex`) | Complete |
+| SubmissionDeadline type consistency (`int64`) | Complete |
+| Go test suite | Complete (76 tests across 4 packages) |
 
 ### Infrastructure
 
 | Item | Status |
 |---|---|
-| Makefile (build, test, deploy, go-abi, go-build, go-test, test-all) | Complete |
+| Makefile (build, test, deploy, go-abi, go-build, go-test, go-run, go-fmt, test-all) | Complete |
 | Deploy script (`DeployFactory.s.sol`) | Complete |
 | CI workflow (`.github/workflows/ci.yml`)  | Complete |
 | LICENSE (MIT) | Complete |
@@ -69,30 +76,31 @@ Implemented `TaskEscrowFactory` and `TaskEscrow`. Added arbitrator timeout (iden
 
 Single Go binary: MCP server + HTTP JSON API + event indexer. Eight MCP tools, nine HTTP endpoints, SQLite storage, chain client with go-ethereum bindings.
 
-### Phase 3 -- Hardening (Current)
+### Phase 3 -- Hardening
 
+All hardening items complete. Deployment and live demo pending (guide in [`DEPLOY_PHASE3.md`](DEPLOY_PHASE3.md)).
+
+**Server hardening:**
 1. Transaction receipt parsing for `EscrowAddress` and `EscrowID` -- complete
 2. API/MCP handler tests with mock chain client interface -- complete (22 tests, `ChainClient` interface, `MockClient`)
 3. Chain health check with RPC connectivity verification -- complete (returns block number + chain ID, 503 on failure)
 4. Structured logging with request context -- complete (`log/slog` with JSON handler)
 5. Input validation and error propagation -- complete (ParseUint/SetString checks, time.Parse propagation, nil guards, bounds checks)
-6. Deploy to Base Sepolia -- partially complete (deployment guide in [`DEPLOY_PHASE3.md`](DEPLOY_PHASE3.md); actual deployment pending)
-7. Reference agent demo -- partially complete (demo walkthrough documented in [`DEPLOY_PHASE3.md`](DEPLOY_PHASE3.md) Part 2; live demo pending)
-
-#### Remaining Hardening (Not Yet Started)
+6. Configurable CORS origins -- complete (`CORS_ORIGINS` env var, comma-separated; empty = wildcard for dev; restricted mode echoes matched origin with `Vary: Origin`)
+7. Request timeout middleware -- complete (route-aware `http.TimeoutHandler`: 10s default for reads via `REQUEST_TIMEOUT`, 90s for chain tx endpoints via `TX_TIMEOUT`; returns JSON `{"error":"request timeout"}` with 503 on expiry)
+8. Config validation -- complete (`Validate()` method on `Config`: requires `PRIVATE_KEY` and `FACTORY_ADDRESS` when `RPC_URL` is set; validates hex format and byte length; checks port range and timeout positivity; offline mode preserved when `RPC_URL` is empty with warning; 25 tests)
+9. Indexer error propagation -- complete (fatal errors surfaced via buffered `Err()` channel after configurable consecutive failure threshold; `main.go` selects on indexer error channel for graceful shutdown; `WithMaxConsecutiveFailures` + `WithPollInterval` options; 10 tests)
+10. MockClient thread safety -- complete (`sync.RWMutex` on all interface methods; read methods acquire `RLock`, write methods acquire full `Lock`; `Lock()`/`Unlock()` exposed for tests that mutate mid-flight; race detector clean)
+11. SubmissionDeadline type consistency -- complete (`Escrow.SubmissionDeadline` changed from `string` to `int64` Unix timestamp for consistency with `ReviewPeriodSeconds`/`DisputePeriodSeconds`/`ArbitratorTimeoutSeconds`; DB schema, models, handlers, MCP tools, indexer, and tests updated)
 
 **Contract safety:**
-- **Reentrancy guard gas optimization** -- complete (`_locked` uses 1/2 pattern: avoids zero-to-nonzero SSTORE cost, aligns with OpenZeppelin convention)
-- **Role address distinctness checks** -- complete (buyer/worker/verifier/arbitrator must be distinct addresses; reverts `RolesNotDistinct` on overlap)
-- **Two-step ownership transfer** -- complete (`transferOwnership` + `acceptOwnership` on `TaskEscrowFactory`; prevents permanent lockout on key loss/compromise)
+12. Reentrancy guard gas optimization -- complete (`_locked` uses 1/2 pattern: avoids zero-to-nonzero SSTORE cost, aligns with OpenZeppelin convention)
+13. Role address distinctness checks -- complete (buyer/worker/verifier/arbitrator must be distinct addresses; reverts `RolesNotDistinct` on overlap)
+14. Two-step ownership transfer -- complete (`transferOwnership` + `acceptOwnership` on `TaskEscrowFactory`; prevents permanent lockout on key loss/compromise)
 
-**Server hardening:**
-- **Configurable CORS origins** -- complete (`CORS_ORIGINS` env var, comma-separated; empty = wildcard for dev; restricted mode echoes matched origin with `Vary: Origin`)
-- **Request timeout middleware** -- complete (route-aware `http.TimeoutHandler`: 10s default for reads via `REQUEST_TIMEOUT`, 90s for chain tx endpoints via `TX_TIMEOUT`; returns JSON `{"error":"request timeout"}` with 503 on expiry)
-- **Config validation** -- complete (`Validate()` method on `Config`: requires `PRIVATE_KEY` and `FACTORY_ADDRESS` when `RPC_URL` is set; validates hex format and byte length; checks port range and timeout positivity; offline mode preserved when `RPC_URL` is empty with warning; 25 tests)
-- **Indexer error propagation** -- complete (fatal errors surfaced via buffered `Err()` channel after configurable consecutive failure threshold; `main.go` selects on indexer error channel for graceful shutdown; `WithMaxConsecutiveFailures` + `WithPollInterval` options; 10 tests)
-- **MockClient thread safety** -- complete (`sync.RWMutex` on all interface methods; read methods acquire `RLock`, write methods acquire full `Lock`; `Lock()`/`Unlock()` exposed for tests that mutate mid-flight; race detector clean)
-- **SubmissionDeadline type consistency** -- complete (`Escrow.SubmissionDeadline` changed from `string` to `int64` Unix timestamp for consistency with `ReviewPeriodSeconds`/`DisputePeriodSeconds`/`ArbitratorTimeoutSeconds`; DB schema, models, handlers, MCP tools, indexer, and tests updated)
+**Deployment:**
+15. Deploy to Base Sepolia -- deployment guide in [`DEPLOY_PHASE3.md`](DEPLOY_PHASE3.md); actual deployment pending
+16. Reference agent demo -- demo walkthrough documented in [`DEPLOY_PHASE3.md`](DEPLOY_PHASE3.md) Part 2; live demo pending
 
 ### Phase 4 -- Market Primitives
 

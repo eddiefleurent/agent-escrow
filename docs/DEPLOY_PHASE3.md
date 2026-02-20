@@ -1,6 +1,6 @@
 # Phase 3: Base Sepolia Deployment & Reference Agent Demo
 
-This guide covers Phase 3 items 5 and 6: deploying the `TaskEscrowFactory` to Base Sepolia and running a reference agent demo through the full escrow lifecycle.
+This guide covers the final Phase 3 deliverables: deploying the `TaskEscrowFactory` to Base Sepolia and running a reference agent demo through the full escrow lifecycle.
 
 Prerequisite reading: [`SETUP.md`](SETUP.md) (install steps), [`SPEC_V1.md`](SPEC_V1.md) (contract interfaces), [`ARCHITECTURE.md`](ARCHITECTURE.md) (system design).
 
