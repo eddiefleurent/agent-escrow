@@ -13,9 +13,13 @@ import (
 )
 
 // MockClient implements ChainClient for testing without a live RPC connection.
-// Set the exported fields/functions to control behavior in tests.
+//
+// Exported fields can be set directly before concurrent access begins (the
+// typical single-goroutine test setup pattern). All interface methods acquire
+// the internal RWMutex so concurrent reads and writes from background
+// goroutines (e.g. the indexer) are safe.
 type MockClient struct {
-	mu sync.Mutex
+	mu sync.RWMutex
 
 	addr    common.Address
 	chainID *big.Int
@@ -26,20 +30,16 @@ type MockClient struct {
 	Logs    []types.Log
 	LogsErr error
 
-	// Receipt to return from TransactionReceipt. If nil, returns "not found" error.
 	Receipt    *types.Receipt
 	ReceiptErr error
 
 	CallResult []byte
 	CallErr    error
 
-	// Track calls for assertions
 	SentTxs []MockTxRecord
 
-	// Delay applied before returning from chain methods (for timeout testing)
 	Delay time.Duration
 
-	// Per-method error overrides
 	CreateEscrowErr        error
 	FundErr                error
 	SubmitErr              error
@@ -68,15 +68,25 @@ func NewMockClient() *MockClient {
 	}
 }
 
+// Lock / Unlock expose the internal mutex for tests that need to mutate
+// fields while a background goroutine is calling interface methods.
+func (m *MockClient) Lock()   { m.mu.Lock() }
+func (m *MockClient) Unlock() { m.mu.Unlock() }
+
 func (m *MockClient) Address() common.Address { return m.addr }
 func (m *MockClient) ChainID() *big.Int       { return m.chainID }
 
+// applyDelay reads Delay under the lock, then waits outside the lock to avoid
+// holding it for the duration of the sleep.
 func (m *MockClient) applyDelay(ctx context.Context) error {
-	if m.Delay <= 0 {
+	m.mu.RLock()
+	d := m.Delay
+	m.mu.RUnlock()
+	if d <= 0 {
 		return nil
 	}
 	select {
-	case <-time.After(m.Delay):
+	case <-time.After(d):
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -87,6 +97,8 @@ func (m *MockClient) BlockNumber(ctx context.Context) (uint64, error) {
 	if err := m.applyDelay(ctx); err != nil {
 		return 0, err
 	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.BlockNumErr != nil {
 		return 0, m.BlockNumErr
 	}
@@ -97,6 +109,8 @@ func (m *MockClient) FilterLogs(ctx context.Context, _ []common.Address, _ [][]c
 	if err := m.applyDelay(ctx); err != nil {
 		return nil, err
 	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.LogsErr != nil {
 		return nil, m.LogsErr
 	}
@@ -111,10 +125,14 @@ func (m *MockClient) SendTx(_ context.Context, to common.Address, _ []byte, valu
 }
 
 func (m *MockClient) CallContract(_ context.Context, _ common.Address, _ []byte) ([]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.CallResult, m.CallErr
 }
 
 func (m *MockClient) TransactionReceipt(_ context.Context, _ common.Hash) (*types.Receipt, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.ReceiptErr != nil {
 		return nil, m.ReceiptErr
 	}
@@ -125,11 +143,11 @@ func (m *MockClient) TransactionReceipt(_ context.Context, _ common.Hash) (*type
 }
 
 func (m *MockClient) CreateEscrow(_ context.Context, _ common.Address, _ CreateEscrowParams) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.CreateEscrowErr != nil {
 		return nil, m.CreateEscrowErr
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "createEscrow"})
 	return makeFakeTx(), nil
 }
@@ -138,106 +156,108 @@ func (m *MockClient) Fund(ctx context.Context, addr common.Address, amount *big.
 	if err := m.applyDelay(ctx); err != nil {
 		return nil, err
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.FundErr != nil {
 		return nil, m.FundErr
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "fund", To: addr, Value: amount})
 	return makeFakeTx(), nil
 }
 
 func (m *MockClient) Submit(_ context.Context, addr common.Address, _ [32]byte, _ string) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.SubmitErr != nil {
 		return nil, m.SubmitErr
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "submit", To: addr})
 	return makeFakeTx(), nil
 }
 
 func (m *MockClient) ApproveByBuyer(_ context.Context, addr common.Address) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.ApproveByBuyerErr != nil {
 		return nil, m.ApproveByBuyerErr
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "approveByBuyer", To: addr})
 	return makeFakeTx(), nil
 }
 
 func (m *MockClient) ApproveByVerifier(_ context.Context, addr common.Address) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.ApproveByVerifierErr != nil {
 		return nil, m.ApproveByVerifierErr
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "approveByVerifier", To: addr})
 	return makeFakeTx(), nil
 }
 
 func (m *MockClient) RejectByVerifier(_ context.Context, addr common.Address, _ string) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.RejectByVerifierErr != nil {
 		return nil, m.RejectByVerifierErr
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "rejectByVerifier", To: addr})
 	return makeFakeTx(), nil
 }
 
 func (m *MockClient) Dispute(_ context.Context, addr common.Address, _ string) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.DisputeErr != nil {
 		return nil, m.DisputeErr
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "dispute", To: addr})
 	return makeFakeTx(), nil
 }
 
 func (m *MockClient) EscalateSilence(_ context.Context, addr common.Address, _ string) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.EscalateSilenceErr != nil {
 		return nil, m.EscalateSilenceErr
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "escalateSilence", To: addr})
 	return makeFakeTx(), nil
 }
 
 func (m *MockClient) ResolveDispute(_ context.Context, addr common.Address, _ uint16, _ string) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.ResolveDisputeErr != nil {
 		return nil, m.ResolveDisputeErr
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "resolveDispute", To: addr})
 	return makeFakeTx(), nil
 }
 
 func (m *MockClient) ClaimTimeoutRefund(_ context.Context, addr common.Address) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.ClaimTimeoutRefundErr != nil {
 		return nil, m.ClaimTimeoutRefundErr
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "claimTimeoutRefund", To: addr})
 	return makeFakeTx(), nil
 }
 
 func (m *MockClient) ClaimArbitratorTimeout(_ context.Context, addr common.Address) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.ClaimArbitratorTimeErr != nil {
 		return nil, m.ClaimArbitratorTimeErr
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "claimArbitratorTimeout", To: addr})
 	return makeFakeTx(), nil
 }
 
 func (m *MockClient) Status(_ context.Context, _ common.Address) (uint8, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.StatusVal, m.StatusErr
 }
 
