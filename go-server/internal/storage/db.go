@@ -4,12 +4,16 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
 
 //go:embed migrations/001_create_tables.sql
 var migrationSQL string
+
+//go:embed migrations/002_add_milestones.sql
+var migration002SQL string
 
 type DB struct {
 	db *sql.DB
@@ -36,6 +40,17 @@ func Open(dsn string) (*DB, error) {
 		return nil, fmt.Errorf("run migrations: %w", err)
 	}
 
+	// Run migration 002 idempotently (ALTER TABLE may fail if columns already exist)
+	for _, stmt := range splitStatements(migration002SQL) {
+		if _, err := sqlDB.Exec(stmt); err != nil {
+			// Ignore "duplicate column" errors from ALTER TABLE on re-run
+			if !isDuplicateColumnError(err) {
+				sqlDB.Close()
+				return nil, fmt.Errorf("run migration 002: %w", err)
+			}
+		}
+	}
+
 	return &DB{db: sqlDB}, nil
 }
 
@@ -45,4 +60,19 @@ func (d *DB) Close() error {
 
 func (d *DB) SqlDB() *sql.DB {
 	return d.db
+}
+
+func splitStatements(sql string) []string {
+	var stmts []string
+	for _, s := range strings.Split(sql, ";") {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			stmts = append(stmts, s)
+		}
+	}
+	return stmts
+}
+
+func isDuplicateColumnError(err error) bool {
+	return strings.Contains(err.Error(), "duplicate column")
 }
