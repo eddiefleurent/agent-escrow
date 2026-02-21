@@ -22,6 +22,18 @@ type Config struct {
 	TxTimeout      time.Duration // Timeout for chain transaction requests (default 90s)
 	LogChunkSize   uint64        // Max block range per eth_getLogs request (default 2000)
 	StartBlock     uint64        // Block to start indexing from (0 = use defaultLookback)
+
+	// CDP Webhook: if set, the server registers POST /webhooks/cdp to receive
+	// real-time factory events (EscrowCreated, OutcomeRecorded) via push.
+	// The secret is used for HMAC-SHA256 signature verification.
+	// The polling indexer still runs for escrow-level events since each
+	// TaskEscrow is a separate contract that can't be pre-subscribed.
+	CDPWebhookSecret string
+}
+
+// WebhookMode reports whether CDP webhook mode is enabled (secret is configured).
+func (c *Config) WebhookMode() bool {
+	return strings.TrimSpace(c.CDPWebhookSecret) != ""
 }
 
 func Load() (*Config, error) {
@@ -94,18 +106,19 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		RPCURL:         os.Getenv("RPC_URL"),
-		PrivateKey:     os.Getenv("PRIVATE_KEY"),
-		ChainID:        chainID,
-		FactoryAddress: os.Getenv("FACTORY_ADDRESS"),
-		DatabaseURL:    dbURL,
-		Port:           port,
-		MCPTransport:   os.Getenv("MCP_TRANSPORT"),
-		CORSOrigins:    corsOrigins,
-		RequestTimeout: requestTimeout,
-		TxTimeout:      txTimeout,
-		LogChunkSize:   logChunkSize,
-		StartBlock:     startBlock,
+		RPCURL:           os.Getenv("RPC_URL"),
+		PrivateKey:       os.Getenv("PRIVATE_KEY"),
+		ChainID:          chainID,
+		FactoryAddress:   os.Getenv("FACTORY_ADDRESS"),
+		DatabaseURL:      dbURL,
+		Port:             port,
+		MCPTransport:     os.Getenv("MCP_TRANSPORT"),
+		CORSOrigins:      corsOrigins,
+		RequestTimeout:   requestTimeout,
+		TxTimeout:        txTimeout,
+		LogChunkSize:     logChunkSize,
+		StartBlock:       startBlock,
+		CDPWebhookSecret: os.Getenv("CDP_WEBHOOK_SECRET"),
 	}
 
 	result := cfg.Validate()

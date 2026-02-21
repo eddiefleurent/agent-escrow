@@ -58,12 +58,12 @@ Marketplace layer built on top of the settlement kernel.
 2. **Worker stake activation** ✓ -- `workerStake` field activated as anti-Sybil bond; worker deposits stake via `depositStake()` after buyer funding and before submission; stake returned on approval, forfeited proportionally on dispute, forfeited fully on timeout/arbitrator timeout (paper §4.8: delegatee posts financial stake into escrow prior to execution)
 3. **Milestone-based escrow** ✓ -- multiple submission/approval checkpoints within a single escrow with partial payouts; per-milestone submit/approve/dispute/resolve cycles; sequential processing, max 16 milestones, immutable after creation; buyer-only `abortRemainingMilestones()` after terminal failure; worker stake settled at escrow terminal state; propagated through contracts, storage, indexer, MCP tools, HTTP API, and PlantUML diagrams (paper §4.4: smart contracts with pre-agreed executable clauses for adaptive coordination)
 4. **Backup agent clause** ✓ -- pre-designated fallback worker if primary defaults, with penalty coverage; `backupWorker` and `backupDeadlineExtension` fields on escrow creation, `activateBackup()` buyer action, stake forfeiture on activation, deadline extension; propagated through contracts, storage, indexer, MCP tools, HTTP API, and documentation (paper §4.4: backup agent auto-re-allocation on failed ZK checkpoint)
-5. **On-chain reputation seed** -- factory-level outcome recording per address: tasks completed, disputed, failed (paper §4.6 Table 3: immutable ledger approach)
+5. **On-chain reputation seed** ✓ -- factory-level outcome recording per address: tasks completed, disputed, failed; `ReputationRecord` struct with `workerReputation`/`buyerReputation` mappings; `recordOutcome()` callback from escrow on terminal states; `OutcomeRecorded` event; anti-spoofing via reverse escrow lookup; backup worker attribution; off-chain indexing into `reputation` table; `get_reputation` MCP tool and `GET /api/v1/reputation/{address}` HTTP endpoint (paper §4.6 Table 3: immutable ledger approach)
 6. **Complexity floor parameter** -- minimum escrow amount to justify delegation overhead, gas + protocol fee; lower bound calibrated against x402 facilitator fee + on-chain gas (paper §4.3: complexity floor below which delegation overhead exceeds task value)
 7. **Task_RFQ + Bid_Object bidding protocol** -- off-chain bidding with on-chain escrow formalization on bid acceptance; service discovery via [x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) (paper §6.1: Task_RFQ broadcast + signed Bid_Objects)
 8. **A2A settlement adapter** -- agent card advertising escrow capability; `verification_policy` + `escrow_trigger` fields; discoverable via x402 Bazaar (paper §6: A2A Task object extension)
 9. **AP2 mandate-to-escrow bridge** -- AP2 mandate authorization triggers escrow funding via [x402](https://docs.cdp.coinbase.com/x402/welcome) payment rail (EIP-3009 gasless transfer through facilitator into escrow contract) (paper §6: AP2 stake-on-bid + conditional settlement)
-10. **Real-time event subscriptions** -- WebSocket/SSE stream for escrow lifecycle events (paper §4.5: configurable granularity L0-L3)
+10. **Real-time event subscriptions** -- CDP Webhooks deliver factory events (`EscrowCreated`, `OutcomeRecorded`) in real-time via `POST /webhooks/cdp` with HMAC-SHA256 verification (partial ✓); remaining: WebSocket/SSE stream for escrow lifecycle events exposed to clients (paper §4.5: configurable granularity L0-L3)
 11. **Emergency response protocol** -- credential revocation propagation, contract freeze with fund recovery path (paper §4.9: rapid incident response, recursive credential revocation across chains)
 
 ### V3 -- Delegation Intelligence
@@ -202,7 +202,7 @@ Long-horizon items the paper acknowledges as open research:
 - Verifier/arbitrator centralization in V1 (mitigated by multi-verifier quorum in V3)
 - Poor task specification causing avoidable disputes (mitigated by contract-first decomposition tooling in V3)
 - Wallet UX friction for non-crypto-native participants (partially mitigated by x402 gasless funding via facilitator in V2)
-- Off-chain/on-chain state drift if indexing is unreliable
+- Off-chain/on-chain state drift if indexing is unreliable (partially mitigated by dual-mode ingestion: CDP Webhooks for factory events + polling fallback with deduplication)
 - Safety becoming a luxury good if high-assurance delegation is too expensive (mitigated by tiered service levels + governance safety floors)
 - De-skilling risk for human participants who lose proficiency through reduced engagement (mitigated by curriculum-aware routing in V4)
 - Cognitive monoculture if the ecosystem over-depends on a limited number of foundation models (paper §4.9)

@@ -32,7 +32,7 @@ func (d *DB) GetTask(id int64) (*Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get task: %w", err)
 	}
-	t.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
+	t.CreatedAt, err = parseSQLiteTime(createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("parse created_at in GetTask: %w", err)
 	}
@@ -85,11 +85,11 @@ func scanEscrow(scanner interface{ Scan(...any) error }) (*Escrow, error) {
 		return nil, err
 	}
 	e.BackupActivated = backupActivatedInt != 0
-	e.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
+	e.CreatedAt, err = parseSQLiteTime(createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("parse created_at: %w", err)
 	}
-	e.UpdatedAt, err = time.Parse("2006-01-02 15:04:05", updatedAt)
+	e.UpdatedAt, err = parseSQLiteTime(updatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("parse updated_at: %w", err)
 	}
@@ -231,7 +231,7 @@ func (d *DB) CreateSubmission(escrowID int64, submissionHash, submissionURI stri
 	if err != nil {
 		return nil, fmt.Errorf("get submission: %w", err)
 	}
-	s.SubmittedAt, err = time.Parse("2006-01-02 15:04:05", submittedAt)
+	s.SubmittedAt, err = parseSQLiteTime(submittedAt)
 	if err != nil {
 		return nil, fmt.Errorf("parse submitted_at in CreateSubmission: %w", err)
 	}
@@ -254,7 +254,7 @@ func (d *DB) GetSubmissionsByEscrow(escrowID int64) ([]*Submission, error) {
 		if err := rows.Scan(&s.ID, &s.EscrowID, &s.SubmissionHash, &s.SubmissionURI, &submittedAt); err != nil {
 			return nil, fmt.Errorf("scan submission: %w", err)
 		}
-		s.SubmittedAt, err = time.Parse("2006-01-02 15:04:05", submittedAt)
+		s.SubmittedAt, err = parseSQLiteTime(submittedAt)
 		if err != nil {
 			return nil, fmt.Errorf("parse submitted_at in GetSubmissionsByEscrow: %w", err)
 		}
@@ -322,18 +322,117 @@ func (d *DB) getDispute(id int64) (*Dispute, error) {
 		v := int(nullBps.Int64)
 		disp.WorkerAwardBps = &v
 	}
-	disp.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
+	disp.CreatedAt, err = parseSQLiteTime(createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("parse created_at in getDispute: %w", err)
 	}
 	if resolvedAt.Valid {
-		t, err := time.Parse("2006-01-02 15:04:05", resolvedAt.String)
+		t, err := parseSQLiteTime(resolvedAt.String)
 		if err != nil {
 			return nil, fmt.Errorf("parse resolved_at in getDispute: %w", err)
 		}
 		disp.ResolvedAt = &t
 	}
 	return disp, nil
+}
+
+// Reputation queries
+
+func (d *DB) GetReputation(address, role string) (*Reputation, error) {
+	r := &Reputation{}
+	var updatedAt string
+	err := d.db.QueryRow(
+		`SELECT id, address, role, completed, disputed, failed, updated_at FROM reputation WHERE address = ? AND role = ?`,
+		address, role,
+	).Scan(&r.ID, &r.Address, &r.Role, &r.Completed, &r.Disputed, &r.Failed, &updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("get reputation: %w", err)
+	}
+	r.UpdatedAt, err = parseSQLiteTime(updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse reputation updated_at: %w", err)
+	}
+	return r, nil
+}
+
+func (d *DB) GetReputationByAddress(address string) ([]*Reputation, error) {
+	rows, err := d.db.Query(
+		`SELECT id, address, role, completed, disputed, failed, updated_at FROM reputation WHERE address = ?`,
+		address,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get reputation by address: %w", err)
+	}
+	defer rows.Close()
+
+	var reps []*Reputation
+	for rows.Next() {
+		r := &Reputation{}
+		var updatedAt string
+		if err := rows.Scan(&r.ID, &r.Address, &r.Role, &r.Completed, &r.Disputed, &r.Failed, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scan reputation: %w", err)
+		}
+		var err error
+		r.UpdatedAt, err = parseSQLiteTime(updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse reputation updated_at: %w", err)
+		}
+		reps = append(reps, r)
+	}
+	return reps, rows.Err()
+}
+
+func (d *DB) UpsertReputation(address, role, outcome string) error {
+	var col string
+	switch outcome {
+	case "completed":
+		col = "completed"
+	case "disputed":
+		col = "disputed"
+	case "failed":
+		col = "failed"
+	default:
+		return fmt.Errorf("invalid outcome: %s", outcome)
+	}
+
+	query := fmt.Sprintf(
+		`INSERT INTO reputation (address, role, %s) VALUES (?, ?, 1)
+		 ON CONFLICT(address, role)
+		 DO UPDATE SET %s = %s + 1, updated_at = datetime('now')`,
+		col, col, col,
+	)
+	_, err := d.db.Exec(query, address, role)
+	if err != nil {
+		return fmt.Errorf("upsert reputation: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) ListReputations(minCompleted int) ([]*Reputation, error) {
+	rows, err := d.db.Query(
+		`SELECT id, address, role, completed, disputed, failed, updated_at FROM reputation WHERE completed >= ? ORDER BY completed DESC`,
+		minCompleted,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list reputations: %w", err)
+	}
+	defer rows.Close()
+
+	var reps []*Reputation
+	for rows.Next() {
+		r := &Reputation{}
+		var updatedAt string
+		if err := rows.Scan(&r.ID, &r.Address, &r.Role, &r.Completed, &r.Disputed, &r.Failed, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scan reputation: %w", err)
+		}
+		var err error
+		r.UpdatedAt, err = parseSQLiteTime(updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse reputation updated_at: %w", err)
+		}
+		reps = append(reps, r)
+	}
+	return reps, rows.Err()
 }
 
 // Chain log queries
@@ -410,11 +509,11 @@ func scanMilestone(scanner interface{ Scan(...any) error }) (*MilestoneRecord, e
 	if err != nil {
 		return nil, err
 	}
-	m.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
+	m.CreatedAt, err = parseSQLiteTime(createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("parse created_at: %w", err)
 	}
-	m.UpdatedAt, err = time.Parse("2006-01-02 15:04:05", updatedAt)
+	m.UpdatedAt, err = parseSQLiteTime(updatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("parse updated_at: %w", err)
 	}
@@ -528,11 +627,27 @@ func boolToInt(b bool) int {
 	return 0
 }
 
+// parseSQLiteTime handles the two timestamp formats that SQLite / modernc.org/sqlite
+// can produce: datetime('now') returns "2006-01-02 15:04:05" while
+// CURRENT_TIMESTAMP can return "2006-01-02T15:04:05Z" (ISO 8601).
+func parseSQLiteTime(s string) (time.Time, error) {
+	for _, layout := range []string{
+		"2006-01-02 15:04:05",
+		time.RFC3339,
+		"2006-01-02T15:04:05Z",
+	} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unrecognised timestamp format: %q", s)
+}
+
 func parseNullTime(ns sql.NullString) (*time.Time, error) {
 	if !ns.Valid || ns.String == "" {
 		return nil, nil
 	}
-	t, err := time.Parse("2006-01-02 15:04:05", ns.String)
+	t, err := parseSQLiteTime(ns.String)
 	if err != nil {
 		return nil, err
 	}

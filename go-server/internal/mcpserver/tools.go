@@ -2,10 +2,13 @@ package mcpserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"strconv"
+	"strings"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
@@ -74,6 +77,11 @@ type listArgs struct {
 	Status  string `json:"status" jsonschema:"Filter by status"`
 }
 
+type reputationArgs struct {
+	Address string `json:"address" jsonschema:"Ethereum address to look up reputation for"`
+	Role    string `json:"role,omitempty" jsonschema:"Optional: 'worker' or 'buyer'. Omit to return both roles."`
+}
+
 func (s *Server) registerTools(srv *mcp.Server) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "create_escrow",
@@ -129,6 +137,11 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Name:        "activate_backup",
 		Description: "Activate the backup worker, replacing the current worker (buyer only, requires backup_worker to be set at creation)",
 	}, s.handleActivateBackup)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "get_reputation",
+		Description: "Get on-chain reputation record for an address (tasks completed, disputed, failed). Paper §4.6: immutable ledger approach.",
+	}, s.handleGetReputation)
 }
 
 func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolRequest, args createEscrowArgs) (*mcp.CallToolResult, any, error) {
@@ -692,6 +705,46 @@ func (s *Server) handleActivateBackup(ctx context.Context, req *mcp.CallToolRequ
 
 	_ = s.idx.RunOnce(ctx)
 	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+}
+
+func (s *Server) handleGetReputation(ctx context.Context, req *mcp.CallToolRequest, args reputationArgs) (*mcp.CallToolResult, any, error) {
+	if !common.IsHexAddress(args.Address) {
+		return textResult("invalid address"), nil, nil
+	}
+	addr := strings.ToLower(common.HexToAddress(args.Address).Hex())
+
+	if args.Role != "" && args.Role != "worker" && args.Role != "buyer" {
+		return textResult("role must be 'worker', 'buyer', or omitted"), nil, nil
+	}
+
+	if args.Role != "" {
+		rep, err := s.db.GetReputation(addr, args.Role)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return jsonResult(map[string]any{
+					"address":   addr,
+					"role":      args.Role,
+					"completed": 0,
+					"disputed":  0,
+					"failed":    0,
+				})
+			}
+			return nil, nil, fmt.Errorf("get reputation: %w", err)
+		}
+		return jsonResult(rep)
+	}
+
+	reps, err := s.db.GetReputationByAddress(addr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get reputation by address: %w", err)
+	}
+	if len(reps) == 0 {
+		return jsonResult([]map[string]any{
+			{"address": addr, "role": "worker", "completed": 0, "disputed": 0, "failed": 0},
+			{"address": addr, "role": "buyer", "completed": 0, "disputed": 0, "failed": 0},
+		})
+	}
+	return jsonResult(reps)
 }
 
 func parseMilestoneIndex(s string) (uint8, error) {

@@ -61,7 +61,13 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	// The polling indexer always runs for escrow-level events (each TaskEscrow
+	// is a separate contract). When CDP_WEBHOOK_SECRET is set, factory events
+	// additionally arrive in real-time via POST /webhooks/cdp.
 	go idx.Run(ctx)
+	if cfg.WebhookMode() {
+		slog.Info("CDP webhook mode enabled for factory events")
+	}
 
 	if cfg.MCPTransport == "stdio" {
 		go func() {

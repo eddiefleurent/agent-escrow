@@ -123,6 +123,22 @@ func New(db *storage.DB, chainClient chain.ChainClient, factoryAddress string, o
 	return idx
 }
 
+// DB returns the indexer's storage handle, allowing other components (e.g. the
+// webhook handler) to query escrow state when routing incoming events.
+func (idx *Indexer) DB() *storage.DB {
+	return idx.db
+}
+
+// FactoryAddress returns the factory contract address the indexer monitors.
+func (idx *Indexer) FactoryAddress() common.Address {
+	return idx.factoryAddress
+}
+
+// ChainID returns the chain ID the indexer is configured for.
+func (idx *Indexer) ChainID() int64 {
+	return idx.chainID
+}
+
 // Err returns a channel that receives a fatal error when the indexer has failed
 // too many times consecutively. The channel is buffered (size 1) so the sender
 // never blocks. Callers should select on this channel alongside context
@@ -222,21 +238,24 @@ func (idx *Indexer) RunOnce(ctx context.Context) error {
 }
 
 func (idx *Indexer) indexFactoryEvents(ctx context.Context, from, to uint64) error {
-	eventID := chain.FactoryABI.Events["EscrowCreated"].ID
-	logs, err := idx.chain.FilterLogs(ctx, []common.Address{idx.factoryAddress}, [][]common.Hash{{eventID}}, from, to)
+	escrowCreatedID := chain.FactoryABI.Events["EscrowCreated"].ID
+	outcomeRecordedID := chain.FactoryABI.Events["OutcomeRecorded"].ID
+	logs, err := idx.chain.FilterLogs(ctx, []common.Address{idx.factoryAddress}, [][]common.Hash{{escrowCreatedID, outcomeRecordedID}}, from, to)
 	if err != nil {
 		return fmt.Errorf("filter factory logs: %w", err)
 	}
 
 	for _, lg := range logs {
-		if err := idx.processFactoryLog(lg); err != nil {
+		if err := idx.ProcessFactoryLog(lg); err != nil {
 			slog.Warn("factory log processing failed", "tx_hash", lg.TxHash.Hex(), "log_index", lg.Index, "error", err)
 		}
 	}
 	return nil
 }
 
-func (idx *Indexer) processFactoryLog(lg types.Log) error {
+// ProcessFactoryLog deduplicates, stores, and dispatches a single factory event log.
+// Exported so the CDP webhook handler can reuse the same processing pipeline.
+func (idx *Indexer) ProcessFactoryLog(lg types.Log) error {
 	exists, err := idx.db.ChainLogExists(lg.TxHash.Hex(), int(lg.Index))
 	if err != nil {
 		return err
@@ -258,8 +277,11 @@ func (idx *Indexer) processFactoryLog(lg types.Log) error {
 		return err
 	}
 
-	if event.Name == "EscrowCreated" {
+	switch event.Name {
+	case "EscrowCreated":
 		return idx.handleEscrowCreated(lg)
+	case "OutcomeRecorded":
+		return idx.handleOutcomeRecorded(lg)
 	}
 	return nil
 }
@@ -341,6 +363,40 @@ func (idx *Indexer) handleEscrowCreated(lg types.Log) error {
 	return err
 }
 
+func (idx *Indexer) handleOutcomeRecorded(lg types.Log) error {
+	// OutcomeRecorded(uint256 indexed escrowId, address indexed participant, string role, string outcome)
+	if len(lg.Topics) < 3 {
+		return fmt.Errorf("OutcomeRecorded: insufficient topics (got %d, need >= 3)", len(lg.Topics))
+	}
+
+	participant := common.BytesToAddress(lg.Topics[2].Bytes())
+
+	values, err := chain.FactoryABI.Events["OutcomeRecorded"].Inputs.NonIndexed().Unpack(lg.Data)
+	if err != nil {
+		return fmt.Errorf("unpack OutcomeRecorded: %w", err)
+	}
+	if len(values) < 2 {
+		return fmt.Errorf("OutcomeRecorded: expected 2 non-indexed values, got %d", len(values))
+	}
+
+	role, ok := values[0].(string)
+	if !ok {
+		return fmt.Errorf("OutcomeRecorded: unexpected type for role: %T", values[0])
+	}
+	outcome, ok := values[1].(string)
+	if !ok {
+		return fmt.Errorf("OutcomeRecorded: unexpected type for outcome: %T", values[1])
+	}
+
+	slog.Info("outcome recorded",
+		"participant", participant.Hex(),
+		"role", role,
+		"outcome", outcome,
+	)
+
+	return idx.db.UpsertReputation(strings.ToLower(participant.Hex()), role, outcome)
+}
+
 func (idx *Indexer) indexEscrowEvents(ctx context.Context, escrowAddr common.Address, dbEscrowID int64, from, to uint64) error {
 	logs, err := idx.chain.FilterLogs(ctx, []common.Address{escrowAddr}, nil, from, to)
 	if err != nil {
@@ -348,7 +404,7 @@ func (idx *Indexer) indexEscrowEvents(ctx context.Context, escrowAddr common.Add
 	}
 
 	for _, lg := range logs {
-		if err := idx.processEscrowLog(lg, dbEscrowID); err != nil {
+		if err := idx.ProcessEscrowLog(lg, dbEscrowID); err != nil {
 			slog.Warn("escrow log processing failed", "tx_hash", lg.TxHash.Hex(), "log_index", lg.Index, "error", err)
 		}
 	}
@@ -363,7 +419,9 @@ func (idx *Indexer) isTerminalStatus(dbEscrowID int64) bool {
 	return terminalStatuses[e.Status]
 }
 
-func (idx *Indexer) processEscrowLog(lg types.Log, dbEscrowID int64) error {
+// ProcessEscrowLog deduplicates, stores, and dispatches a single escrow event log.
+// Exported so the CDP webhook handler can reuse the same processing pipeline.
+func (idx *Indexer) ProcessEscrowLog(lg types.Log, dbEscrowID int64) error {
 	exists, err := idx.db.ChainLogExists(lg.TxHash.Hex(), int(lg.Index))
 	if err != nil {
 		return err

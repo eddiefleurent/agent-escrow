@@ -125,21 +125,32 @@ Four integration paths, in priority order:
 ## System Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   Go Server Binary                  │
-│                                                     │
-│  ┌─────────────┐  ┌──────────┐  ┌───────────────┐  │
-│  │  MCP Server  │  │ HTTP API │  │ Event Indexer │  │
-│  │   (stdio)    │  │ (JSON)   │  │  (background) │  │
-│  └──────┬───────┘  └────┬─────┘  └───────┬───────┘  │
-│         │               │                │          │
-│         └───────────┬───┘                │          │
-│                     │                    │          │
-│              ┌──────┴──────┐    ┌────────┴───────┐  │
-│              │ Chain Client│    │   SQLite DB    │  │
-│              │ (go-ethereum)│    │                │  │
-│              └──────┬──────┘    └────────────────┘  │
-└─────────────────────┼───────────────────────────────┘
+                                        ┌──────────────┐
+                                        │ CDP Webhooks │ (optional)
+                                        │  (real-time  │
+                                        │  factory     │
+                                        │  events)     │
+                                        └──────┬───────┘
+                                               │ HMAC-signed POST
+┌──────────────────────────────────────────────┼──────┐
+│                   Go Server Binary            │      │
+│                                               │      │
+│  ┌─────────────┐  ┌──────────┐  ┌────────────┴──┐   │
+│  │  MCP Server  │  │ HTTP API │  │Webhook Handler│   │
+│  │   (stdio)    │  │ (JSON)   │  │(/webhooks/cdp)│   │
+│  └──────┬───────┘  └────┬─────┘  └───────┬───────┘   │
+│         │               │                │           │
+│         └───────────┬───┘                │           │
+│                     │         ┌───────────────┐      │
+│                     │         │ Event Indexer  │      │
+│                     │         │ (background    │      │
+│                     │         │  poller)       │      │
+│                     │         └───────┬───────┘      │
+│              ┌──────┴──────┐  ┌──────┴────────┐      │
+│              │ Chain Client│  │   SQLite DB    │      │
+│              │(go-ethereum)│  │                │      │
+│              └──────┬──────┘  └───────────────┘      │
+└─────────────────────┼────────────────────────────────┘
                       │
               ┌───────┴────────┐
               │  Base Sepolia  │
@@ -207,12 +218,12 @@ The current architecture -- single Go binary, SQLite, one factory contract -- is
 | Component | Current State | Pressure Point | Migration Path | Phase |
 |---|---|---|---|---|
 | **SQLite** | Single-file embedded DB | Write contention under concurrent marketplace load (bidding, reputation, event indexing) | PostgreSQL. The storage layer uses `database/sql` with hand-written queries -- no ORM lock-in. Swap the driver and adjust SQL dialect differences. | V2 |
-| **Event indexer** | Polling every 15s, sequential | Hundreds of active escrows with overlapping lifecycle events; polling lag becomes visible | WebSocket subscription (`eth_subscribe`) for real-time events; parallel per-escrow indexing; event bus for internal pub/sub | V2 |
+| **Event indexer** | Polling every 15s + CDP Webhooks for factory events | Hundreds of active escrows with overlapping lifecycle events; polling lag becomes visible for escrow-level events | CDP Webhooks already deliver factory events in real-time (V2, done). Next: WebSocket subscription (`eth_subscribe`) for escrow events; parallel per-escrow indexing; event bus for internal pub/sub | V2-V3 |
 | **Single process** | MCP + API + indexer in one binary | Indexer CPU/memory spikes affecting API latency; MCP stdio transport limits to one connected agent per process | Separate the indexer into its own process. Run multiple MCP server instances behind streamable-HTTP transport. API remains stateless and horizontally scalable. | V2-V3 |
 | **Contract deployment** | One `TaskEscrow` per escrow via `CREATE` | Contract deployment gas overhead at high volume; bytecode duplication | Minimal proxy pattern (EIP-1167 clones). The factory deploys proxy contracts pointing to a single `TaskEscrow` implementation. Reduces per-escrow deploy cost by ~90%. | V2 |
 | **Nonce management** | Sequential nonce tracking | Concurrent transaction submission causes nonce collisions | Nonce manager with mutex or pending-pool awareness; or separate signing service | V2 |
 | **Authentication** | None (server holds a single private key) | Multi-tenant marketplace where different participants sign their own transactions | Agents manage their own wallets via [AgentKit](https://docs.cdp.coinbase.com/agent-kit/welcome) or equivalent and sign escrow transactions directly; server shifts to indexing-only. Alternatively: relayer/meta-transaction model, or ERC-4337 account abstraction. The paper's §4.7 requires each agent to hold scoped credentials and sign its own messages (§4.9). | V2-V3 |
-| **Reputation storage** | Not yet implemented | On-chain reputation seed (V2) generates read-heavy query load; behavioral metrics (V3) produce high-write analytical workload | Reputation reads from a materialized view or dedicated read replica. Behavioral metrics use a time-series store or append-only analytics table. | V2-V3 |
+| **Reputation storage** | On-chain seed implemented; off-chain SQLite table | On-chain reputation seed (V2) generates read-heavy query load; behavioral metrics (V3) produce high-write analytical workload | Reputation reads from a materialized view or dedicated read replica. Behavioral metrics use a time-series store or append-only analytics table. | V2-V3 |
 | **ZK verification** | Not yet implemented | ZK proof verification on-chain is expensive even on L2 (~300k-500k gas for groth16) | Verify proofs off-chain by default; post only the proof hash on-chain. Optional on-chain verification for high-assurance tasks via a dedicated verifier contract. Consider recursive proofs to amortize cost. | V3 |
 | **Cross-chain** | Single-chain (Base) | Agents and liquidity on different L2s | Bridge adapter contracts or cross-chain messaging (LayerZero, Hyperlane). The Go server already parameterizes `CHAIN_ID` and `RPC_URL`, so multi-chain indexing is configuration, not architecture. Settlement contracts deploy per-chain. | V4+ |
 
@@ -258,7 +269,7 @@ The riskiest V4+ item is **cross-chain settlement**, which introduces bridge tru
 
 ### Contracts
 
-- **`TaskEscrowFactory`** (`src/TaskEscrowFactory.sol`) -- creates escrow instances, stores protocol-level configuration (fee basis points, treasury, pause state). Delegates `TaskEscrow` deployment to `EscrowDeployer` to stay under the EIP-170 size limit.
+- **`TaskEscrowFactory`** (`src/TaskEscrowFactory.sol`) -- creates escrow instances, stores protocol-level configuration (fee basis points, treasury, pause state), and records per-address reputation outcomes (completed/disputed/failed counters for workers and buyers). Delegates `TaskEscrow` deployment to `EscrowDeployer` to stay under the EIP-170 size limit.
 - **`EscrowDeployer`** (`src/EscrowDeployer.sol`) -- minimal deployer contract that creates `TaskEscrow` instances on behalf of the factory.
 - **`TaskEscrow`** (`src/TaskEscrow.sol`) -- holds escrowed ETH or ERC20, enforces the lifecycle state machine with role-gated transitions.
 
@@ -332,6 +343,8 @@ Pending ──submit()──> Submitted
                         └─ timeout ──> Cancelled
 ```
 
+![Milestone State Machine](diagrams/milestone-state-machine.png)
+
 Key properties:
 - Milestones are defined at creation and processed in order.
 - Each milestone has its own amount, deadline, and review cycle.
@@ -339,6 +352,10 @@ Key properties:
 - Worker stake is held for the full escrow duration, settled once when all milestones reach terminal states.
 - The buyer can abort remaining milestones after a dispute resolution or timeout, receiving a refund for uncompleted work.
 - Single-milestone escrows behave identically to V1 (backward compatibility).
+
+![Milestone Lifecycle Sequence](diagrams/milestone-lifecycle-sequence.png)
+
+![Milestone System Sequence](diagrams/milestone-system-sequence.png)
 
 See [`SPEC.md`](SPEC.md) for the state machine, settlement math, and invariants.
 
@@ -398,10 +415,11 @@ go-server/
     indexer/indexer.go             Event polling -> DB reconciliation
     mcpserver/
       server.go                    MCP server setup
-      tools.go                     11 tool handlers
+      tools.go                     12 tool handlers
     api/
       router.go                    HTTP mux with middleware
       handlers.go                  JSON request/response handlers
+      webhook.go                   CDP webhook receiver (factory events)
       middleware.go                Logging, recovery, CORS
   abi/
     embed.go                       //go:embed for ABI JSON files
@@ -431,23 +449,42 @@ SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 | `milestones` | Per-milestone records: amount, deadline, status, submission/dispute data (V2) |
 | `submissions` | Worker submission records |
 | `disputes` | Dispute and resolution records |
+| `reputation` | Per-address, per-role outcome counters (completed, disputed, failed) indexed from on-chain events |
 | `chain_logs` | Raw chain event log (idempotent by tx_hash + log_index) |
 | `chain_cursors` | Indexer block cursor per chain |
 
-### Event Indexer
+![Reputation Seed Sequence](diagrams/reputation-seed-sequence.png)
 
-Background goroutine polling every 15 seconds:
+### Event Indexer (Dual-Mode: Polling + CDP Webhooks)
+
+The indexer reconciles on-chain events into the SQLite database. Two complementary mechanisms handle different event categories:
+
+**Polling indexer** (always active) — background goroutine polling every 15 seconds:
 
 1. Get current block number from RPC
 2. Load cursor from DB (or default: current - 250 blocks)
 3. Fetch `EscrowCreated` events from factory address
-4. For each known escrow, fetch all lifecycle events
+4. For each known escrow, fetch all lifecycle events (~15 event types)
 5. Map events to status updates
 6. Create submission/dispute records from relevant events
 7. Idempotent: skip events already in `chain_logs`
 8. Update cursor
 
 After any write transaction (via MCP or API), `RunOnce()` is called synchronously for immediate event pickup.
+
+**CDP Webhooks** (optional, enabled by `CDP_WEBHOOK_SECRET`) — real-time push for factory events:
+
+1. CDP pushes `EscrowCreated` and `OutcomeRecorded` events to `POST /webhooks/cdp` as they occur on-chain
+2. The handler verifies the HMAC-SHA256 signature (replay protection via timestamp window)
+3. Events are deduplicated via the same `chain_logs` mechanism as the polling indexer
+4. Decoded event parameters are written directly to the database
+
+**Why both?** The factory contract (`TaskEscrowFactory`) is a single static address — ideal for a webhook subscription. But each `TaskEscrow` is a dynamically deployed contract at a new address that can't be pre-subscribed. The polling indexer handles all escrow-level events (funded, submitted, approved, disputed, etc.) while webhooks provide near-instant delivery of factory events. The polling indexer also serves as a fallback for factory events if CDP has an outage — deduplication ensures no double-processing.
+
+| Event Category | Source | Delivery | Mechanism |
+|---|---|---|---|
+| Factory events (`EscrowCreated`, `OutcomeRecorded`) | `TaskEscrowFactory` | Real-time push (webhook) + 15s poll (fallback) | CDP Webhooks + polling indexer |
+| Escrow events (~15 types) | Individual `TaskEscrow` contracts | 15s poll | Polling indexer only |
 
 ### MCP Tools (Primary Interface)
 
@@ -464,6 +501,7 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 | `activate_backup` | escrow_id | `Escrow.activateBackup` |
 | `get_escrow` | escrow_id | DB read (includes milestone details) |
 | `list_escrows` | role, address, status | DB query |
+| `get_reputation` | address, role (optional) | DB read (indexed from on-chain OutcomeRecorded events) |
 
 ### HTTP API (Secondary Interface)
 
@@ -481,6 +519,8 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 | POST | `/api/v1/escrows/{id}/resolve` | Resolve (body: worker_award_bps, resolution_uri, optional milestone_index) |
 | POST | `/api/v1/escrows/{id}/abort-milestones` | Abort remaining milestones (buyer only) |
 | POST | `/api/v1/escrows/{id}/activate-backup` | Activate backup worker (buyer only) |
+| GET | `/api/v1/reputation/{address}` | Get reputation (query: role) |
+| POST | `/webhooks/cdp` | CDP webhook receiver (factory events; requires `CDP_WEBHOOK_SECRET`) |
 
 ### Configuration
 
@@ -496,6 +536,7 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 | `CORS_ORIGINS` | No | `*` (wildcard) | Comma-separated allowed origins; empty = allow all |
 | `REQUEST_TIMEOUT` | No | `10s` | Timeout for read-only HTTP requests |
 | `TX_TIMEOUT` | No | `90s` | Timeout for chain transaction HTTP requests |
+| `CDP_WEBHOOK_SECRET` | No | -- | CDP webhook HMAC secret; enables real-time factory event delivery via `POST /webhooks/cdp` |
 
 ### Design Decisions
 
@@ -505,3 +546,4 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 - **ABI embedding**: `//go:embed` from files copied at build time (`make go-abi`).
 - **Shared logic**: MCP tools and HTTP handlers call the same chain + storage + indexer methods.
 - **Synchronous indexer after writes**: `RunOnce()` triggered after transaction submission for immediate event pickup.
+- **Dual-mode event ingestion**: CDP Webhooks for real-time factory events + polling for dynamically-deployed escrow contracts. Both paths deduplicate via `chain_logs` (tx_hash + log_index), so overlapping coverage is safe. Webhook mode is opt-in via `CDP_WEBHOOK_SECRET`.
