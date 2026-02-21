@@ -456,6 +456,7 @@ struct Milestone {
     uint64 disputedAt;        // set on dispute
     string disputeReasonURI;  // set on dispute/reject
     MilestoneStatus status;   // per-milestone status
+    uint16 awardBps;          // set on dispute resolution (worker's award in basis points, 0-10000)
 }
 
 enum MilestoneStatus {
@@ -468,11 +469,11 @@ enum MilestoneStatus {
 }
 ```
 
+- `uint256 public immutable amount` -- total escrow amount (sum of all milestone amounts). This is the funding target. For single-milestone escrows, `amount` equals the sole milestone's amount, preserving V1 compatibility.
 - `uint8 public milestoneCount` -- number of milestones (1 = V1-equivalent single-shot; >1 = milestone mode).
-- `uint8 public currentMilestone` -- index of the active milestone (0-based).
+- `uint8 public currentMilestone` -- index of the active milestone (0-based). Advanced by `_advanceMilestone()` after each milestone reaches a terminal state.
 - `Milestone[] public milestones` -- milestone array, length = `milestoneCount`.
-- `uint256 public totalAmount` -- sum of all milestone amounts (replaces `amount` as the funding target).
-- The existing `amount` field becomes `totalAmount` in milestone mode. For backward compatibility, single-milestone escrows behave identically to V1.
+- `awardBps` on each `Milestone` records the arbitrator's resolution split (0 = full refund to buyer, 10000 = full payment to worker). Set by `resolveMilestoneDispute()` and used by `_settleWorkerStake()` to compute proportional stake return.
 
 Escrow-level `status` semantics in milestone mode:
 - `Created` → `Funded` → active milestone cycling → `Settled` (all milestones approved/resolved) or `Refunded` (remaining milestones cancelled after abort).

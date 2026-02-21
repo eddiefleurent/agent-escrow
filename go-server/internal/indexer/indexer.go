@@ -56,6 +56,15 @@ var milestoneStatusMap = map[string]string{
 	"MilestoneCancelled":        "cancelled",
 }
 
+// terminalStatuses are escrow-level statuses that must not be overwritten by
+// generic event-based status mapping (e.g. the Settled event emitted by
+// _settleWorkerStake after abortRemainingMilestones).
+var terminalStatuses = map[string]bool{
+	"settled":   true,
+	"refunded":  true,
+	"cancelled": true,
+}
+
 type Indexer struct {
 	db             *storage.DB
 	chain          chain.ChainClient
@@ -346,6 +355,14 @@ func (idx *Indexer) indexEscrowEvents(ctx context.Context, escrowAddr common.Add
 	return nil
 }
 
+func (idx *Indexer) isTerminalStatus(dbEscrowID int64) bool {
+	e, err := idx.db.GetEscrow(dbEscrowID)
+	if err != nil {
+		return false
+	}
+	return terminalStatuses[e.Status]
+}
+
 func (idx *Indexer) processEscrowLog(lg types.Log, dbEscrowID int64) error {
 	exists, err := idx.db.ChainLogExists(lg.TxHash.Hex(), int(lg.Index))
 	if err != nil {
@@ -368,10 +385,15 @@ func (idx *Indexer) processEscrowLog(lg types.Log, dbEscrowID int64) error {
 		return err
 	}
 
-	// Update escrow status based on event (V1 single-milestone events only)
+	// Update escrow status based on event (V1 single-milestone events only).
+	// Skip if the escrow is already in a terminal state (e.g. "refunded" from
+	// abortRemainingMilestones) to prevent the subsequent Settled event emitted
+	// by _settleWorkerStake from incorrectly overwriting it to "settled".
 	if newStatus, ok := eventStatusMap[event.Name]; ok {
-		if err := idx.db.UpdateEscrowStatus(dbEscrowID, newStatus); err != nil {
-			return fmt.Errorf("update status to %s: %w", newStatus, err)
+		if !idx.isTerminalStatus(dbEscrowID) {
+			if err := idx.db.UpdateEscrowStatus(dbEscrowID, newStatus); err != nil {
+				return fmt.Errorf("update status to %s: %w", newStatus, err)
+			}
 		}
 	}
 
@@ -644,6 +666,13 @@ func (idx *Indexer) handleRemainingMilestonesAborted(lg types.Log, dbEscrowID in
 				slog.Warn("failed to cancel milestone", "escrow_id", dbEscrowID, "milestone", ms.MilestoneIndex, "error", err)
 			}
 		}
+	}
+
+	// The contract sets status = Status.Refunded after abort. Set this before
+	// the subsequent Settled event (from _settleWorkerStake) is processed, so
+	// the terminal-state guard in processEscrowLog prevents overwrite.
+	if err := idx.db.UpdateEscrowStatus(dbEscrowID, "refunded"); err != nil {
+		return fmt.Errorf("set escrow refunded after abort: %w", err)
 	}
 
 	return nil

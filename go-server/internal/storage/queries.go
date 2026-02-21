@@ -188,7 +188,10 @@ func (d *DB) UpdateEscrowMilestoneProgress(id int64, currentMilestone int) error
 		`UPDATE escrows SET current_milestone = ?, updated_at = datetime('now') WHERE id = ?`,
 		currentMilestone, id,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("UpdateEscrowMilestoneProgress: %w", err)
+	}
+	return nil
 }
 
 // Submission queries
@@ -378,50 +381,55 @@ func (d *DB) CreateMilestone(m *MilestoneRecord) (*MilestoneRecord, error) {
 	return d.GetMilestone(id)
 }
 
-func (d *DB) GetMilestone(id int64) (*MilestoneRecord, error) {
+const milestoneColumns = `id, escrow_id, milestone_index, amount, submission_deadline, status,
+        submission_hash, submission_uri, submitted_at, approved_at, disputed_at,
+        dispute_reason_uri, created_at, updated_at`
+
+func scanMilestone(scanner interface{ Scan(...any) error }) (*MilestoneRecord, error) {
 	m := &MilestoneRecord{}
 	var createdAt, updatedAt string
 	var submittedAt, approvedAt, disputedAt sql.NullString
-	err := d.db.QueryRow(
-		`SELECT id, escrow_id, milestone_index, amount, submission_deadline, status,
-		        submission_hash, submission_uri, submitted_at, approved_at, disputed_at,
-		        dispute_reason_uri, created_at, updated_at
-		 FROM milestones WHERE id = ?`, id,
-	).Scan(&m.ID, &m.EscrowID, &m.MilestoneIndex, &m.Amount, &m.SubmissionDeadline, &m.Status,
+	err := scanner.Scan(&m.ID, &m.EscrowID, &m.MilestoneIndex, &m.Amount, &m.SubmissionDeadline, &m.Status,
 		&m.SubmissionHash, &m.SubmissionURI, &submittedAt, &approvedAt, &disputedAt,
 		&m.DisputeReasonURI, &createdAt, &updatedAt)
 	if err != nil {
-		return nil, fmt.Errorf("get milestone: %w", err)
+		return nil, err
 	}
 	m.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
 	if err != nil {
-		return nil, fmt.Errorf("parse created_at in GetMilestone: %w", err)
+		return nil, fmt.Errorf("parse created_at: %w", err)
 	}
 	m.UpdatedAt, err = time.Parse("2006-01-02 15:04:05", updatedAt)
 	if err != nil {
-		return nil, fmt.Errorf("parse updated_at in GetMilestone: %w", err)
+		return nil, fmt.Errorf("parse updated_at: %w", err)
 	}
 	m.SubmittedAt, err = parseNullTime(submittedAt)
 	if err != nil {
-		return nil, fmt.Errorf("parse submitted_at in GetMilestone: %w", err)
+		return nil, fmt.Errorf("parse submitted_at: %w", err)
 	}
 	m.ApprovedAt, err = parseNullTime(approvedAt)
 	if err != nil {
-		return nil, fmt.Errorf("parse approved_at in GetMilestone: %w", err)
+		return nil, fmt.Errorf("parse approved_at: %w", err)
 	}
 	m.DisputedAt, err = parseNullTime(disputedAt)
 	if err != nil {
-		return nil, fmt.Errorf("parse disputed_at in GetMilestone: %w", err)
+		return nil, fmt.Errorf("parse disputed_at: %w", err)
+	}
+	return m, nil
+}
+
+func (d *DB) GetMilestone(id int64) (*MilestoneRecord, error) {
+	row := d.db.QueryRow(`SELECT `+milestoneColumns+` FROM milestones WHERE id = ?`, id)
+	m, err := scanMilestone(row)
+	if err != nil {
+		return nil, fmt.Errorf("get milestone: %w", err)
 	}
 	return m, nil
 }
 
 func (d *DB) GetMilestonesByEscrow(escrowID int64) ([]*MilestoneRecord, error) {
 	rows, err := d.db.Query(
-		`SELECT id, escrow_id, milestone_index, amount, submission_deadline, status,
-		        submission_hash, submission_uri, submitted_at, approved_at, disputed_at,
-		        dispute_reason_uri, created_at, updated_at
-		 FROM milestones WHERE escrow_id = ? ORDER BY milestone_index`, escrowID,
+		`SELECT `+milestoneColumns+` FROM milestones WHERE escrow_id = ? ORDER BY milestone_index`, escrowID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list milestones: %w", err)
@@ -430,33 +438,9 @@ func (d *DB) GetMilestonesByEscrow(escrowID int64) ([]*MilestoneRecord, error) {
 
 	var milestones []*MilestoneRecord
 	for rows.Next() {
-		m := &MilestoneRecord{}
-		var createdAt, updatedAt string
-		var submittedAt, approvedAt, disputedAt sql.NullString
-		if err := rows.Scan(&m.ID, &m.EscrowID, &m.MilestoneIndex, &m.Amount, &m.SubmissionDeadline, &m.Status,
-			&m.SubmissionHash, &m.SubmissionURI, &submittedAt, &approvedAt, &disputedAt,
-			&m.DisputeReasonURI, &createdAt, &updatedAt); err != nil {
+		m, err := scanMilestone(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan milestone: %w", err)
-		}
-		m.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
-		if err != nil {
-			return nil, fmt.Errorf("parse created_at in GetMilestonesByEscrow: %w", err)
-		}
-		m.UpdatedAt, err = time.Parse("2006-01-02 15:04:05", updatedAt)
-		if err != nil {
-			return nil, fmt.Errorf("parse updated_at in GetMilestonesByEscrow: %w", err)
-		}
-		m.SubmittedAt, err = parseNullTime(submittedAt)
-		if err != nil {
-			return nil, fmt.Errorf("parse submitted_at in GetMilestonesByEscrow: %w", err)
-		}
-		m.ApprovedAt, err = parseNullTime(approvedAt)
-		if err != nil {
-			return nil, fmt.Errorf("parse approved_at in GetMilestonesByEscrow: %w", err)
-		}
-		m.DisputedAt, err = parseNullTime(disputedAt)
-		if err != nil {
-			return nil, fmt.Errorf("parse disputed_at in GetMilestonesByEscrow: %w", err)
 		}
 		milestones = append(milestones, m)
 	}
@@ -464,21 +448,41 @@ func (d *DB) GetMilestonesByEscrow(escrowID int64) ([]*MilestoneRecord, error) {
 }
 
 func (d *DB) UpdateMilestoneStatus(escrowID int64, milestoneIndex int, status string) error {
-	_, err := d.db.Exec(
+	res, err := d.db.Exec(
 		`UPDATE milestones SET status = ?, updated_at = datetime('now') WHERE escrow_id = ? AND milestone_index = ?`,
 		status, escrowID, milestoneIndex,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("UpdateMilestoneStatus: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("UpdateMilestoneStatus rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("UpdateMilestoneStatus escrow_id=%d milestone_index=%d: %w", escrowID, milestoneIndex, sql.ErrNoRows)
+	}
+	return nil
 }
 
 func (d *DB) UpdateMilestoneSubmission(escrowID int64, milestoneIndex int, hash, uri string) error {
-	_, err := d.db.Exec(
+	res, err := d.db.Exec(
 		`UPDATE milestones SET submission_hash = ?, submission_uri = ?, submitted_at = datetime('now'),
 		        status = 'submitted', updated_at = datetime('now')
 		 WHERE escrow_id = ? AND milestone_index = ?`,
 		hash, uri, escrowID, milestoneIndex,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("UpdateMilestoneSubmission: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("UpdateMilestoneSubmission rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("UpdateMilestoneSubmission escrow_id=%d milestone_index=%d: %w", escrowID, milestoneIndex, sql.ErrNoRows)
+	}
+	return nil
 }
 
 func parseNullTime(ns sql.NullString) (*time.Time, error) {
