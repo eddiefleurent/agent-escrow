@@ -451,7 +451,10 @@ func (d *DB) GetMilestonesByEscrow(escrowID int64) ([]*MilestoneRecord, error) {
 		}
 		milestones = append(milestones, m)
 	}
-	return milestones, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list milestones: %w", err)
+	}
+	return milestones, nil
 }
 
 func (d *DB) UpdateMilestoneStatus(escrowID int64, milestoneIndex int, status string) error {

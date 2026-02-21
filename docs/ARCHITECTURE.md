@@ -337,7 +337,7 @@ Key properties:
 - The buyer can abort remaining milestones after a dispute resolution or timeout, receiving a refund for uncompleted work.
 - Single-milestone escrows behave identically to V1 (backward compatibility).
 
-See [`SPEC.md` §21](SPEC.md#21-milestone-based-escrow) for the full specification.
+See [`SPEC.md`](SPEC.md) for the state machine, settlement math, and invariants.
 
 ### Roles
 
@@ -364,7 +364,7 @@ Roles are immutable per escrow in V1.
 - Verifier/arbitrator identities are the trust substrate in V1.
 - All critical state transitions are auditable and replayable via events.
 
-Full contract specification: [`SPEC.md`](SPEC.md)
+Contract design intent (state machine, settlement math, invariants, paper traceability): [`SPEC.md`](SPEC.md)
 
 ---
 
