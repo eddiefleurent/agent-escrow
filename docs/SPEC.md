@@ -123,7 +123,7 @@ Key properties:
 
 ### Approval (Single-Shot)
 
-```
+```text
 grossWorker  = amount
 fee          = grossWorker * protocolFeeBpsSnapshot / 10000
 workerNet    = grossWorker - fee
@@ -134,7 +134,7 @@ Transfers: `workerNet + stakeReturn` → worker, `fee` → treasury.
 
 ### Dispute Resolution (Single-Shot)
 
-```
+```text
 workerGross    = amount * workerAwardBps / 10000
 buyerRefund    = amount - workerGross
 fee            = workerGross * protocolFeeBpsSnapshot / 10000
@@ -151,7 +151,7 @@ Transfers: `workerNet + stakeReturn` → worker, `buyerRefund + stakeForfeited` 
 
 Applies when the worker doesn't submit by the deadline, or when the arbitrator doesn't resolve within the timeout period.
 
-```
+```text
 stakeForfeited = workerStaked ? workerStake : 0
 ```
 
@@ -169,7 +169,7 @@ Per-milestone, same formula as single-shot dispute resolution but using `milesto
 
 Settled once when all milestones reach terminal states:
 
-```
+```text
 workerAwarded = Σ (Approved milestones: milestone.amount)
               + Σ (Resolved milestones: milestone.amount * milestone.awardBps / 10000)
 total         = Σ all milestone amounts
