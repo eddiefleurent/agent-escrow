@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/hex"
 	"fmt"
+	"math/big"
 	"os"
 	"strconv"
 	"strings"
@@ -22,6 +23,11 @@ type Config struct {
 	TxTimeout      time.Duration // Timeout for chain transaction requests (default 90s)
 	LogChunkSize   uint64        // Max block range per eth_getLogs request (default 2000)
 	StartBlock     uint64        // Block to start indexing from (0 = use defaultLookback)
+
+	// ComplexityFloor is the minimum escrow amount (in wei or smallest token unit)
+	// to justify delegation overhead. Used for early rejection before sending
+	// a transaction that would revert on-chain. Empty or "0" means disabled.
+	ComplexityFloor string
 
 	// CDP Webhook: if set, the server registers POST /webhooks/cdp to receive
 	// real-time factory events (EscrowCreated, OutcomeRecorded) via push.
@@ -105,6 +111,17 @@ func Load() (*Config, error) {
 		startBlock = v
 	}
 
+	complexityFloor := os.Getenv("COMPLEXITY_FLOOR")
+	if complexityFloor != "" {
+		bi := new(big.Int)
+		if _, ok := bi.SetString(complexityFloor, 10); !ok {
+			return nil, fmt.Errorf("invalid COMPLEXITY_FLOOR: must be a non-negative integer")
+		}
+		if bi.Sign() < 0 {
+			return nil, fmt.Errorf("invalid COMPLEXITY_FLOOR: must be a non-negative integer")
+		}
+	}
+
 	cfg := &Config{
 		RPCURL:           os.Getenv("RPC_URL"),
 		PrivateKey:       os.Getenv("PRIVATE_KEY"),
@@ -118,6 +135,7 @@ func Load() (*Config, error) {
 		TxTimeout:        txTimeout,
 		LogChunkSize:     logChunkSize,
 		StartBlock:       startBlock,
+		ComplexityFloor:  complexityFloor,
 		CDPWebhookSecret: os.Getenv("CDP_WEBHOOK_SECRET"),
 	}
 

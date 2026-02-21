@@ -87,6 +87,10 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid amount"})
 		return
 	}
+	if err := chain.ValidateComplexityFloor(amount, h.cfg.ComplexityFloor); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	deadline, err := strconv.ParseUint(req.SubmissionDeadline, 10, 64)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid submission_deadline"})

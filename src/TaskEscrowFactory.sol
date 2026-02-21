@@ -10,6 +10,7 @@ contract TaskEscrowFactory {
     error InvalidFeeBps();
     error InvalidAmount();
     error InvalidDeadline();
+    error BelowComplexityFloor();
     error Paused();
     error NoPendingTransfer();
     error NotRegisteredEscrow();
@@ -30,6 +31,7 @@ contract TaskEscrowFactory {
     event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event BackupDesignated(uint256 indexed escrowId, address indexed backupWorker, uint64 backupDeadlineExtension);
+    event ComplexityFloorUpdated(uint256 oldFloor, uint256 newFloor);
     event FactoryPaused();
     event FactoryUnpaused();
     event OutcomeRecorded(uint256 indexed escrowId, address indexed participant, string role, string outcome);
@@ -48,6 +50,7 @@ contract TaskEscrowFactory {
     uint256 public nextEscrowId;
     mapping(uint256 => address) public escrowById;
     uint16 public protocolFeeBps;
+    uint256 public complexityFloor;
     address public treasury;
     address public owner;
     address public pendingOwner;
@@ -104,6 +107,7 @@ contract TaskEscrowFactory {
 
     function createEscrow(CreateParams calldata p) external whenNotPaused returns (uint256 escrowId, address escrow) {
         if (p.amount == 0) revert InvalidAmount();
+        if (complexityFloor > 0 && p.amount < complexityFloor) revert BelowComplexityFloor();
         if (p.submissionDeadline <= block.timestamp) revert InvalidDeadline();
 
         TaskEscrow.CreateMilestoneParams[] memory escrowMilestones =
@@ -155,6 +159,12 @@ contract TaskEscrowFactory {
         uint16 oldFee = protocolFeeBps;
         protocolFeeBps = newFeeBps;
         emit ProtocolFeeUpdated(oldFee, newFeeBps);
+    }
+
+    function setComplexityFloor(uint256 newFloor) external onlyOwner {
+        uint256 oldFloor = complexityFloor;
+        complexityFloor = newFloor;
+        emit ComplexityFloorUpdated(oldFloor, newFloor);
     }
 
     function setTreasury(address newTreasury) external onlyOwner {

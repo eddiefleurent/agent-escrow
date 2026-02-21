@@ -28,6 +28,7 @@ func clearEnv(t *testing.T) {
 		"CHAIN_ID", "DATABASE_URL", "PORT",
 		"MCP_TRANSPORT", "CORS_ORIGINS",
 		"REQUEST_TIMEOUT", "TX_TIMEOUT",
+		"COMPLEXITY_FLOOR",
 	} {
 		os.Unsetenv(key)
 	}
@@ -496,5 +497,69 @@ func TestLoad_MultipleValidationErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "FACTORY_ADDRESS is invalid") {
 		t.Errorf("expected FACTORY_ADDRESS error in: %v", err)
+	}
+}
+
+func TestLoad_ComplexityFloor_Valid(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("COMPLEXITY_FLOOR", "1000000000000000000")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ComplexityFloor != "1000000000000000000" {
+		t.Errorf("expected complexity floor 1000000000000000000, got %q", cfg.ComplexityFloor)
+	}
+}
+
+func TestLoad_ComplexityFloor_Zero(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("COMPLEXITY_FLOOR", "0")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ComplexityFloor != "0" {
+		t.Errorf("expected complexity floor '0', got %q", cfg.ComplexityFloor)
+	}
+}
+
+func TestLoad_ComplexityFloor_Empty(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ComplexityFloor != "" {
+		t.Errorf("expected empty complexity floor, got %q", cfg.ComplexityFloor)
+	}
+}
+
+func TestLoad_ComplexityFloor_Invalid(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("COMPLEXITY_FLOOR", "not-a-number")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid COMPLEXITY_FLOOR")
+	}
+	if !strings.Contains(err.Error(), "COMPLEXITY_FLOOR") {
+		t.Errorf("expected error mentioning COMPLEXITY_FLOOR, got: %v", err)
+	}
+}
+
+func TestLoad_ComplexityFloor_Negative(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("COMPLEXITY_FLOOR", "-1")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for negative COMPLEXITY_FLOOR")
+	}
+	if !strings.Contains(err.Error(), "COMPLEXITY_FLOOR") {
+		t.Errorf("expected error mentioning COMPLEXITY_FLOOR, got: %v", err)
 	}
 }

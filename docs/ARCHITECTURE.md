@@ -379,6 +379,7 @@ Roles are immutable per escrow in V1 (including `backupWorker`).
 - `workerStake`: optional anti-Sybil bond the worker deposits before submission (paper §4.8). Set at escrow creation; 0 means no stake required. If approved, the stake is returned to the worker in full; disputed stakes follow the same proportional split as payment; on timeout, arbitrator timeout, or backup activation, the stake is forfeited to the buyer. In milestone mode, stake is held for the full escrow duration and settled once at the end.
 - `backupWorker`: optional pre-designated fallback worker (paper §4.4). If the primary worker defaults, the buyer calls `activateBackup()` to replace the active worker, extend the deadline by `backupDeadlineExtension` seconds, and forfeit any deposited stake.
 - Milestone payouts: each milestone pays out independently on approval. The buyer funds the full `totalAmount` upfront; partial payouts are released as milestones complete. This reduces capital lock-up risk for the worker while maintaining buyer protection for uncompleted work.
+- Complexity floor: factory-level minimum escrow amount (`complexityFloor`), owner-settable via `setComplexityFloor`. Enforced on-chain at `createEscrow` time and off-chain for early rejection. Ensures delegation overhead (gas + protocol fee) doesn't exceed task value (paper §4.3).
 
 ### Trust Model
 
@@ -536,6 +537,7 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 | `CORS_ORIGINS` | No | `*` (wildcard) | Comma-separated allowed origins; empty = allow all |
 | `REQUEST_TIMEOUT` | No | `10s` | Timeout for read-only HTTP requests |
 | `TX_TIMEOUT` | No | `90s` | Timeout for chain transaction HTTP requests |
+| `COMPLEXITY_FLOOR` | No | -- | Minimum escrow amount (wei/smallest unit) for early rejection; `0` or empty = disabled |
 | `CDP_WEBHOOK_SECRET` | No | -- | CDP webhook HMAC secret; enables real-time factory event delivery via `POST /webhooks/cdp` |
 
 ### Design Decisions
