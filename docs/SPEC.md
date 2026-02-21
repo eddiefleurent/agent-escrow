@@ -175,7 +175,7 @@ event Disputed(address indexed raisedBy, string reasonURI, uint64 disputedAt);
 event SilenceEscalated(address indexed worker, string reasonURI, uint64 escalatedAt);
 event DisputeResolved(address indexed arbitrator, uint16 workerAwardBps, string resolutionURI);
 event Settled(uint256 workerNet, uint256 buyerRefund, uint256 protocolFee, uint256 workerStakeReturned);
-event Refunded(uint256 amount, uint256 workerStakeReturned);
+event Refunded(uint256 amount, uint256 workerStakeForfeited);
 event ArbitratorTimeoutClaimed(address indexed buyer, uint64 claimedAt);
 event Cancelled();
 ```

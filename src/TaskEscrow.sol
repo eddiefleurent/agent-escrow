@@ -43,7 +43,7 @@ contract TaskEscrow {
     event DisputeResolved(address indexed arbitrator, uint16 workerAwardBps, string resolutionURI);
     event ArbitratorTimeoutClaimed(address indexed buyer, uint64 claimedAt);
     event Settled(uint256 workerNet, uint256 buyerRefund, uint256 protocolFee, uint256 workerStakeReturned);
-    event Refunded(uint256 amount, uint256 workerStakeReturned);
+    event Refunded(uint256 amount, uint256 workerStakeForfeited);
     event Cancelled();
 
     /// @dev address(0) means ETH-denominated escrow; non-zero means ERC20

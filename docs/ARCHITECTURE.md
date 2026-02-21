@@ -249,7 +249,7 @@ The riskiest V4+ item is **cross-chain settlement**, which introduces bridge tru
 
 ### State Machine
 
-```
+```text
 Created ──fund()──> Funded ──submit()──> Submitted
   │                   │  │                 │  │  │
   │cancelBeforeFunding│  └depositStake()   │  │  │
@@ -304,7 +304,7 @@ Roles are immutable per escrow in V1.
 - Verifier/arbitrator identities are the trust substrate in V1.
 - All critical state transitions are auditable and replayable via events.
 
-Full contract specification: [`docs/SPEC.md`](SPEC.md)
+Full contract specification: [`SPEC.md`](SPEC.md)
 
 ---
 

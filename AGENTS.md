@@ -119,6 +119,8 @@ Three docs are kept in sync with the code:
 - **`docs/diagrams/*.puml`** -- PlantUML visual diagrams. Update when contract state transitions, lifecycle flows, or system architecture change. Multiple `@startuml` blocks can live in one file; prefer extending existing files over creating new ones. When editing, match the existing style, formatting conventions, and level of detail of the surrounding diagram. After any `.puml` change, regenerate the corresponding PNGs with `plantuml docs/diagrams/*.puml`.
 - **`docs/ARCHITECTURE.md`** -- high-level system design and paper grounding. Update when major structural changes occur (new components, new integration paths). Code-level documentation is handled by DeepWiki; `docs/ARCHITECTURE.md` covers the "why" and "how things connect."
 
+When updating `docs/SPEC.md` or `docs/ARCHITECTURE.md`, always check whether `docs/diagrams/*.puml` also needs updating. State transitions, event signatures, settlement flows, role semantics, and system component changes described in the spec or architecture doc are often visualized in the diagrams -- keep them in sync.
+
 Do not create new documentation files unless explicitly requested. Prefer updating existing docs.
 
 ## Worker Stake
