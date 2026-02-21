@@ -30,8 +30,11 @@ contract TaskEscrow {
     error ArbitratorTimeoutNotReached();
     error ETHNotAccepted();
     error InsufficientReceived();
+    error StakeNotDeposited();
+    error StakeAlreadyDeposited();
 
     event EscrowFunded(address indexed buyer, uint256 amount);
+    event WorkerStakeDeposited(address indexed worker, uint256 amount);
     event SubmissionMade(address indexed worker, bytes32 submissionHash, string submissionURI);
     event Approved(address indexed approver, uint64 approvedAt);
     event Rejected(address indexed verifier, string reasonURI, uint64 rejectedAt);
@@ -39,8 +42,8 @@ contract TaskEscrow {
     event SilenceEscalated(address indexed worker, string reasonURI, uint64 escalatedAt);
     event DisputeResolved(address indexed arbitrator, uint16 workerAwardBps, string resolutionURI);
     event ArbitratorTimeoutClaimed(address indexed buyer, uint64 claimedAt);
-    event Settled(uint256 workerNet, uint256 buyerRefund, uint256 protocolFee);
-    event Refunded(uint256 amount);
+    event Settled(uint256 workerNet, uint256 buyerRefund, uint256 protocolFee, uint256 workerStakeReturned);
+    event Refunded(uint256 amount, uint256 workerStakeReturned);
     event Cancelled();
 
     /// @dev address(0) means ETH-denominated escrow; non-zero means ERC20
@@ -51,6 +54,7 @@ contract TaskEscrow {
     address public immutable verifier;
     address public immutable arbitrator;
     uint256 public immutable amount;
+    uint256 public immutable workerStake;
     uint64 public immutable submissionDeadline;
     uint64 public immutable reviewPeriodSeconds;
     uint64 public immutable disputePeriodSeconds;
@@ -63,6 +67,7 @@ contract TaskEscrow {
     uint64 public approvedAt;
     uint64 public disputedAt;
     Status public status;
+    bool public workerStaked;
     bytes32 public submissionHash;
     string public submissionURI;
     string public disputeReasonURI;
@@ -75,6 +80,7 @@ contract TaskEscrow {
         address verifier;
         address arbitrator;
         uint256 amount;
+        uint256 workerStake;
         uint64 submissionDeadline;
         uint64 reviewPeriodSeconds;
         uint64 disputePeriodSeconds;
@@ -110,6 +116,7 @@ contract TaskEscrow {
         verifier = p.verifier;
         arbitrator = p.arbitrator;
         amount = p.amount;
+        workerStake = p.workerStake;
         submissionDeadline = p.submissionDeadline;
         reviewPeriodSeconds = p.reviewPeriodSeconds;
         disputePeriodSeconds = p.disputePeriodSeconds;
@@ -152,11 +159,33 @@ contract TaskEscrow {
         emit Cancelled();
     }
 
+    /// @notice Worker deposits their anti-Sybil stake into escrow (paper §4.8).
+    /// Must be called after buyer funding and before submission when workerStake > 0.
+    function depositStake() external payable nonReentrant {
+        if (msg.sender != worker) revert Unauthorized();
+        if (status != Status.Funded) revert InvalidState();
+        if (workerStake == 0) revert InvalidAmount();
+        if (workerStaked) revert StakeAlreadyDeposited();
+
+        if (token == address(0)) {
+            if (msg.value != workerStake) revert InvalidAmount();
+        } else {
+            if (msg.value != 0) revert ETHNotAccepted();
+            uint256 balanceBefore = IERC20(token).balanceOf(address(this));
+            _safeTransferFrom(IERC20(token), msg.sender, address(this), workerStake);
+            if (IERC20(token).balanceOf(address(this)) - balanceBefore != workerStake) revert InsufficientReceived();
+        }
+
+        workerStaked = true;
+        emit WorkerStakeDeposited(msg.sender, workerStake);
+    }
+
     function submit(bytes32 _submissionHash, string calldata _submissionURI) external {
         if (msg.sender != worker) revert Unauthorized();
         if (status != Status.Funded) revert InvalidState();
         if (block.timestamp > submissionDeadline) revert WindowExpired();
         if (_submissionHash == bytes32(0)) revert InvalidHash();
+        if (workerStake > 0 && !workerStaked) revert StakeNotDeposited();
 
         submissionHash = _submissionHash;
         submissionURI = _submissionURI;
@@ -228,9 +257,10 @@ contract TaskEscrow {
         if (status != Status.Funded) revert InvalidState();
         if (block.timestamp <= submissionDeadline) revert WindowNotOpen();
 
+        uint256 stakeForfeited = workerStaked ? workerStake : 0;
         status = Status.Refunded;
-        _send(buyer, amount);
-        emit Refunded(amount);
+        _send(buyer, amount + stakeForfeited);
+        emit Refunded(amount, stakeForfeited);
     }
 
     function claimArbitratorTimeout() external nonReentrant {
@@ -240,10 +270,11 @@ contract TaskEscrow {
             revert ArbitratorTimeoutNotReached();
         }
 
+        uint256 stakeForfeited = workerStaked ? workerStake : 0;
         status = Status.Refunded;
-        _send(buyer, amount);
+        _send(buyer, amount + stakeForfeited);
         emit ArbitratorTimeoutClaimed(msg.sender, uint64(block.timestamp));
-        emit Refunded(amount);
+        emit Refunded(amount, stakeForfeited);
     }
 
     function _approve(address approver) internal {
@@ -260,11 +291,12 @@ contract TaskEscrow {
         uint256 grossWorker = amount;
         uint256 fee = (grossWorker * protocolFeeBpsSnapshot) / 10_000;
         uint256 workerNet = grossWorker - fee;
+        uint256 stakeReturn = workerStaked ? workerStake : 0;
 
         status = Status.Settled;
-        _send(worker, workerNet);
+        _send(worker, workerNet + stakeReturn);
         if (fee > 0) _send(treasurySnapshot, fee);
-        emit Settled(workerNet, 0, fee);
+        emit Settled(workerNet, 0, fee, stakeReturn);
     }
 
     function _settleResolved(uint16 workerAwardBps) internal {
@@ -273,11 +305,16 @@ contract TaskEscrow {
         uint256 fee = (workerGross * protocolFeeBpsSnapshot) / 10_000;
         uint256 workerNet = workerGross - fee;
 
+        // Worker stake follows the same proportional split as the payment.
+        // If worker wins fully, they get stake back. If they lose fully, buyer gets the stake.
+        uint256 stakeReturn = workerStaked ? (workerStake * workerAwardBps) / 10_000 : 0;
+        uint256 stakeForfeited = workerStaked ? workerStake - stakeReturn : 0;
+
         status = Status.Settled;
-        if (workerNet > 0) _send(worker, workerNet);
-        if (buyerRefund > 0) _send(buyer, buyerRefund);
+        if (workerNet + stakeReturn > 0) _send(worker, workerNet + stakeReturn);
+        if (buyerRefund + stakeForfeited > 0) _send(buyer, buyerRefund + stakeForfeited);
         if (fee > 0) _send(treasurySnapshot, fee);
-        emit Settled(workerNet, buyerRefund, fee);
+        emit Settled(workerNet, buyerRefund, fee, stakeReturn);
     }
 
     /// @dev Transfers ETH or ERC20 depending on the escrow's token mode.

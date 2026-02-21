@@ -290,8 +290,8 @@ Roles are immutable per escrow in V1.
 ### Economics
 
 - Protocol fee: basis points on successful payout (snapshotted at escrow creation to prevent governance races).
-- ETH-only in V1.
-- `workerStake` field reserved (set to 0) for future anti-Sybil bond.
+- ETH and ERC20 (V2).
+- `workerStake`: optional anti-Sybil bond the worker deposits before submission (paper §4.8). Set at escrow creation; 0 means no stake required. On approval, stake is returned to worker. On dispute resolution, stake follows the same proportional split as payment. On timeout/arbitrator timeout, stake is forfeited to buyer.
 
 ### Trust Model
 
@@ -382,8 +382,9 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 
 | Tool | Inputs | Chain Method |
 |---|---|---|
-| `create_escrow` | title, roles, amount, deadlines | `Factory.createEscrow` |
+| `create_escrow` | title, roles, amount, worker_stake, deadlines | `Factory.createEscrow` |
 | `fund_escrow` | escrow_id | `Escrow.fund` |
+| `deposit_stake` | escrow_id | `Escrow.depositStake` |
 | `submit_work` | escrow_id, submission_uri | `Escrow.submit` |
 | `approve_work` | escrow_id, role | `Escrow.approveByBuyer/Verifier` |
 | `dispute_work` | escrow_id, role, reason_uri | `Escrow.dispute/rejectByVerifier/escalateSilence` |
@@ -400,6 +401,7 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 | GET | `/api/v1/escrows` | List (query: role, address, status) |
 | GET | `/api/v1/escrows/{id}` | Get escrow |
 | POST | `/api/v1/escrows/{id}/fund` | Fund |
+| POST | `/api/v1/escrows/{id}/deposit-stake` | Deposit worker stake |
 | POST | `/api/v1/escrows/{id}/submit` | Submit work |
 | POST | `/api/v1/escrows/{id}/approve` | Approve (body: role) |
 | POST | `/api/v1/escrows/{id}/dispute` | Dispute (body: role, reason_uri) |

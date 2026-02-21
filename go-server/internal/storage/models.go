@@ -22,6 +22,7 @@ type Escrow struct {
 	Verifier                 string
 	Arbitrator               string
 	Amount                   string
+	WorkerStake              string // Anti-Sybil bond amount (paper §4.8); "0" means no stake required
 	Token                    string // ERC20 token address; empty or "0x0000000000000000000000000000000000000000" for ETH
 	Status                   string
 	SubmissionDeadline       int64

@@ -63,8 +63,8 @@ Global (factory-level):
 - `treasury` address
 
 Per-task:
-- `amount` (ETH escrow amount)
-- `workerStake` (set to 0 in V1 but reserved in struct for forward compatibility)
+- `amount` (ETH or ERC20 escrow amount)
+- `workerStake` (anti-Sybil bond amount; 0 means no stake required -- paper §4.8)
 - `submissionDeadline` (unix timestamp)
 - `reviewPeriodSeconds`
 - `disputePeriodSeconds`
@@ -88,6 +88,8 @@ V1 default values:
 - `address public verifier`
 - `address public arbitrator`
 - `uint256 public amount`
+- `uint256 public workerStake` (anti-Sybil bond; 0 = no stake required)
+- `bool public workerStaked` (true after worker calls `depositStake()`)
 - `uint64 public submissionDeadline`
 - `uint64 public reviewPeriodSeconds`
 - `uint64 public disputePeriodSeconds`
@@ -131,6 +133,7 @@ function setPaused(bool shouldPause) external;
 ## 7.2 Escrow
 ```solidity
 function fund() external payable;
+function depositStake() external payable;
 function cancelBeforeFunding() external;
 function submit(bytes32 _submissionHash, string calldata _submissionURI) external;
 function approveByBuyer() external;
@@ -164,6 +167,7 @@ event EscrowCreated(
 );
 
 event EscrowFunded(address indexed buyer, uint256 amount);
+event WorkerStakeDeposited(address indexed worker, uint256 amount);
 event SubmissionMade(address indexed worker, bytes32 submissionHash, string submissionURI);
 event Approved(address indexed approver, uint64 approvedAt);
 event Rejected(address indexed verifier, string reasonURI, uint64 rejectedAt);
@@ -200,33 +204,43 @@ Invalid transitions MUST revert with custom errors.
 - Status must be `Created`.
 - On success set status `Funded`, emit `EscrowFunded`.
 
-## 10.2 `submit(...)`
+## 10.2 `depositStake()`
+- Caller must be `worker`.
+- Status must be `Funded`.
+- `workerStake > 0` (reverts if no stake required).
+- Must not have already deposited (reverts with `StakeAlreadyDeposited`).
+- For ETH: must send exactly `workerStake`.
+- For ERC20: worker must approve token first; contract transfers `workerStake` via `transferFrom`.
+- Set `workerStaked = true`, emit `WorkerStakeDeposited`.
+
+## 10.3 `submit(...)`
 - Caller must be `worker`.
 - Status must be `Funded`.
 - `block.timestamp <= submissionDeadline`.
 - `submissionHash != bytes32(0)`.
+- If `workerStake > 0`, `workerStaked` must be `true` (reverts with `StakeNotDeposited`).
 - Set submission fields and `submittedAt`, status `Submitted`, emit `SubmissionMade`.
 
-## 10.3 `approveByBuyer()` / `approveByVerifier()`
+## 10.4 `approveByBuyer()` / `approveByVerifier()`
 - Caller must match respective role.
 - Status must be `Submitted`.
 - Must be within `submittedAt + reviewPeriodSeconds`.
 - Set `approvedAt`, status `Approved`, execute settlement immediately.
 
-## 10.4 `dispute(reasonURI)`
+## 10.5 `dispute(reasonURI)`
 - Caller must be `buyer`.
 - Status must be `Submitted`.
 - Must be within `submittedAt + reviewPeriodSeconds + disputePeriodSeconds`.
 - Set `disputeReasonURI`, status `Disputed`, emit `Disputed`.
 
-## 10.5 `rejectByVerifier(reasonURI)`
+## 10.6 `rejectByVerifier(reasonURI)`
 - Caller must be `verifier`.
 - Status must be `Submitted`.
 - Must be within `submittedAt + reviewPeriodSeconds`.
 - Set `disputeReasonURI`, status `Disputed`.
 - Emit `Rejected` and `Disputed`.
 
-## 10.6 `escalateSilence(reasonURI)`
+## 10.7 `escalateSilence(reasonURI)`
 - Caller must be `worker`.
 - Status must be `Submitted`.
 - `block.timestamp > submittedAt + reviewPeriodSeconds`.
@@ -234,26 +248,26 @@ Invalid transitions MUST revert with custom errors.
 - Set `disputeReasonURI`, status `Disputed`.
 - Emit `SilenceEscalated`.
 
-## 10.7 `resolveDispute(workerAwardBps, resolutionURI)`
+## 10.8 `resolveDispute(workerAwardBps, resolutionURI)`
 - Caller must be `arbitrator`.
 - Status must be `Disputed`.
 - `workerAwardBps <= 10000`.
 - Set status `Resolved`, emit `DisputeResolved`, execute split settlement.
 
-## 10.8 `claimTimeoutRefund()`
+## 10.9 `claimTimeoutRefund()`
 - Caller must be `buyer`.
 - Status must be `Funded`.
 - `block.timestamp > submissionDeadline`.
 - Refund full amount to buyer, set status `Refunded`, emit `Refunded`.
 
-## 10.9 `claimArbitratorTimeout()`
+## 10.10 `claimArbitratorTimeout()`
 - Caller must be `buyer`.
 - Status must be `Disputed`.
 - `block.timestamp > disputedAt + arbitratorTimeoutSeconds`.
 - Refund full amount to buyer, set status `Refunded`.
 - Emit `ArbitratorTimeoutClaimed` and `Refunded`.
 
-## 10.10 `cancelBeforeFunding()`
+## 10.11 `cancelBeforeFunding()`
 - Caller must be `buyer`.
 - Status must be `Created`.
 - Set status `Cancelled`, emit `Cancelled`.
@@ -263,16 +277,29 @@ For non-dispute approval:
 - `grossWorker = amount`
 - `fee = grossWorker * protocolFeeBpsSnapshot / 10000`
 - `workerNet = grossWorker - fee`
-- Transfer `workerNet` to worker, `fee` to treasury
-- Emit `Settled(workerNet, 0, fee)`
+- `stakeReturn = workerStaked ? workerStake : 0`
+- Transfer `workerNet + stakeReturn` to worker, `fee` to treasury
+- Emit `Settled(workerNet, 0, fee, stakeReturn)`
 
 For dispute resolution:
 - `workerGross = amount * workerAwardBps / 10000`
 - `buyerRefund = amount - workerGross`
 - `fee = workerGross * protocolFeeBpsSnapshot / 10000`
 - `workerNet = workerGross - fee`
-- Transfer `workerNet` to worker, `buyerRefund` to buyer, `fee` to treasury
-- Emit `Settled(workerNet, buyerRefund, fee)`
+- `stakeReturn = workerStaked ? workerStake * workerAwardBps / 10000 : 0`
+- `stakeForfeited = workerStaked ? workerStake - stakeReturn : 0`
+- Transfer `workerNet + stakeReturn` to worker, `buyerRefund + stakeForfeited` to buyer, `fee` to treasury
+- Emit `Settled(workerNet, buyerRefund, fee, stakeReturn)`
+
+For timeout refund (worker didn't submit):
+- `stakeForfeited = workerStaked ? workerStake : 0`
+- Transfer `amount + stakeForfeited` to buyer
+- Emit `Refunded(amount, stakeForfeited)`
+
+For arbitrator timeout:
+- `stakeForfeited = workerStaked ? workerStake : 0`
+- Transfer `amount + stakeForfeited` to buyer
+- Emit `Refunded(amount, stakeForfeited)`
 
 Rounding:
 - All divisions floor toward zero (Solidity default).
@@ -294,11 +321,12 @@ Rounding:
 ## 14) Invariants
 - Escrow balance can only be:
   - `0` after terminal settlement/refund
-  - `amount` during active funded/submitted/disputed states
+  - `amount` (or `amount + workerStake` when stake deposited) during active funded/submitted/disputed states
 - Terminal states are mutually exclusive: `Settled`, `Refunded`, `Cancelled`.
 - No function can move from terminal state to non-terminal state.
-- Total funds distributed from escrow never exceeds `amount`.
+- Total funds distributed from escrow never exceeds `amount + workerStake`.
 - Fee never exceeds worker gross award.
+- Worker stake is returned fully on approval, split proportionally on dispute, forfeited on timeout.
 
 ## 15) Edge Cases
 - Late submission: reject if block time past deadline.
@@ -319,6 +347,7 @@ Go server must persist (SQLite):
 Indexer must reconcile events:
 - `EscrowCreated`
 - `EscrowFunded`
+- `WorkerStakeDeposited`
 - `SubmissionMade`
 - `Approved`
 - `Rejected`

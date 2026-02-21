@@ -43,10 +43,10 @@ func (d *DB) GetTask(id int64) (*Task, error) {
 
 func (d *DB) CreateEscrow(e *Escrow) (*Escrow, error) {
 	res, err := d.db.Exec(
-		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.TaskID, e.ChainID, e.FactoryAddress, e.EscrowAddress, e.EscrowID,
-		e.Buyer, e.Worker, e.Verifier, e.Arbitrator, e.Amount, e.Token, e.Status,
+		e.Buyer, e.Worker, e.Verifier, e.Arbitrator, e.Amount, e.WorkerStake, e.Token, e.Status,
 		e.SubmissionDeadline, e.ReviewPeriodSeconds, e.DisputePeriodSeconds, e.ArbitratorTimeoutSeconds,
 	)
 	if err != nil {
@@ -63,10 +63,10 @@ func (d *DB) GetEscrow(id int64) (*Escrow, error) {
 	e := &Escrow{}
 	var createdAt, updatedAt string
 	err := d.db.QueryRow(
-		`SELECT id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, created_at, updated_at
+		`SELECT id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, created_at, updated_at
 		 FROM escrows WHERE id = ?`, id,
 	).Scan(&e.ID, &e.TaskID, &e.ChainID, &e.FactoryAddress, &e.EscrowAddress, &e.EscrowID,
-		&e.Buyer, &e.Worker, &e.Verifier, &e.Arbitrator, &e.Amount, &e.Token, &e.Status,
+		&e.Buyer, &e.Worker, &e.Verifier, &e.Arbitrator, &e.Amount, &e.WorkerStake, &e.Token, &e.Status,
 		&e.SubmissionDeadline, &e.ReviewPeriodSeconds, &e.DisputePeriodSeconds, &e.ArbitratorTimeoutSeconds,
 		&createdAt, &updatedAt)
 	if err != nil {
@@ -87,10 +87,10 @@ func (d *DB) GetEscrowByAddress(addr string) (*Escrow, error) {
 	e := &Escrow{}
 	var createdAt, updatedAt string
 	err := d.db.QueryRow(
-		`SELECT id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, created_at, updated_at
+		`SELECT id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, created_at, updated_at
 		 FROM escrows WHERE escrow_address = ?`, addr,
 	).Scan(&e.ID, &e.TaskID, &e.ChainID, &e.FactoryAddress, &e.EscrowAddress, &e.EscrowID,
-		&e.Buyer, &e.Worker, &e.Verifier, &e.Arbitrator, &e.Amount, &e.Token, &e.Status,
+		&e.Buyer, &e.Worker, &e.Verifier, &e.Arbitrator, &e.Amount, &e.WorkerStake, &e.Token, &e.Status,
 		&e.SubmissionDeadline, &e.ReviewPeriodSeconds, &e.DisputePeriodSeconds, &e.ArbitratorTimeoutSeconds,
 		&createdAt, &updatedAt)
 	if err != nil {
@@ -131,7 +131,7 @@ func (d *DB) UpdateEscrowOnChainFields(id int64, escrowAddress string, escrowID 
 }
 
 func (d *DB) ListEscrows(role, address, status string) ([]*Escrow, error) {
-	query := `SELECT id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, created_at, updated_at FROM escrows WHERE 1=1`
+	query := `SELECT id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, created_at, updated_at FROM escrows WHERE 1=1`
 	var args []any
 
 	if role != "" && address != "" {
@@ -168,7 +168,7 @@ func (d *DB) ListEscrows(role, address, status string) ([]*Escrow, error) {
 		e := &Escrow{}
 		var createdAt, updatedAt string
 		if err := rows.Scan(&e.ID, &e.TaskID, &e.ChainID, &e.FactoryAddress, &e.EscrowAddress, &e.EscrowID,
-			&e.Buyer, &e.Worker, &e.Verifier, &e.Arbitrator, &e.Amount, &e.Token, &e.Status,
+			&e.Buyer, &e.Worker, &e.Verifier, &e.Arbitrator, &e.Amount, &e.WorkerStake, &e.Token, &e.Status,
 			&e.SubmissionDeadline, &e.ReviewPeriodSeconds, &e.DisputePeriodSeconds, &e.ArbitratorTimeoutSeconds,
 			&createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan escrow: %w", err)
@@ -190,7 +190,7 @@ func (d *DB) ListEscrows(role, address, status string) ([]*Escrow, error) {
 }
 
 func (d *DB) ListEscrowsByChainID(chainID int64) ([]*Escrow, error) {
-	query := `SELECT id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, created_at, updated_at FROM escrows WHERE chain_id = ? ORDER BY id DESC`
+	query := `SELECT id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, created_at, updated_at FROM escrows WHERE chain_id = ? ORDER BY id DESC`
 
 	rows, err := d.db.Query(query, chainID)
 	if err != nil {
@@ -203,7 +203,7 @@ func (d *DB) ListEscrowsByChainID(chainID int64) ([]*Escrow, error) {
 		e := &Escrow{}
 		var createdAt, updatedAt string
 		if err := rows.Scan(&e.ID, &e.TaskID, &e.ChainID, &e.FactoryAddress, &e.EscrowAddress, &e.EscrowID,
-			&e.Buyer, &e.Worker, &e.Verifier, &e.Arbitrator, &e.Amount, &e.Token, &e.Status,
+			&e.Buyer, &e.Worker, &e.Verifier, &e.Arbitrator, &e.Amount, &e.WorkerStake, &e.Token, &e.Status,
 			&e.SubmissionDeadline, &e.ReviewPeriodSeconds, &e.DisputePeriodSeconds, &e.ArbitratorTimeoutSeconds,
 			&createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan escrow: %w", err)

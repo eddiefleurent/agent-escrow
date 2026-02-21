@@ -27,7 +27,8 @@ const (
 	DefaultMaxConsecutiveFailures = 5
 )
 
-// Status mappings from event names to escrow status strings
+// Status mappings from event names to escrow status strings.
+// WorkerStakeDeposited does not change the escrow status (remains "funded").
 var eventStatusMap = map[string]string{
 	"EscrowFunded":             "funded",
 	"SubmissionMade":           "submitted",

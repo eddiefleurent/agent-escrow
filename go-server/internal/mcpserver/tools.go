@@ -22,6 +22,7 @@ type createEscrowArgs struct {
 	Verifier                 string `json:"verifier" jsonschema:"Verifier address"`
 	Arbitrator               string `json:"arbitrator" jsonschema:"Arbitrator address"`
 	Amount                   string `json:"amount" jsonschema:"Amount in wei (ETH) or smallest unit (ERC20)"`
+	WorkerStake              string `json:"worker_stake,omitempty" jsonschema:"Worker anti-Sybil stake in wei or smallest unit; omit or 0 for no stake"`
 	SubmissionDeadline       string `json:"submission_deadline" jsonschema:"Unix timestamp for submission deadline"`
 	ReviewPeriodSeconds      string `json:"review_period_seconds" jsonschema:"Review period in seconds"`
 	DisputePeriodSeconds     string `json:"dispute_period_seconds" jsonschema:"Dispute period in seconds"`
@@ -71,6 +72,11 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Name:        "fund_escrow",
 		Description: "Fund an escrow as the buyer",
 	}, s.handleFundEscrow)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "deposit_stake",
+		Description: "Deposit worker anti-Sybil stake into escrow (required before submission when workerStake > 0)",
+	}, s.handleDepositStake)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "submit_work",
@@ -125,6 +131,15 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		return textResult(fmt.Sprintf("invalid arbitrator_timeout_seconds: %v", err)), nil, nil
 	}
 
+	workerStakeVal := big.NewInt(0)
+	if args.WorkerStake != "" {
+		ws, ok := new(big.Int).SetString(args.WorkerStake, 10)
+		if !ok {
+			return textResult("invalid worker_stake"), nil, nil
+		}
+		workerStakeVal = ws
+	}
+
 	specHash := crypto.Keccak256Hash([]byte(args.Title + args.Description))
 
 	var tokenAddr common.Address
@@ -142,6 +157,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		Verifier:                 common.HexToAddress(args.Verifier),
 		Arbitrator:               common.HexToAddress(args.Arbitrator),
 		Amount:                   amount,
+		WorkerStake:              workerStakeVal,
 		SubmissionDeadline:       deadline,
 		ReviewPeriodSeconds:      review,
 		DisputePeriodSeconds:     dispute,
@@ -176,6 +192,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		Verifier:                 args.Verifier,
 		Arbitrator:               args.Arbitrator,
 		Amount:                   args.Amount,
+		WorkerStake:              workerStakeVal.String(),
 		Token:                    tokenAddr.Hex(),
 		Status:                   "created",
 		SubmissionDeadline:       int64(deadline),
@@ -238,6 +255,54 @@ func (s *Server) handleFundEscrow(ctx context.Context, req *mcp.CallToolRequest,
 	}
 
 	tx, err := s.chain.Fund(ctx, escrowAddr, amount)
+	if err != nil {
+		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+	}
+
+	_ = s.idx.RunOnce(ctx)
+	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+}
+
+func (s *Server) handleDepositStake(ctx context.Context, req *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
+	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+	}
+	escrow, err := s.db.GetEscrow(escrowID)
+	if err != nil {
+		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
+	}
+
+	stakeAmount, ok := new(big.Int).SetString(escrow.WorkerStake, 10)
+	if !ok || stakeAmount.Sign() <= 0 {
+		return textResult("this escrow does not require a worker stake"), nil, nil
+	}
+
+	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
+	isERC20 := escrow.Token != "" && escrow.Token != "0x0000000000000000000000000000000000000000"
+
+	if isERC20 {
+		tokenAddr := common.HexToAddress(escrow.Token)
+		approveTx, err := s.chain.ApproveERC20(ctx, tokenAddr, escrowAddr, stakeAmount)
+		if err != nil {
+			return textResult(fmt.Sprintf("approve error: %v", err)), nil, nil
+		}
+		approveReceipt, err := chain.WaitMined(ctx, s.chain, approveTx.Hash())
+		if err != nil {
+			return textResult(fmt.Sprintf("approve receipt error: %v", err)), nil, nil
+		}
+		if approveReceipt.Status != 1 {
+			return textResult("approve transaction reverted"), nil, nil
+		}
+		tx, err := s.chain.DepositStake(ctx, escrowAddr, nil)
+		if err != nil {
+			return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+		}
+		_ = s.idx.RunOnce(ctx)
+		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+	}
+
+	tx, err := s.chain.DepositStake(ctx, escrowAddr, stakeAmount)
 	if err != nil {
 		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
 	}
