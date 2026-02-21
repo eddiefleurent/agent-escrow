@@ -336,6 +336,88 @@ func (d *DB) getDispute(id int64) (*Dispute, error) {
 	return disp, nil
 }
 
+// Reputation queries
+
+func (d *DB) GetReputation(address, role string) (*Reputation, error) {
+	r := &Reputation{}
+	err := d.db.QueryRow(
+		`SELECT id, address, role, completed, disputed, failed, updated_at FROM reputation WHERE address = ? AND role = ?`,
+		address, role,
+	).Scan(&r.ID, &r.Address, &r.Role, &r.Completed, &r.Disputed, &r.Failed, &r.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("get reputation: %w", err)
+	}
+	return r, nil
+}
+
+func (d *DB) GetReputationByAddress(address string) ([]*Reputation, error) {
+	rows, err := d.db.Query(
+		`SELECT id, address, role, completed, disputed, failed, updated_at FROM reputation WHERE address = ?`,
+		address,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get reputation by address: %w", err)
+	}
+	defer rows.Close()
+
+	var reps []*Reputation
+	for rows.Next() {
+		r := &Reputation{}
+		if err := rows.Scan(&r.ID, &r.Address, &r.Role, &r.Completed, &r.Disputed, &r.Failed, &r.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan reputation: %w", err)
+		}
+		reps = append(reps, r)
+	}
+	return reps, rows.Err()
+}
+
+func (d *DB) UpsertReputation(address, role, outcome string) error {
+	var col string
+	switch outcome {
+	case "completed":
+		col = "completed"
+	case "disputed":
+		col = "disputed"
+	case "failed":
+		col = "failed"
+	default:
+		return fmt.Errorf("invalid outcome: %s", outcome)
+	}
+
+	query := fmt.Sprintf(
+		`INSERT INTO reputation (address, role, %s) VALUES (?, ?, 1)
+		 ON CONFLICT(address, role)
+		 DO UPDATE SET %s = %s + 1, updated_at = datetime('now')`,
+		col, col, col,
+	)
+	_, err := d.db.Exec(query, address, role)
+	if err != nil {
+		return fmt.Errorf("upsert reputation: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) ListReputations(minCompleted int) ([]*Reputation, error) {
+	rows, err := d.db.Query(
+		`SELECT id, address, role, completed, disputed, failed, updated_at FROM reputation WHERE completed >= ? ORDER BY completed DESC`,
+		minCompleted,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list reputations: %w", err)
+	}
+	defer rows.Close()
+
+	var reps []*Reputation
+	for rows.Next() {
+		r := &Reputation{}
+		if err := rows.Scan(&r.ID, &r.Address, &r.Role, &r.Completed, &r.Disputed, &r.Failed, &r.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan reputation: %w", err)
+		}
+		reps = append(reps, r)
+	}
+	return reps, rows.Err()
+}
+
 // Chain log queries
 
 func (d *DB) CreateChainLog(txHash string, logIndex int, blockNumber int64, eventName, contractAddress, rawData string) error {

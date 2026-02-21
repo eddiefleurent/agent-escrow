@@ -222,8 +222,9 @@ func (idx *Indexer) RunOnce(ctx context.Context) error {
 }
 
 func (idx *Indexer) indexFactoryEvents(ctx context.Context, from, to uint64) error {
-	eventID := chain.FactoryABI.Events["EscrowCreated"].ID
-	logs, err := idx.chain.FilterLogs(ctx, []common.Address{idx.factoryAddress}, [][]common.Hash{{eventID}}, from, to)
+	escrowCreatedID := chain.FactoryABI.Events["EscrowCreated"].ID
+	outcomeRecordedID := chain.FactoryABI.Events["OutcomeRecorded"].ID
+	logs, err := idx.chain.FilterLogs(ctx, []common.Address{idx.factoryAddress}, [][]common.Hash{{escrowCreatedID, outcomeRecordedID}}, from, to)
 	if err != nil {
 		return fmt.Errorf("filter factory logs: %w", err)
 	}
@@ -258,8 +259,11 @@ func (idx *Indexer) processFactoryLog(lg types.Log) error {
 		return err
 	}
 
-	if event.Name == "EscrowCreated" {
+	switch event.Name {
+	case "EscrowCreated":
 		return idx.handleEscrowCreated(lg)
+	case "OutcomeRecorded":
+		return idx.handleOutcomeRecorded(lg)
 	}
 	return nil
 }
@@ -339,6 +343,40 @@ func (idx *Indexer) handleEscrowCreated(lg types.Log) error {
 		SubmissionDeadline: 0,
 	})
 	return err
+}
+
+func (idx *Indexer) handleOutcomeRecorded(lg types.Log) error {
+	// OutcomeRecorded(uint256 indexed escrowId, address indexed participant, string role, string outcome)
+	if len(lg.Topics) < 3 {
+		return fmt.Errorf("OutcomeRecorded: insufficient topics (got %d, need >= 3)", len(lg.Topics))
+	}
+
+	participant := common.BytesToAddress(lg.Topics[2].Bytes())
+
+	values, err := chain.FactoryABI.Events["OutcomeRecorded"].Inputs.NonIndexed().Unpack(lg.Data)
+	if err != nil {
+		return fmt.Errorf("unpack OutcomeRecorded: %w", err)
+	}
+	if len(values) < 2 {
+		return fmt.Errorf("OutcomeRecorded: expected 2 non-indexed values, got %d", len(values))
+	}
+
+	role, ok := values[0].(string)
+	if !ok {
+		return fmt.Errorf("OutcomeRecorded: unexpected type for role: %T", values[0])
+	}
+	outcome, ok := values[1].(string)
+	if !ok {
+		return fmt.Errorf("OutcomeRecorded: unexpected type for outcome: %T", values[1])
+	}
+
+	slog.Info("outcome recorded",
+		"participant", participant.Hex(),
+		"role", role,
+		"outcome", outcome,
+	)
+
+	return idx.db.UpsertReputation(participant.Hex(), role, outcome)
 }
 
 func (idx *Indexer) indexEscrowEvents(ctx context.Context, escrowAddr common.Address, dbEscrowID int64, from, to uint64) error {

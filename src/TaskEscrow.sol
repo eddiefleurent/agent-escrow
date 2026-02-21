@@ -86,6 +86,7 @@ contract TaskEscrow {
     event RemainingMilestonesAborted(uint8 fromIndex, uint256 refundAmount);
     event BackupActivated(address indexed previousWorker, address indexed newWorker, uint64 newDeadline);
 
+    address public immutable factory;
     address public immutable token;
     address public immutable buyer;
     address public immutable worker;
@@ -128,6 +129,7 @@ contract TaskEscrow {
     }
 
     struct Params {
+        address factory;
         address buyer;
         address worker;
         address verifier;
@@ -146,6 +148,10 @@ contract TaskEscrow {
         uint64 backupDeadlineExtension;
         CreateMilestoneParams[] milestones;
     }
+
+    uint8 private constant OUTCOME_COMPLETED = 1;
+    uint8 private constant OUTCOME_DISPUTED = 2;
+    uint8 private constant OUTCOME_FAILED = 3;
 
     uint256 private constant _NOT_ENTERED = 1;
     uint256 private constant _ENTERED = 2;
@@ -174,6 +180,7 @@ contract TaskEscrow {
         if (p.submissionDeadline <= block.timestamp) revert InvalidDeadline();
         if (p.protocolFeeBpsSnapshot > 10_000) revert InvalidAwardBps();
 
+        factory = p.factory;
         buyer = p.buyer;
         worker = p.worker;
         verifier = p.verifier;
@@ -271,6 +278,7 @@ contract TaskEscrow {
         if (status != Status.Created) revert InvalidState();
         status = Status.Cancelled;
         emit Cancelled();
+        _recordOutcome(OUTCOME_FAILED);
     }
 
     function depositStake() external payable nonReentrant {
@@ -369,6 +377,7 @@ contract TaskEscrow {
         if (milestoneCount == 1) milestones[0].status = MilestoneStatus.Cancelled;
         _send(buyer, amount + sf);
         emit Refunded(amount, sf);
+        _recordOutcome(OUTCOME_FAILED);
     }
 
     function claimArbitratorTimeout() external nonReentrant {
@@ -383,6 +392,7 @@ contract TaskEscrow {
         _send(buyer, amount + sf);
         emit ArbitratorTimeoutClaimed(msg.sender, uint64(block.timestamp));
         emit Refunded(amount, sf);
+        _recordOutcome(OUTCOME_FAILED);
     }
 
     // ── Backup agent activation (paper §4.4) ──
@@ -582,6 +592,8 @@ contract TaskEscrow {
         emit RemainingMilestonesAborted(fromIndex, refundTotal);
         _settleWorkerStake();
         status = Status.Refunded;
+        (, uint8 outcome) = _checkMilestonesTerminal();
+        _recordOutcome(outcome);
     }
 
     // ── Internal ──
@@ -637,6 +649,7 @@ contract TaskEscrow {
         _send(activeWorker, wn + sr);
         if (fee > 0) _send(treasurySnapshot, fee);
         emit Settled(wn, 0, fee, sr);
+        _recordOutcome(OUTCOME_COMPLETED);
     }
 
     function _settleResolved(uint16 workerAwardBps) internal {
@@ -647,6 +660,7 @@ contract TaskEscrow {
         if (br + sf > 0) _send(buyer, br + sf);
         if (fee > 0) _send(treasurySnapshot, fee);
         emit Settled(wn, br, fee, sr);
+        _recordOutcome(OUTCOME_DISPUTED);
     }
 
     function _doMsApprovedSettle(uint8 idx) internal {
@@ -668,20 +682,35 @@ contract TaskEscrow {
 
     function _advanceMilestone() internal {
         if (currentMilestone + 1 < milestoneCount) currentMilestone++;
-        if (_allMilestonesTerminal()) {
+        (bool terminal, uint8 outcome) = _checkMilestonesTerminal();
+        if (terminal) {
             _settleWorkerStake();
             status = Status.Settled;
+            _recordOutcome(outcome);
         }
     }
 
-    function _allMilestonesTerminal() internal view returns (bool) {
+    /// @dev Checks whether all milestones are terminal and determines the overall outcome
+    /// in a single pass. Returns (false, 0) if any milestone is still active.
+    function _checkMilestonesTerminal() internal view returns (bool, uint8) {
+        bool hasApproved;
+        bool hasFailed;
         for (uint8 i = 0; i < milestoneCount; i++) {
             MilestoneStatus s = milestones[i].status;
-            if (s != MilestoneStatus.Approved && s != MilestoneStatus.Resolved && s != MilestoneStatus.Cancelled) {
-                return false;
+            if (s == MilestoneStatus.Approved) {
+                hasApproved = true;
+            } else if (s == MilestoneStatus.Resolved) {
+                hasFailed = true;
+                hasApproved = true; // partial -- will yield DISPUTED
+            } else if (s == MilestoneStatus.Cancelled) {
+                hasFailed = true;
+            } else {
+                return (false, 0);
             }
         }
-        return true;
+        if (hasApproved && !hasFailed) return (true, OUTCOME_COMPLETED);
+        if (hasFailed && !hasApproved) return (true, OUTCOME_FAILED);
+        return (true, OUTCOME_DISPUTED);
     }
 
     function _settleWorkerStake() internal {
@@ -706,6 +735,14 @@ contract TaskEscrow {
         if (sr > 0) _send(activeWorker, sr);
         if (sf > 0) _send(buyer, sf);
         emit Settled(0, 0, 0, sr);
+    }
+
+    function _recordOutcome(uint8 outcome) internal {
+        if (factory != address(0)) {
+            // recordOutcome(uint8) selector = 0x59e2342e
+            (bool ok,) = factory.call(abi.encodeWithSelector(0x59e2342e, outcome));
+            if (!ok) revert TransferFailed();
+        }
     }
 
     function _send(address to, uint256 value) internal {

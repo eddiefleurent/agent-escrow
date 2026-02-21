@@ -76,6 +76,16 @@ type Dispute struct {
 	ResolvedAt     *time.Time
 }
 
+type Reputation struct {
+	ID        int64  `json:"id"`
+	Address   string `json:"address"`
+	Role      string `json:"role"`
+	Completed int    `json:"completed"`
+	Disputed  int    `json:"disputed"`
+	Failed    int    `json:"failed"`
+	UpdatedAt string `json:"updated_at"`
+}
+
 type ChainLog struct {
 	ID              int64
 	TxHash          string

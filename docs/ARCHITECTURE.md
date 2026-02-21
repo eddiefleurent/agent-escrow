@@ -212,7 +212,7 @@ The current architecture -- single Go binary, SQLite, one factory contract -- is
 | **Contract deployment** | One `TaskEscrow` per escrow via `CREATE` | Contract deployment gas overhead at high volume; bytecode duplication | Minimal proxy pattern (EIP-1167 clones). The factory deploys proxy contracts pointing to a single `TaskEscrow` implementation. Reduces per-escrow deploy cost by ~90%. | V2 |
 | **Nonce management** | Sequential nonce tracking | Concurrent transaction submission causes nonce collisions | Nonce manager with mutex or pending-pool awareness; or separate signing service | V2 |
 | **Authentication** | None (server holds a single private key) | Multi-tenant marketplace where different participants sign their own transactions | Agents manage their own wallets via [AgentKit](https://docs.cdp.coinbase.com/agent-kit/welcome) or equivalent and sign escrow transactions directly; server shifts to indexing-only. Alternatively: relayer/meta-transaction model, or ERC-4337 account abstraction. The paper's §4.7 requires each agent to hold scoped credentials and sign its own messages (§4.9). | V2-V3 |
-| **Reputation storage** | Not yet implemented | On-chain reputation seed (V2) generates read-heavy query load; behavioral metrics (V3) produce high-write analytical workload | Reputation reads from a materialized view or dedicated read replica. Behavioral metrics use a time-series store or append-only analytics table. | V2-V3 |
+| **Reputation storage** | On-chain seed implemented; off-chain SQLite table | On-chain reputation seed (V2) generates read-heavy query load; behavioral metrics (V3) produce high-write analytical workload | Reputation reads from a materialized view or dedicated read replica. Behavioral metrics use a time-series store or append-only analytics table. | V2-V3 |
 | **ZK verification** | Not yet implemented | ZK proof verification on-chain is expensive even on L2 (~300k-500k gas for groth16) | Verify proofs off-chain by default; post only the proof hash on-chain. Optional on-chain verification for high-assurance tasks via a dedicated verifier contract. Consider recursive proofs to amortize cost. | V3 |
 | **Cross-chain** | Single-chain (Base) | Agents and liquidity on different L2s | Bridge adapter contracts or cross-chain messaging (LayerZero, Hyperlane). The Go server already parameterizes `CHAIN_ID` and `RPC_URL`, so multi-chain indexing is configuration, not architecture. Settlement contracts deploy per-chain. | V4+ |
 
@@ -258,7 +258,7 @@ The riskiest V4+ item is **cross-chain settlement**, which introduces bridge tru
 
 ### Contracts
 
-- **`TaskEscrowFactory`** (`src/TaskEscrowFactory.sol`) -- creates escrow instances, stores protocol-level configuration (fee basis points, treasury, pause state). Delegates `TaskEscrow` deployment to `EscrowDeployer` to stay under the EIP-170 size limit.
+- **`TaskEscrowFactory`** (`src/TaskEscrowFactory.sol`) -- creates escrow instances, stores protocol-level configuration (fee basis points, treasury, pause state), and records per-address reputation outcomes (completed/disputed/failed counters for workers and buyers). Delegates `TaskEscrow` deployment to `EscrowDeployer` to stay under the EIP-170 size limit.
 - **`EscrowDeployer`** (`src/EscrowDeployer.sol`) -- minimal deployer contract that creates `TaskEscrow` instances on behalf of the factory.
 - **`TaskEscrow`** (`src/TaskEscrow.sol`) -- holds escrowed ETH or ERC20, enforces the lifecycle state machine with role-gated transitions.
 
@@ -398,7 +398,7 @@ go-server/
     indexer/indexer.go             Event polling -> DB reconciliation
     mcpserver/
       server.go                    MCP server setup
-      tools.go                     11 tool handlers
+      tools.go                     12 tool handlers
     api/
       router.go                    HTTP mux with middleware
       handlers.go                  JSON request/response handlers
@@ -431,6 +431,7 @@ SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 | `milestones` | Per-milestone records: amount, deadline, status, submission/dispute data (V2) |
 | `submissions` | Worker submission records |
 | `disputes` | Dispute and resolution records |
+| `reputation` | Per-address, per-role outcome counters (completed, disputed, failed) indexed from on-chain events |
 | `chain_logs` | Raw chain event log (idempotent by tx_hash + log_index) |
 | `chain_cursors` | Indexer block cursor per chain |
 
@@ -464,6 +465,7 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 | `activate_backup` | escrow_id | `Escrow.activateBackup` |
 | `get_escrow` | escrow_id | DB read (includes milestone details) |
 | `list_escrows` | role, address, status | DB query |
+| `get_reputation` | address, role (optional) | DB read (indexed from on-chain OutcomeRecorded events) |
 
 ### HTTP API (Secondary Interface)
 
@@ -481,6 +483,7 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 | POST | `/api/v1/escrows/{id}/resolve` | Resolve (body: worker_award_bps, resolution_uri, optional milestone_index) |
 | POST | `/api/v1/escrows/{id}/abort-milestones` | Abort remaining milestones (buyer only) |
 | POST | `/api/v1/escrows/{id}/activate-backup` | Activate backup worker (buyer only) |
+| GET | `/api/v1/reputation/{address}` | Get reputation (query: role) |
 
 ### Configuration
 

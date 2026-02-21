@@ -226,7 +226,35 @@ These must hold for every escrow at all times:
 7. **Milestone ordering**: milestones are processed sequentially; `milestoneIndex` must equal `currentMilestone`.
 8. **Milestone fund conservation**: sum of all milestone payouts + refunds + fees + remaining stake = `amount + workerStake`.
 
-## 7) Economic Parameters
+## 7) Reputation Recording
+
+The factory records per-address outcome counters on-chain, implementing the paper's immutable ledger approach for reputation (§4.6, Table 3). This provides a tamper-proof, auditable record of task outcomes that other contracts and protocols can read without trusting the off-chain server.
+
+### Outcome Categories
+
+| Outcome | Trigger | Description |
+|---|---|---|
+| `completed` | Approval path (single-shot or all milestones approved) | Task delivered and accepted |
+| `disputed` | Dispute resolution path, or mixed milestone outcomes | Task required arbitration or partial completion |
+| `failed` | Timeout refund, arbitrator timeout, cancel, or all milestones cancelled | Task not delivered or fully refunded |
+
+### Recording Mechanism
+
+The escrow contract calls `factory.recordOutcome(outcome)` on every terminal state transition. The factory validates that the caller is a registered escrow (via `escrowToId` reverse lookup), reads the buyer and active worker from stored mappings, and increments the appropriate counter in `workerReputation` and `buyerReputation`.
+
+### Backup Worker Attribution
+
+When a backup worker has been activated, reputation is attributed to the **active worker** (the backup), not the original. The original worker additionally receives a `failed` entry for having defaulted.
+
+### Anti-Spoofing Invariant
+
+Only addresses registered via `createEscrow` can call `recordOutcome`. The factory stores `escrowToId[escrowAddress] = escrowId + 1` during creation (using +1 so that 0 means "not registered"). Any call from an unregistered address reverts with `NotRegisteredEscrow()`.
+
+### Scope and Limitations
+
+V2 records raw outcome counts only. The paper warns that naive implementations are susceptible to gaming (e.g., inflating reputation by only accepting simple, low-risk tasks). Weighted scoring, anti-gaming measures, and behavioral metrics are deferred to V3.
+
+## 8) Economic Parameters
 
 Global (factory-level):
 - `protocolFeeBps` (0-10000) -- snapshotted at escrow creation to prevent governance race conditions mid-task.
@@ -244,7 +272,7 @@ Default values: review = 86,400s (24h), dispute = 172,800s (48h).
 
 Rationale (paper §4.3, §4.4): 24h/48h windows balance oversight with capital efficiency. Explicit reject avoids passive acceptance under ambiguity (criticality and accountability). Silence-escalation prevents indefinite lock under asymmetric power/inattention (monitoring and authority gradients).
 
-## 8) Edge Cases
+## 9) Edge Cases
 
 - **Late submission**: reverts if `block.timestamp > submissionDeadline`.
 - **Approval/dispute race**: first confirmed transition wins; subsequent calls revert by status guard.
@@ -254,7 +282,7 @@ Rationale (paper §4.3, §4.4): 24h/48h windows balance oversight with capital e
 - **Zero worker stake**: `depositStake()` reverts. Submit proceeds without stake check.
 - **Abort eligibility**: `abortRemainingMilestones()` requires the current milestone to be in a terminal failure state (Resolved or Cancelled). Cannot abort while a milestone is actively in progress with time remaining.
 
-## 9) Security Model
+## 10) Security Model
 
 - `nonReentrant` on payable state-changing functions that transfer ETH.
 - Checks-effects-interactions ordering throughout.

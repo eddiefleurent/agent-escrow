@@ -12,6 +12,8 @@ contract TaskEscrowFactory {
     error InvalidDeadline();
     error Paused();
     error NoPendingTransfer();
+    error NotRegisteredEscrow();
+    error InvalidOutcome();
 
     event EscrowCreated(
         uint256 indexed escrowId,
@@ -30,6 +32,18 @@ contract TaskEscrowFactory {
     event BackupDesignated(uint256 indexed escrowId, address indexed backupWorker, uint64 backupDeadlineExtension);
     event FactoryPaused();
     event FactoryUnpaused();
+    event OutcomeRecorded(uint256 indexed escrowId, address indexed participant, string role, string outcome);
+
+    // Outcome enum values passed by escrow contracts via recordOutcome().
+    uint8 public constant OUTCOME_COMPLETED = 1;
+    uint8 public constant OUTCOME_DISPUTED = 2;
+    uint8 public constant OUTCOME_FAILED = 3;
+
+    struct ReputationRecord {
+        uint32 completed;
+        uint32 disputed;
+        uint32 failed;
+    }
 
     uint256 public nextEscrowId;
     mapping(uint256 => address) public escrowById;
@@ -39,6 +53,12 @@ contract TaskEscrowFactory {
     address public pendingOwner;
     bool public paused;
     EscrowDeployer public immutable deployer;
+
+    mapping(address => ReputationRecord) public workerReputation;
+    mapping(address => ReputationRecord) public buyerReputation;
+    mapping(address => uint256) internal escrowToId;
+    mapping(uint256 => address) internal escrowBuyer;
+    mapping(uint256 => address) internal escrowWorker;
 
     constructor(uint16 _protocolFeeBps, address _treasury, address _owner) {
         if (_protocolFeeBps > 10_000) revert InvalidFeeBps();
@@ -96,6 +116,7 @@ contract TaskEscrowFactory {
 
         escrow = deployer.deploy(
             TaskEscrow.Params({
+                factory: address(this),
                 buyer: p.buyer,
                 worker: p.worker,
                 verifier: p.verifier,
@@ -118,6 +139,9 @@ contract TaskEscrowFactory {
 
         escrowId = nextEscrowId++;
         escrowById[escrowId] = escrow;
+        escrowToId[escrow] = escrowId + 1; // +1 so 0 means "not registered"
+        escrowBuyer[escrowId] = p.buyer;
+        escrowWorker[escrowId] = p.worker;
 
         emit EscrowCreated(escrowId, escrow, p.buyer, p.worker, p.verifier, p.arbitrator, p.taskSpecHash, p.token);
 
@@ -159,5 +183,60 @@ contract TaskEscrowFactory {
         owner = pendingOwner;
         pendingOwner = address(0);
         emit OwnershipTransferred(oldOwner, msg.sender);
+    }
+
+    /// @notice Called by a registered escrow contract on terminal state transitions.
+    /// @param outcome 1 = Completed, 2 = Disputed, 3 = Failed
+    function recordOutcome(uint8 outcome) external {
+        uint256 packed = escrowToId[msg.sender];
+        if (packed == 0) revert NotRegisteredEscrow();
+        if (outcome < OUTCOME_COMPLETED || outcome > OUTCOME_FAILED) revert InvalidOutcome();
+
+        uint256 escrowId = packed - 1;
+        address buyerAddr = escrowBuyer[escrowId];
+        address workerAddr = escrowWorker[escrowId];
+
+        // The escrow may have activated a backup worker. Read the active worker
+        // from the escrow contract so reputation is attributed correctly.
+        address activeWorkerAddr = TaskEscrow(msg.sender).activeWorker();
+
+        string memory outcomeStr;
+        if (outcome == OUTCOME_COMPLETED) {
+            outcomeStr = "completed";
+            workerReputation[activeWorkerAddr].completed++;
+            buyerReputation[buyerAddr].completed++;
+        } else if (outcome == OUTCOME_DISPUTED) {
+            outcomeStr = "disputed";
+            workerReputation[activeWorkerAddr].disputed++;
+            buyerReputation[buyerAddr].disputed++;
+        } else {
+            outcomeStr = "failed";
+            workerReputation[activeWorkerAddr].failed++;
+            buyerReputation[buyerAddr].failed++;
+        }
+
+        emit OutcomeRecorded(escrowId, activeWorkerAddr, "worker", outcomeStr);
+        emit OutcomeRecorded(escrowId, buyerAddr, "buyer", outcomeStr);
+
+        // If the active worker differs from the original, also record failure for
+        // the original worker (they defaulted, triggering backup activation).
+        if (activeWorkerAddr != workerAddr) {
+            workerReputation[workerAddr].failed++;
+            emit OutcomeRecorded(escrowId, workerAddr, "worker", "failed");
+        }
+    }
+
+    function getWorkerReputation(address addr)
+        external
+        view
+        returns (uint32 completed, uint32 disputed, uint32 failed)
+    {
+        ReputationRecord storage r = workerReputation[addr];
+        return (r.completed, r.disputed, r.failed);
+    }
+
+    function getBuyerReputation(address addr) external view returns (uint32 completed, uint32 disputed, uint32 failed) {
+        ReputationRecord storage r = buyerReputation[addr];
+        return (r.completed, r.disputed, r.failed);
     }
 }

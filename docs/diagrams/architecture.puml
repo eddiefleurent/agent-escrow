@@ -45,9 +45,10 @@ package "Go Server" as server #E3F2FD {
 }
 
 package "Base (Ethereum L2)" as chain #E8F5E9 {
-  [TaskEscrowFactory] as factory #A5D6A7
+  [TaskEscrowFactory\n+ reputation storage] as factory #A5D6A7
   [TaskEscrow\ninstances] as escrow #A5D6A7
   factory -right-> escrow : deploys
+  escrow -left-> factory : recordOutcome()
 }
 
 mcp_client -down-> mcp_server : stdio / HTTP
@@ -60,8 +61,8 @@ indexer ..down..> escrow : poll events
 
 note right of mcp_server
   Primary agent interface.
-  8 tools covering the full
-  escrow lifecycle.
+  12 tools covering escrow
+  lifecycle + reputation.
 end note
 
 note right of storage

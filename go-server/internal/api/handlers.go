@@ -808,6 +808,44 @@ func (h *Handlers) ActivateBackup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
 }
 
+func (h *Handlers) GetReputation(w http.ResponseWriter, r *http.Request) {
+	addr := r.PathValue("address")
+	if !common.IsHexAddress(addr) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid address"})
+		return
+	}
+	addr = common.HexToAddress(addr).Hex()
+
+	role := r.URL.Query().Get("role")
+	if role != "" && role != "worker" && role != "buyer" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "role must be 'worker' or 'buyer'"})
+		return
+	}
+
+	if role != "" {
+		rep, err := h.db.GetReputation(addr, role)
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"address": addr, "role": role,
+				"completed": 0, "disputed": 0, "failed": 0,
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, rep)
+		return
+	}
+
+	reps, err := h.db.GetReputationByAddress(addr)
+	if err != nil || len(reps) == 0 {
+		writeJSON(w, http.StatusOK, []map[string]any{
+			{"address": addr, "role": "worker", "completed": 0, "disputed": 0, "failed": 0},
+			{"address": addr, "role": "buyer", "completed": 0, "disputed": 0, "failed": 0},
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, reps)
+}
+
 func isValidAddress(s string) bool {
 	return common.IsHexAddress(s) && s != "0x0000000000000000000000000000000000000000"
 }
