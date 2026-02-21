@@ -149,6 +149,9 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 	if !ok {
 		return textResult("invalid amount"), nil, nil
 	}
+	if err := chain.ValidateComplexityFloor(amount, s.cfg.ComplexityFloor); err != nil {
+		return textResult(err.Error()), nil, nil
+	}
 	deadline, err := strconv.ParseUint(args.SubmissionDeadline, 10, 64)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid submission_deadline: %v", err)), nil, nil

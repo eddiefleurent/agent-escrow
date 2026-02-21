@@ -261,6 +261,7 @@ V2 records raw outcome counts only. The paper warns that naive implementations a
 Global (factory-level):
 - `protocolFeeBps` (0-10000) -- snapshotted at escrow creation to prevent governance race conditions mid-task.
 - `treasury` address -- snapshotted at creation.
+- `complexityFloor` -- minimum escrow amount (in wei or smallest token unit) to justify delegation overhead. Owner-settable via `setComplexityFloor`. `0` means disabled (no minimum). Checked against `p.amount` (total escrow amount) at `createEscrow` time. Rationale (paper §4.3): below a certain complexity floor, transaction costs (gas + protocol fee) exceed the value of the task, rendering delegation infeasible.
 
 Per-escrow:
 - `amount` -- total escrow amount (ETH or ERC20). For milestone escrows, equals sum of all milestone amounts.
@@ -282,6 +283,7 @@ Rationale (paper §4.3, §4.4): 24h/48h windows balance oversight with capital e
 - **Arbitrator inactivity**: buyer can claim full refund via `claimArbitratorTimeout()` after the configured timeout period. This records a `disputed` outcome (not `failed`) since the arbitrator's inaction -- not the worker's performance -- caused the refund.
 - **ERC20 vs ETH**: `token == address(0)` means ETH-denominated. All settlement math is token-agnostic; the transfer mechanism differs.
 - **Zero worker stake**: `depositStake()` reverts. Submit proceeds without stake check.
+- **Below complexity floor**: `createEscrow` reverts with `BelowComplexityFloor()` if `complexityFloor > 0` and `p.amount < complexityFloor`. The check applies to the total escrow amount, not individual milestone amounts. A floor of `0` disables the check entirely.
 - **Abort eligibility**: `abortRemainingMilestones()` requires the current milestone to be in a terminal failure state (Resolved or Cancelled). Cannot abort while a milestone is actively in progress with time remaining.
 
 ## 10) Security Model

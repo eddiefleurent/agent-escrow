@@ -723,6 +723,88 @@ func TestTimeout_POST_TxTimeoutExceeded(t *testing.T) {
 	}
 }
 
+func TestCreateEscrow_BelowComplexityFloor(t *testing.T) {
+	env := setup(t)
+	env.cfg.ComplexityFloor = "1000000000000000000" // 1 ETH
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+
+	body := `{
+		"title": "Test", "description": "x",
+		"buyer": "0x1000000000000000000000000000000000000001",
+		"worker": "0x2000000000000000000000000000000000000002",
+		"verifier": "0x3000000000000000000000000000000000000003",
+		"arbitrator": "0x4000000000000000000000000000000000000004",
+		"amount": "999999999999999999",
+		"submission_deadline": "1700000000",
+		"review_period_seconds": "86400", "dispute_period_seconds": "172800",
+		"arbitrator_timeout_seconds": "604800"
+	}`
+
+	rr := env.request(t, "POST", "/api/v1/escrows", body)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp := decodeJSON(t, rr)
+	errMsg, _ := resp["error"].(string)
+	if !strings.Contains(errMsg, "complexity floor") {
+		t.Fatalf("expected complexity floor error, got: %s", errMsg)
+	}
+}
+
+func TestCreateEscrow_AtComplexityFloor(t *testing.T) {
+	env := setup(t)
+	env.cfg.ComplexityFloor = "100"
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+
+	escrowAddr := common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12")
+	buyerAddr := common.HexToAddress("0x1000000000000000000000000000000000000001")
+	env.mock.Receipt = chain.MakeEscrowCreatedReceipt(0, escrowAddr, buyerAddr)
+
+	body := `{
+		"title": "Test", "description": "x",
+		"buyer": "0x1000000000000000000000000000000000000001",
+		"worker": "0x2000000000000000000000000000000000000002",
+		"verifier": "0x3000000000000000000000000000000000000003",
+		"arbitrator": "0x4000000000000000000000000000000000000004",
+		"amount": "100",
+		"submission_deadline": "1700000000",
+		"review_period_seconds": "86400", "dispute_period_seconds": "172800",
+		"arbitrator_timeout_seconds": "604800"
+	}`
+
+	rr := env.request(t, "POST", "/api/v1/escrows", body)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCreateEscrow_EmptyComplexityFloorAllowsAny(t *testing.T) {
+	env := setup(t)
+	env.cfg.ComplexityFloor = ""
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+
+	escrowAddr := common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12")
+	buyerAddr := common.HexToAddress("0x1000000000000000000000000000000000000001")
+	env.mock.Receipt = chain.MakeEscrowCreatedReceipt(0, escrowAddr, buyerAddr)
+
+	body := `{
+		"title": "Test", "description": "x",
+		"buyer": "0x1000000000000000000000000000000000000001",
+		"worker": "0x2000000000000000000000000000000000000002",
+		"verifier": "0x3000000000000000000000000000000000000003",
+		"arbitrator": "0x4000000000000000000000000000000000000004",
+		"amount": "1",
+		"submission_deadline": "1700000000",
+		"review_period_seconds": "86400", "dispute_period_seconds": "172800",
+		"arbitrator_timeout_seconds": "604800"
+	}`
+
+	rr := env.request(t, "POST", "/api/v1/escrows", body)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func escrowPath(id int64, action string) string {
 	if action != "" {
 		return fmt.Sprintf("/api/v1/escrows/%d/%s", id, action)
