@@ -265,9 +265,12 @@ func (h *Handlers) GetEscrow(w http.ResponseWriter, r *http.Request) {
 
 	if escrow.MilestoneCount > 1 {
 		milestones, err := h.db.GetMilestonesByEscrow(id)
-		if err == nil {
-			result["milestones"] = milestones
+		if err != nil {
+			slog.Error("failed to fetch milestones", "escrow_id", id, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch milestones"})
+			return
 		}
+		result["milestones"] = milestones
 	}
 
 	writeJSON(w, http.StatusOK, result)
@@ -433,8 +436,17 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 
 	addr := common.HexToAddress(escrow.EscrowAddress)
 
-	if escrow.MilestoneCount > 1 && req.MilestoneIndex != nil {
-		tx, err := h.chain.SubmitMilestone(r.Context(), addr, uint8(*req.MilestoneIndex), hashBytes, req.SubmissionURI)
+	if escrow.MilestoneCount > 1 {
+		if req.MilestoneIndex == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "milestone_index required for multi-milestone escrow"})
+			return
+		}
+		msIdx := *req.MilestoneIndex
+		if msIdx < 0 || msIdx >= escrow.MilestoneCount {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdx, escrow.MilestoneCount)})
+			return
+		}
+		tx, err := h.chain.SubmitMilestone(r.Context(), addr, uint8(msIdx), hashBytes, req.SubmissionURI)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 			return
@@ -480,8 +492,17 @@ func (h *Handlers) ApproveWork(w http.ResponseWriter, r *http.Request) {
 
 	addr := common.HexToAddress(escrow.EscrowAddress)
 
-	if escrow.MilestoneCount > 1 && req.MilestoneIndex != nil {
-		msIdx := uint8(*req.MilestoneIndex)
+	if escrow.MilestoneCount > 1 {
+		if req.MilestoneIndex == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "milestone_index required for multi-milestone escrow"})
+			return
+		}
+		msIdxVal := *req.MilestoneIndex
+		if msIdxVal < 0 || msIdxVal >= escrow.MilestoneCount {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdxVal, escrow.MilestoneCount)})
+			return
+		}
+		msIdx := uint8(msIdxVal)
 		var txHash string
 		switch req.Role {
 		case "buyer":
@@ -559,8 +580,17 @@ func (h *Handlers) DisputeWork(w http.ResponseWriter, r *http.Request) {
 
 	addr := common.HexToAddress(escrow.EscrowAddress)
 
-	if escrow.MilestoneCount > 1 && req.MilestoneIndex != nil {
-		msIdx := uint8(*req.MilestoneIndex)
+	if escrow.MilestoneCount > 1 {
+		if req.MilestoneIndex == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "milestone_index required for multi-milestone escrow"})
+			return
+		}
+		msIdxVal := *req.MilestoneIndex
+		if msIdxVal < 0 || msIdxVal >= escrow.MilestoneCount {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdxVal, escrow.MilestoneCount)})
+			return
+		}
+		msIdx := uint8(msIdxVal)
 		var txHash string
 		switch req.Role {
 		case "buyer":
@@ -658,8 +688,17 @@ func (h *Handlers) ResolveDispute(w http.ResponseWriter, r *http.Request) {
 
 	addr := common.HexToAddress(escrow.EscrowAddress)
 
-	if escrow.MilestoneCount > 1 && req.MilestoneIndex != nil {
-		tx, err := h.chain.ResolveMilestoneDispute(r.Context(), addr, uint8(*req.MilestoneIndex), uint16(bps), req.ResolutionURI)
+	if escrow.MilestoneCount > 1 {
+		if req.MilestoneIndex == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "milestone_index required for multi-milestone escrow"})
+			return
+		}
+		msIdxVal := *req.MilestoneIndex
+		if msIdxVal < 0 || msIdxVal >= escrow.MilestoneCount {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdxVal, escrow.MilestoneCount)})
+			return
+		}
+		tx, err := h.chain.ResolveMilestoneDispute(r.Context(), addr, uint8(msIdxVal), uint16(bps), req.ResolutionURI)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 			return

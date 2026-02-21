@@ -40,15 +40,25 @@ func Open(dsn string) (*DB, error) {
 		return nil, fmt.Errorf("run migrations: %w", err)
 	}
 
-	// Run migration 002 idempotently (ALTER TABLE may fail if columns already exist)
+	// Run migration 002 idempotently inside a transaction for atomicity
+	tx, err := sqlDB.Begin()
+	if err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("begin migration 002 tx: %w", err)
+	}
 	for _, stmt := range splitStatements(migration002SQL) {
-		if _, err := sqlDB.Exec(stmt); err != nil {
-			// Ignore "duplicate column" errors from ALTER TABLE on re-run
+		if _, err := tx.Exec(stmt); err != nil {
 			if !isDuplicateColumnError(err) {
+				tx.Rollback()
 				sqlDB.Close()
 				return nil, fmt.Errorf("run migration 002: %w", err)
 			}
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		tx.Rollback()
+		sqlDB.Close()
+		return nil, fmt.Errorf("commit migration 002: %w", err)
 	}
 
 	return &DB{db: sqlDB}, nil

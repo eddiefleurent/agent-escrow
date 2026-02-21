@@ -181,3 +181,110 @@ note over escrow #C8E6C9
 end note
 
 @enduml
+
+@startuml milestone-system-sequence
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam sequenceArrowThickness 1.5
+skinparam sequenceLifeLineBorderColor #CCCCCC
+skinparam sequenceDividerBackgroundColor #F5F5F5
+skinparam sequenceDividerFontStyle bold
+skinparam sequenceGroupBackgroundColor #FAFAFA
+skinparam sequenceGroupBorderColor #CCCCCC
+
+skinparam participant {
+  BorderColor #42A5F5
+  BackgroundColor #E3F2FD
+  FontStyle bold
+}
+
+skinparam actor {
+  BorderColor #7E57C2
+  BackgroundColor #EDE7F6
+}
+
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #E0D68A
+  FontSize 11
+}
+
+title Multi-Milestone Escrow — System Sequence
+
+actor "Buyer" as buyer
+actor "Worker" as worker
+participant "Chain Client" as chain
+participant "Escrow" as escrow
+participant "Indexer" as indexer
+participant "DB" as db
+
+== Creation ==
+
+buyer -> chain : CreateEscrow(milestones[0..N-1])
+chain -> escrow ** : deploy with N milestones
+chain -> db : store escrow, MilestoneCount, MilestoneRecord[0..N-1]
+
+== Funding ==
+
+buyer -> chain : Fund
+chain -> escrow : fund (total amount)
+note over escrow #E3F2FD : **Funded** — all milestone amounts held
+
+== Milestone Loop ==
+
+loop for each milestone i = 0..N-1
+
+  == Milestone [i]: Submission ==
+
+  worker -> chain : SubmitMilestone(i, hash, URI)
+  chain -> escrow : submitMilestone(i)
+  note over escrow #E3F2FD : Milestone[i] **Submitted**
+  escrow --> indexer : MilestoneSubmitted event
+  indexer -> db : update milestone state
+
+  alt #E8F5E9 Approval path
+    buyer -> chain : ApproveMilestoneByBuyer(i)
+    chain -> escrow : approveMilestoneByBuyer(i)
+    escrow -[#388E3C]> worker : milestone payout (amount - fee)
+    note over escrow #C8E6C9 : Milestone[i] **Approved**
+    escrow --> indexer : MilestoneApproved event
+    indexer -> db : update milestone state, record payout
+
+  else #FFF3E0 Dispute path
+    buyer -> chain : DisputeMilestone(i, reason)
+    chain -> escrow : disputeMilestone(i)
+    note over escrow #FFF3E0 : Milestone[i] **Disputed**
+    escrow --> indexer : MilestoneDisputed event
+    indexer -> db : update milestone state
+
+    "Arbitrator" as arbitrator -> chain : ResolveMilestoneDispute(i, awardBps)
+    chain -> escrow : resolveMilestoneDispute(i, awardBps)
+    escrow -[#F57C00]> worker : worker share
+    escrow -[#F57C00]> buyer : buyer refund
+    note over escrow #FFF3E0 : Milestone[i] **Resolved**
+    escrow --> indexer : MilestoneDisputeResolved event
+    indexer -> db : update milestone state, record split
+
+    opt Buyer aborts remaining
+      buyer -> chain : AbortRemainingMilestones()
+      chain -> escrow : abortRemainingMilestones()
+      escrow -[#9E9E9E]> buyer : remaining funds refunded
+      note over escrow #E0E0E0 : Milestones[i+1..N-1] **Cancelled**
+      escrow --> indexer : RemainingMilestonesAborted event
+      indexer -> db : mark remaining milestones cancelled
+    end
+  end
+
+end
+
+== Escrow Terminal ==
+
+note over escrow #C8E6C9
+  All milestones terminal.
+  Worker stake settled based
+  on overall outcome.
+end note
+
+@enduml

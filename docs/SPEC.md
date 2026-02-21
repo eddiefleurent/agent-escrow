@@ -14,7 +14,6 @@ Included:
 - Verifier reject path and worker silence-escalation path
 
 Not yet implemented:
-- Milestone-based escrow (V2 -- specified below, not yet coded)
 - On-chain reputation
 - Open marketplace bidding/auctions
 - Multi-verifier quorum

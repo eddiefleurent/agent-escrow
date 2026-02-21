@@ -124,9 +124,9 @@ How each version maps to the five pillars from ["Intelligent AI Delegation"](htt
 
 **V1**: Canonical events for every state transition. Submission hash commitments. Event indexer for off-chain reconciliation. MCP tools for monitoring. Verifier/buyer approval for direct outcome verification. Arbitrator for third-party auditing.
 
-**V2**: Milestone-based escrow -- on-chain progress checkpoints with per-milestone verification and partial payouts (paper §4.5: "smart contracts can be used to make the delegatee agent commit to publishing key progress milestones"). Attestation chains across delegation links -- each link produces signed attestation of sub-task completion. Real-time event subscriptions (paper's L0-L3 granularity levels).
+**V2**: Milestone-based escrow -- on-chain progress checkpoints with per-milestone verification and partial payouts (paper §4.5: "smart contracts can be used to make the delegatee agent commit to publishing key progress milestones"). Real-time event subscriptions (paper's L0-L3 granularity levels).
 
-**V3**: ZK verification integration for formally verifiable tasks. Multi-verifier quorum for game-theoretic consensus.
+**V3**: Attestation chains across delegation links -- each link produces signed attestation of sub-task completion (paper §4.8). ZK verification integration for formally verifiable tasks. Multi-verifier quorum for game-theoretic consensus.
 
 ### Pillar 4: Scalable Market Coordination (Sections 4.3, 4.6)
 

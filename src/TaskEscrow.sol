@@ -36,6 +36,7 @@ contract TaskEscrow {
         uint64 disputedAt;
         string disputeReasonURI;
         MilestoneStatus status;
+        uint16 awardBps;
     }
 
     error Unauthorized();
@@ -193,7 +194,8 @@ contract TaskEscrow {
                         approvedAt: 0,
                         disputedAt: 0,
                         disputeReasonURI: "",
-                        status: MilestoneStatus.Pending
+                        status: MilestoneStatus.Pending,
+                        awardBps: 0
                     })
                 );
             }
@@ -211,7 +213,8 @@ contract TaskEscrow {
                     approvedAt: 0,
                     disputedAt: 0,
                     disputeReasonURI: "",
-                    status: MilestoneStatus.Pending
+                    status: MilestoneStatus.Pending,
+                    awardBps: 0
                 })
             );
         }
@@ -445,6 +448,7 @@ contract TaskEscrow {
         Milestone storage ms = milestones[milestoneIndex];
         if (ms.status != MilestoneStatus.Disputed) revert InvalidState();
         ms.status = MilestoneStatus.Resolved;
+        ms.awardBps = workerAwardBps;
         emit MilestoneDisputeResolved(milestoneIndex, workerAwardBps, resolutionURI);
         _doMsResolvedSettle(milestoneIndex, workerAwardBps);
         _advanceMilestone();
@@ -622,7 +626,11 @@ contract TaskEscrow {
         uint256 total;
         for (uint8 i = 0; i < milestoneCount; i++) {
             total += milestones[i].amount;
-            if (milestones[i].status == MilestoneStatus.Approved) workerAwarded += milestones[i].amount;
+            if (milestones[i].status == MilestoneStatus.Approved) {
+                workerAwarded += milestones[i].amount;
+            } else if (milestones[i].status == MilestoneStatus.Resolved) {
+                workerAwarded += (milestones[i].amount * milestones[i].awardBps) / 10_000;
+            }
         }
         uint256 sr;
         if (workerAwarded == total) {

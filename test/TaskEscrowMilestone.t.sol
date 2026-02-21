@@ -267,13 +267,23 @@ contract TaskEscrowMilestoneTest is Test {
         TaskEscrow e = _create3MilestoneEscrow();
         _fundEscrow(e);
 
-        // V1 submit should revert because submissionDeadline is for the overall escrow
-        // but the escrow is multi-milestone, so submit() checks milestoneCount==1 implicitly
-        // through the status flow. Actually submit() works on Funded status, but for
-        // multi-milestone the V1 submit doesn't set milestone state properly.
-        // The V1 submit() will work but only sync milestone 0 if milestoneCount==1.
-        // For multi-milestone, users should use submitMilestone().
-        // Let's verify the milestone functions enforce milestoneCount > 1.
+        // V1 submit() on a multi-milestone escrow succeeds at the escrow level
+        // but only syncs milestone[0] when milestoneCount == 1. For multi-milestone
+        // escrows, callers should use submitMilestone(). Verify that V1 submit
+        // does NOT advance milestone state for multi-milestone escrows.
+        vm.prank(worker);
+        e.submit(keccak256("v1-sub"), "ipfs://v1-sub");
+
+        // Escrow-level status transitions to Submitted
+        assertEq(uint256(e.status()), uint256(TaskEscrow.Status.Submitted));
+
+        // Milestone 0 should remain Pending because _syncMs0Submit only fires when milestoneCount == 1
+        (,,,,,,,, TaskEscrow.MilestoneStatus ms0Status,) = e.milestones(0);
+        assertEq(uint256(ms0Status), uint256(TaskEscrow.MilestoneStatus.Pending));
+
+        // Milestone 1 and 2 also remain Pending
+        (,,,,,,,, TaskEscrow.MilestoneStatus ms1Status,) = e.milestones(1);
+        assertEq(uint256(ms1Status), uint256(TaskEscrow.MilestoneStatus.Pending));
     }
 
     // ── Abort requires terminal failure state ──
@@ -415,7 +425,7 @@ contract TaskEscrowMilestoneTest is Test {
         vm.prank(verifier);
         e.approveMilestoneByVerifier(0);
 
-        (,,,,,,,, TaskEscrow.MilestoneStatus msStatus) = e.milestones(0);
+        (,,,,,,,, TaskEscrow.MilestoneStatus msStatus,) = e.milestones(0);
         assertEq(uint256(msStatus), uint256(TaskEscrow.MilestoneStatus.Approved));
     }
 
@@ -427,7 +437,7 @@ contract TaskEscrowMilestoneTest is Test {
         vm.prank(verifier);
         e.rejectMilestoneByVerifier(0, "ipfs://reject");
 
-        (,,,,,,,, TaskEscrow.MilestoneStatus msStatus) = e.milestones(0);
+        (,,,,,,,, TaskEscrow.MilestoneStatus msStatus,) = e.milestones(0);
         assertEq(uint256(msStatus), uint256(TaskEscrow.MilestoneStatus.Disputed));
     }
 
@@ -442,7 +452,7 @@ contract TaskEscrowMilestoneTest is Test {
         vm.prank(worker);
         e.escalateMilestoneSilence(0, "ipfs://silence");
 
-        (,,,,,,,, TaskEscrow.MilestoneStatus msStatus) = e.milestones(0);
+        (,,,,,,,, TaskEscrow.MilestoneStatus msStatus,) = e.milestones(0);
         assertEq(uint256(msStatus), uint256(TaskEscrow.MilestoneStatus.Disputed));
     }
 

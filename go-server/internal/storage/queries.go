@@ -393,11 +393,26 @@ func (d *DB) GetMilestone(id int64) (*MilestoneRecord, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get milestone: %w", err)
 	}
-	m.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-	m.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
-	m.SubmittedAt = parseNullTime(submittedAt)
-	m.ApprovedAt = parseNullTime(approvedAt)
-	m.DisputedAt = parseNullTime(disputedAt)
+	m.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse created_at in GetMilestone: %w", err)
+	}
+	m.UpdatedAt, err = time.Parse("2006-01-02 15:04:05", updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse updated_at in GetMilestone: %w", err)
+	}
+	m.SubmittedAt, err = parseNullTime(submittedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse submitted_at in GetMilestone: %w", err)
+	}
+	m.ApprovedAt, err = parseNullTime(approvedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse approved_at in GetMilestone: %w", err)
+	}
+	m.DisputedAt, err = parseNullTime(disputedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse disputed_at in GetMilestone: %w", err)
+	}
 	return m, nil
 }
 
@@ -423,11 +438,26 @@ func (d *DB) GetMilestonesByEscrow(escrowID int64) ([]*MilestoneRecord, error) {
 			&m.DisputeReasonURI, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan milestone: %w", err)
 		}
-		m.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-		m.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
-		m.SubmittedAt = parseNullTime(submittedAt)
-		m.ApprovedAt = parseNullTime(approvedAt)
-		m.DisputedAt = parseNullTime(disputedAt)
+		m.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at in GetMilestonesByEscrow: %w", err)
+		}
+		m.UpdatedAt, err = time.Parse("2006-01-02 15:04:05", updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse updated_at in GetMilestonesByEscrow: %w", err)
+		}
+		m.SubmittedAt, err = parseNullTime(submittedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse submitted_at in GetMilestonesByEscrow: %w", err)
+		}
+		m.ApprovedAt, err = parseNullTime(approvedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse approved_at in GetMilestonesByEscrow: %w", err)
+		}
+		m.DisputedAt, err = parseNullTime(disputedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse disputed_at in GetMilestonesByEscrow: %w", err)
+		}
 		milestones = append(milestones, m)
 	}
 	return milestones, rows.Err()
@@ -451,13 +481,13 @@ func (d *DB) UpdateMilestoneSubmission(escrowID int64, milestoneIndex int, hash,
 	return err
 }
 
-func parseNullTime(ns sql.NullString) *time.Time {
+func parseNullTime(ns sql.NullString) (*time.Time, error) {
 	if !ns.Valid || ns.String == "" {
-		return nil
+		return nil, nil
 	}
 	t, err := time.Parse("2006-01-02 15:04:05", ns.String)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return &t
+	return &t, nil
 }

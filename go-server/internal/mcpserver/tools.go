@@ -380,7 +380,10 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 
 	addr := common.HexToAddress(escrow.EscrowAddress)
 
-	if escrow.MilestoneCount > 1 && args.MilestoneIndex != "" {
+	if escrow.MilestoneCount > 1 {
+		if args.MilestoneIndex == "" {
+			return textResult("milestone_index required for multi-milestone escrow"), nil, nil
+		}
 		msIdx, err := parseMilestoneIndex(args.MilestoneIndex)
 		if err != nil {
 			return textResult(err.Error()), nil, nil
@@ -414,7 +417,10 @@ func (s *Server) handleApproveWork(ctx context.Context, req *mcp.CallToolRequest
 
 	addr := common.HexToAddress(escrow.EscrowAddress)
 
-	if escrow.MilestoneCount > 1 && args.MilestoneIndex != "" {
+	if escrow.MilestoneCount > 1 {
+		if args.MilestoneIndex == "" {
+			return textResult("milestone_index required for multi-milestone escrow"), nil, nil
+		}
 		msIdx, err := parseMilestoneIndex(args.MilestoneIndex)
 		if err != nil {
 			return textResult(err.Error()), nil, nil
@@ -471,7 +477,10 @@ func (s *Server) handleDisputeWork(ctx context.Context, req *mcp.CallToolRequest
 
 	addr := common.HexToAddress(escrow.EscrowAddress)
 
-	if escrow.MilestoneCount > 1 && args.MilestoneIndex != "" {
+	if escrow.MilestoneCount > 1 {
+		if args.MilestoneIndex == "" {
+			return textResult("milestone_index required for multi-milestone escrow"), nil, nil
+		}
 		msIdx, err := parseMilestoneIndex(args.MilestoneIndex)
 		if err != nil {
 			return textResult(err.Error()), nil, nil
@@ -550,7 +559,10 @@ func (s *Server) handleResolveDispute(ctx context.Context, req *mcp.CallToolRequ
 
 	addr := common.HexToAddress(escrow.EscrowAddress)
 
-	if escrow.MilestoneCount > 1 && args.MilestoneIndex != "" {
+	if escrow.MilestoneCount > 1 {
+		if args.MilestoneIndex == "" {
+			return textResult("milestone_index required for multi-milestone escrow"), nil, nil
+		}
 		msIdx, err := parseMilestoneIndex(args.MilestoneIndex)
 		if err != nil {
 			return textResult(err.Error()), nil, nil
@@ -586,9 +598,10 @@ func (s *Server) handleGetEscrow(ctx context.Context, req *mcp.CallToolRequest, 
 
 	if escrow.MilestoneCount > 1 {
 		milestones, err := s.db.GetMilestonesByEscrow(escrowID)
-		if err == nil {
-			result["milestones"] = milestones
+		if err != nil {
+			return textResult(fmt.Sprintf("failed to fetch milestones for escrow %d: %v", escrowID, err)), nil, nil
 		}
+		result["milestones"] = milestones
 	}
 
 	return jsonResult(result)

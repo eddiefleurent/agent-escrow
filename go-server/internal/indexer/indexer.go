@@ -383,6 +383,10 @@ func (idx *Indexer) processEscrowLog(lg types.Log, dbEscrowID int64) error {
 		} else {
 			if err := idx.db.UpdateMilestoneStatus(dbEscrowID, msIdx, msStatus); err != nil {
 				slog.Warn("failed to update milestone status", "escrow_id", dbEscrowID, "milestone", msIdx, "status", msStatus, "error", err)
+			} else if msStatus == "approved" || msStatus == "resolved" || msStatus == "settled" || msStatus == "cancelled" {
+				if err := idx.db.UpdateEscrowMilestoneProgress(dbEscrowID, msIdx+1); err != nil {
+					slog.Warn("failed to advance current_milestone", "escrow_id", dbEscrowID, "next_milestone", msIdx+1, "error", err)
+				}
 			}
 		}
 	}
