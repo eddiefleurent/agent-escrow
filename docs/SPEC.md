@@ -87,8 +87,8 @@ V1 default values:
 - `address public worker`
 - `address public verifier`
 - `address public arbitrator`
-- `uint256 public amount`
-- `uint256 public workerStake` (anti-Sybil bond; 0 = no stake required)
+- `uint256 public immutable amount`
+- `uint256 public immutable workerStake` (anti-Sybil bond; 0 = no stake required)
 - `bool public workerStaked` (true after worker calls `depositStake()`)
 - `uint64 public submissionDeadline`
 - `uint64 public reviewPeriodSeconds`
@@ -584,11 +584,11 @@ event RemainingMilestonesAborted(uint8 fromIndex, uint256 refundAmount);
 #### 21.8 Constraints and Invariants
 
 - Maximum milestone count: 16 (prevents gas exhaustion in loops; sufficient for practical task decomposition).
-- Milestone amounts must sum to `totalAmount` exactly.
+- Milestone amounts must sum to `amount` exactly.
 - Milestones must be processed in order: `milestoneIndex` must equal `currentMilestone` for submit/approve/dispute operations.
 - Each milestone's `submissionDeadline` must be strictly after the previous milestone's deadline.
 - `abortRemainingMilestones()` can only be called by the buyer, and only after the current milestone reaches `Disputed` → `Resolved` or `Cancelled` (timeout). It cannot be called while a milestone is in `Pending` or `Submitted` state with time remaining.
-- Conservation of funds: sum of all milestone payouts + refunds + fees + remaining stake = `totalAmount + workerStake`.
+- Conservation of funds: sum of all milestone payouts + refunds + fees + remaining stake = `amount + workerStake`.
 - Single-milestone escrows (milestoneCount = 1) must behave identically to V1 escrows. This is the backward compatibility requirement.
 
 #### 21.9 Arbitrator Timeout (Milestone Mode)

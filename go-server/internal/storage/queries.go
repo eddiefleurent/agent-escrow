@@ -184,12 +184,19 @@ func (d *DB) queryEscrows(query string, args ...any) ([]*Escrow, error) {
 }
 
 func (d *DB) UpdateEscrowMilestoneProgress(id int64, currentMilestone int) error {
-	_, err := d.db.Exec(
+	res, err := d.db.Exec(
 		`UPDATE escrows SET current_milestone = ?, updated_at = datetime('now') WHERE id = ?`,
 		currentMilestone, id,
 	)
 	if err != nil {
 		return fmt.Errorf("UpdateEscrowMilestoneProgress: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("UpdateEscrowMilestoneProgress rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("UpdateEscrowMilestoneProgress id=%d: %w", id, sql.ErrNoRows)
 	}
 	return nil
 }
