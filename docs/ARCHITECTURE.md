@@ -296,7 +296,7 @@ Roles are immutable per escrow in V1.
 
 - Protocol fee: basis points on successful payout (snapshotted at escrow creation to prevent governance races).
 - ETH and ERC20 (originally planned for V2, now part of the current baseline).
-- `workerStake`: optional anti-Sybil bond the worker deposits before submission (paper §4.8). Set at escrow creation; 0 means no stake required. On approval, stake is returned to worker. On dispute resolution, stake follows the same proportional split as payment. On timeout/arbitrator timeout, stake is forfeited to buyer.
+- `workerStake`: optional anti-Sybil bond the worker deposits before submission (paper §4.8). Set at escrow creation; 0 means no stake required. If approved, the stake is returned to the worker in full; disputed stakes follow the same proportional split as payment; on timeout or arbitrator timeout, the stake is forfeited to the buyer.
 
 ### Trust Model
 

@@ -132,11 +132,8 @@ Do not create new documentation files unless explicitly requested. Prefer updati
 
 - `workerStake` is an optional anti-Sybil bond set at escrow creation (paper §4.8). `0` means no stake required.
 - When `workerStake > 0`, the worker must call `depositStake()` after funding and before `submit()`.
-- ETH stake: `depositStake{value: workerStake}()`.
-- ERC20 stake: worker approves token first, then `depositStake()` (contract calls `transferFrom`).
-- On approval: stake returned to worker in full.
-- On dispute resolution: stake follows the same proportional split as payment (`workerAwardBps`).
-- On timeout / arbitrator timeout: stake forfeited to buyer.
+- ETH stake: `depositStake{value: workerStake}()`. ERC20 stake: worker approves the token first, then calls `depositStake()` (contract pulls via `transferFrom`).
+- If approved, the stake is returned to the worker in full. Disputed stakes follow the same proportional split as payment (`workerAwardBps`). On timeout or arbitrator timeout, the stake is forfeited to the buyer.
 
 ## ERC20 Token Support
 

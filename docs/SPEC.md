@@ -112,18 +112,22 @@ Design notes:
 ## 7) Contract Interfaces
 ## 7.1 Factory
 ```solidity
-function createEscrow(
-    address buyer,
-    address worker,
-    address verifier,
-    address arbitrator,
-    uint256 amount,
-    uint64 submissionDeadline,
-    uint64 reviewPeriodSeconds,
-    uint64 disputePeriodSeconds,
-    bytes32 taskSpecHash,
-    uint64 arbitratorTimeoutSeconds
-) external returns (uint256 escrowId, address escrow);
+struct CreateParams {
+    address buyer;
+    address worker;
+    address verifier;
+    address arbitrator;
+    uint256 amount;
+    uint256 workerStake;
+    uint64 submissionDeadline;
+    uint64 reviewPeriodSeconds;
+    uint64 disputePeriodSeconds;
+    bytes32 taskSpecHash;
+    uint64 arbitratorTimeoutSeconds;
+    address token;
+}
+
+function createEscrow(CreateParams calldata p) external returns (uint256 escrowId, address escrow);
 
 function setProtocolFeeBps(uint16 newFeeBps) external;
 function setTreasury(address newTreasury) external;
