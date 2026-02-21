@@ -14,20 +14,26 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+type milestoneArg struct {
+	Amount             string `json:"amount" jsonschema:"Milestone amount in wei or smallest unit"`
+	SubmissionDeadline string `json:"submission_deadline" jsonschema:"Unix timestamp for milestone submission deadline"`
+}
+
 type createEscrowArgs struct {
-	Title                    string `json:"title" jsonschema:"Task title"`
-	Description              string `json:"description" jsonschema:"Task description"`
-	Buyer                    string `json:"buyer" jsonschema:"Buyer address"`
-	Worker                   string `json:"worker" jsonschema:"Worker address"`
-	Verifier                 string `json:"verifier" jsonschema:"Verifier address"`
-	Arbitrator               string `json:"arbitrator" jsonschema:"Arbitrator address"`
-	Amount                   string `json:"amount" jsonschema:"Amount in wei (ETH) or smallest unit (ERC20)"`
-	WorkerStake              string `json:"worker_stake,omitempty" jsonschema:"Worker anti-Sybil stake in wei or smallest unit; omit or 0 for no stake"`
-	SubmissionDeadline       string `json:"submission_deadline" jsonschema:"Unix timestamp for submission deadline"`
-	ReviewPeriodSeconds      string `json:"review_period_seconds" jsonschema:"Review period in seconds"`
-	DisputePeriodSeconds     string `json:"dispute_period_seconds" jsonschema:"Dispute period in seconds"`
-	ArbitratorTimeoutSeconds string `json:"arbitrator_timeout_seconds" jsonschema:"Arbitrator timeout in seconds"`
-	Token                    string `json:"token,omitempty" jsonschema:"ERC20 token address; omit or use 0x0000000000000000000000000000000000000000 for ETH"`
+	Title                    string         `json:"title" jsonschema:"Task title"`
+	Description              string         `json:"description" jsonschema:"Task description"`
+	Buyer                    string         `json:"buyer" jsonschema:"Buyer address"`
+	Worker                   string         `json:"worker" jsonschema:"Worker address"`
+	Verifier                 string         `json:"verifier" jsonschema:"Verifier address"`
+	Arbitrator               string         `json:"arbitrator" jsonschema:"Arbitrator address"`
+	Amount                   string         `json:"amount" jsonschema:"Total amount in wei (ETH) or smallest unit (ERC20)"`
+	WorkerStake              string         `json:"worker_stake,omitempty" jsonschema:"Worker anti-Sybil stake in wei or smallest unit; omit or 0 for no stake"`
+	SubmissionDeadline       string         `json:"submission_deadline" jsonschema:"Unix timestamp for submission deadline"`
+	ReviewPeriodSeconds      string         `json:"review_period_seconds" jsonschema:"Review period in seconds"`
+	DisputePeriodSeconds     string         `json:"dispute_period_seconds" jsonschema:"Dispute period in seconds"`
+	ArbitratorTimeoutSeconds string         `json:"arbitrator_timeout_seconds" jsonschema:"Arbitrator timeout in seconds"`
+	Token                    string         `json:"token,omitempty" jsonschema:"ERC20 token address; omit or use 0x0000000000000000000000000000000000000000 for ETH"`
+	Milestones               []milestoneArg `json:"milestones,omitempty" jsonschema:"Optional array of milestones; omit for single-milestone (V1) escrow"`
 }
 
 type escrowIDArgs struct {
@@ -35,25 +41,29 @@ type escrowIDArgs struct {
 }
 
 type submitArgs struct {
-	EscrowID      string `json:"escrow_id" jsonschema:"Database escrow ID"`
-	SubmissionURI string `json:"submission_uri" jsonschema:"URI of submission"`
+	EscrowID       string `json:"escrow_id" jsonschema:"Database escrow ID"`
+	SubmissionURI  string `json:"submission_uri" jsonschema:"URI of submission"`
+	MilestoneIndex string `json:"milestone_index,omitempty" jsonschema:"Milestone index (required for multi-milestone escrows)"`
 }
 
 type approveArgs struct {
-	EscrowID string `json:"escrow_id" jsonschema:"Database escrow ID"`
-	Role     string `json:"role" jsonschema:"Role: buyer or verifier"`
+	EscrowID       string `json:"escrow_id" jsonschema:"Database escrow ID"`
+	Role           string `json:"role" jsonschema:"Role: buyer or verifier"`
+	MilestoneIndex string `json:"milestone_index,omitempty" jsonschema:"Milestone index (required for multi-milestone escrows)"`
 }
 
 type disputeArgs struct {
-	EscrowID  string `json:"escrow_id" jsonschema:"Database escrow ID"`
-	Role      string `json:"role" jsonschema:"Role: buyer, verifier, or worker"`
-	ReasonURI string `json:"reason_uri" jsonschema:"URI describing reason"`
+	EscrowID       string `json:"escrow_id" jsonschema:"Database escrow ID"`
+	Role           string `json:"role" jsonschema:"Role: buyer, verifier, or worker"`
+	ReasonURI      string `json:"reason_uri" jsonschema:"URI describing reason"`
+	MilestoneIndex string `json:"milestone_index,omitempty" jsonschema:"Milestone index (required for multi-milestone escrows)"`
 }
 
 type resolveArgs struct {
 	EscrowID       string `json:"escrow_id" jsonschema:"Database escrow ID"`
 	WorkerAwardBps string `json:"worker_award_bps" jsonschema:"Worker award basis points 0-10000"`
 	ResolutionURI  string `json:"resolution_uri" jsonschema:"URI of resolution"`
+	MilestoneIndex string `json:"milestone_index,omitempty" jsonschema:"Milestone index (required for multi-milestone escrows)"`
 }
 
 type listArgs struct {
@@ -107,6 +117,11 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Name:        "list_escrows",
 		Description: "List escrows, optionally filtered by role and status",
 	}, s.handleListEscrows)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "abort_remaining_milestones",
+		Description: "Abort remaining milestones after a terminal failure (buyer only, multi-milestone escrows)",
+	}, s.handleAbortRemainingMilestones)
 }
 
 func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolRequest, args createEscrowArgs) (*mcp.CallToolResult, any, error) {
@@ -150,6 +165,22 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		tokenAddr = common.HexToAddress(args.Token)
 	}
 
+	var milestones []chain.MilestoneParam
+	for _, m := range args.Milestones {
+		msAmount, ok := new(big.Int).SetString(m.Amount, 10)
+		if !ok {
+			return textResult(fmt.Sprintf("invalid milestone amount: %s", m.Amount)), nil, nil
+		}
+		msDeadline, err := strconv.ParseUint(m.SubmissionDeadline, 10, 64)
+		if err != nil {
+			return textResult(fmt.Sprintf("invalid milestone submission_deadline: %v", err)), nil, nil
+		}
+		milestones = append(milestones, chain.MilestoneParam{
+			Amount:             msAmount,
+			SubmissionDeadline: msDeadline,
+		})
+	}
+
 	factory := common.HexToAddress(s.cfg.FactoryAddress)
 	params := chain.CreateEscrowParams{
 		Buyer:                    common.HexToAddress(args.Buyer),
@@ -164,6 +195,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		TaskSpecHash:             specHash,
 		ArbitratorTimeoutSeconds: arbTimeout,
 		Token:                    tokenAddr,
+		Milestones:               milestones,
 	}
 
 	tx, err := s.chain.CreateEscrow(ctx, factory, params)
@@ -179,6 +211,11 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 	task, err := s.db.CreateTask(args.Title, args.Description, specHash.Hex())
 	if err != nil {
 		return textResult(fmt.Sprintf("db error: %v", err)), nil, nil
+	}
+
+	milestoneCount := 1
+	if len(milestones) > 0 {
+		milestoneCount = len(milestones)
 	}
 
 	escrow, err := s.db.CreateEscrow(&storage.Escrow{
@@ -199,9 +236,24 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		ReviewPeriodSeconds:      int64(review),
 		DisputePeriodSeconds:     int64(dispute),
 		ArbitratorTimeoutSeconds: int64(arbTimeout),
+		MilestoneCount:           milestoneCount,
+		CurrentMilestone:         0,
 	})
 	if err != nil {
 		return textResult(fmt.Sprintf("db error: %v", err)), nil, nil
+	}
+
+	for i, m := range milestones {
+		_, err := s.db.CreateMilestone(&storage.MilestoneRecord{
+			EscrowID:           escrow.ID,
+			MilestoneIndex:     i,
+			Amount:             m.Amount.String(),
+			SubmissionDeadline: int64(m.SubmissionDeadline),
+			Status:             "pending",
+		})
+		if err != nil {
+			return textResult(fmt.Sprintf("db error creating milestone %d: %v", i, err)), nil, nil
+		}
 	}
 
 	_ = s.idx.RunOnce(ctx)
@@ -212,6 +264,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		"task_id":         task.ID,
 		"escrow_address":  result.EscrowAddress.Hex(),
 		"chain_escrow_id": result.EscrowID,
+		"milestone_count": milestoneCount,
 	})
 }
 
@@ -325,7 +378,22 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 	var hashBytes [32]byte
 	copy(hashBytes[:], hash.Bytes())
 
-	tx, err := s.chain.Submit(ctx, common.HexToAddress(escrow.EscrowAddress), hashBytes, args.SubmissionURI)
+	addr := common.HexToAddress(escrow.EscrowAddress)
+
+	if escrow.MilestoneCount > 1 && args.MilestoneIndex != "" {
+		msIdx, err := parseMilestoneIndex(args.MilestoneIndex)
+		if err != nil {
+			return textResult(err.Error()), nil, nil
+		}
+		tx, err := s.chain.SubmitMilestone(ctx, addr, msIdx, hashBytes, args.SubmissionURI)
+		if err != nil {
+			return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+		}
+		_ = s.idx.RunOnce(ctx)
+		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+	}
+
+	tx, err := s.chain.Submit(ctx, addr, hashBytes, args.SubmissionURI)
 	if err != nil {
 		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
 	}
@@ -345,6 +413,32 @@ func (s *Server) handleApproveWork(ctx context.Context, req *mcp.CallToolRequest
 	}
 
 	addr := common.HexToAddress(escrow.EscrowAddress)
+
+	if escrow.MilestoneCount > 1 && args.MilestoneIndex != "" {
+		msIdx, err := parseMilestoneIndex(args.MilestoneIndex)
+		if err != nil {
+			return textResult(err.Error()), nil, nil
+		}
+		switch args.Role {
+		case "buyer":
+			tx, err := s.chain.ApproveMilestoneByBuyer(ctx, addr, msIdx)
+			if err != nil {
+				return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+			}
+			_ = s.idx.RunOnce(ctx)
+			return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+		case "verifier":
+			tx, err := s.chain.ApproveMilestoneByVerifier(ctx, addr, msIdx)
+			if err != nil {
+				return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+			}
+			_ = s.idx.RunOnce(ctx)
+			return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+		default:
+			return textResult("role must be 'buyer' or 'verifier'"), nil, nil
+		}
+	}
+
 	switch args.Role {
 	case "buyer":
 		tx, err := s.chain.ApproveByBuyer(ctx, addr)
@@ -376,6 +470,39 @@ func (s *Server) handleDisputeWork(ctx context.Context, req *mcp.CallToolRequest
 	}
 
 	addr := common.HexToAddress(escrow.EscrowAddress)
+
+	if escrow.MilestoneCount > 1 && args.MilestoneIndex != "" {
+		msIdx, err := parseMilestoneIndex(args.MilestoneIndex)
+		if err != nil {
+			return textResult(err.Error()), nil, nil
+		}
+		switch args.Role {
+		case "buyer":
+			tx, err := s.chain.DisputeMilestone(ctx, addr, msIdx, args.ReasonURI)
+			if err != nil {
+				return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+			}
+			_ = s.idx.RunOnce(ctx)
+			return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+		case "verifier":
+			tx, err := s.chain.RejectMilestoneByVerifier(ctx, addr, msIdx, args.ReasonURI)
+			if err != nil {
+				return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+			}
+			_ = s.idx.RunOnce(ctx)
+			return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+		case "worker":
+			tx, err := s.chain.EscalateMilestoneSilence(ctx, addr, msIdx, args.ReasonURI)
+			if err != nil {
+				return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+			}
+			_ = s.idx.RunOnce(ctx)
+			return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+		default:
+			return textResult("role must be 'buyer', 'verifier', or 'worker'"), nil, nil
+		}
+	}
+
 	switch args.Role {
 	case "buyer":
 		tx, err := s.chain.Dispute(ctx, addr, args.ReasonURI)
@@ -421,7 +548,22 @@ func (s *Server) handleResolveDispute(ctx context.Context, req *mcp.CallToolRequ
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
 
-	tx, err := s.chain.ResolveDispute(ctx, common.HexToAddress(escrow.EscrowAddress), uint16(bps), args.ResolutionURI)
+	addr := common.HexToAddress(escrow.EscrowAddress)
+
+	if escrow.MilestoneCount > 1 && args.MilestoneIndex != "" {
+		msIdx, err := parseMilestoneIndex(args.MilestoneIndex)
+		if err != nil {
+			return textResult(err.Error()), nil, nil
+		}
+		tx, err := s.chain.ResolveMilestoneDispute(ctx, addr, msIdx, uint16(bps), args.ResolutionURI)
+		if err != nil {
+			return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+		}
+		_ = s.idx.RunOnce(ctx)
+		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+	}
+
+	tx, err := s.chain.ResolveDispute(ctx, addr, uint16(bps), args.ResolutionURI)
 	if err != nil {
 		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
 	}
@@ -439,7 +581,17 @@ func (s *Server) handleGetEscrow(ctx context.Context, req *mcp.CallToolRequest, 
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
-	return jsonResult(escrow)
+
+	result := map[string]any{"escrow": escrow}
+
+	if escrow.MilestoneCount > 1 {
+		milestones, err := s.db.GetMilestonesByEscrow(escrowID)
+		if err == nil {
+			result["milestones"] = milestones
+		}
+	}
+
+	return jsonResult(result)
 }
 
 func (s *Server) handleListEscrows(ctx context.Context, req *mcp.CallToolRequest, args listArgs) (*mcp.CallToolResult, any, error) {
@@ -448,6 +600,36 @@ func (s *Server) handleListEscrows(ctx context.Context, req *mcp.CallToolRequest
 		return textResult(fmt.Sprintf("error: %v", err)), nil, nil
 	}
 	return jsonResult(escrows)
+}
+
+func (s *Server) handleAbortRemainingMilestones(ctx context.Context, req *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
+	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+	}
+	escrow, err := s.db.GetEscrow(escrowID)
+	if err != nil {
+		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
+	}
+	if escrow.MilestoneCount <= 1 {
+		return textResult("abort_remaining_milestones is only available for multi-milestone escrows"), nil, nil
+	}
+
+	tx, err := s.chain.AbortRemainingMilestones(ctx, common.HexToAddress(escrow.EscrowAddress))
+	if err != nil {
+		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+	}
+
+	_ = s.idx.RunOnce(ctx)
+	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+}
+
+func parseMilestoneIndex(s string) (uint8, error) {
+	v, err := strconv.ParseUint(s, 10, 8)
+	if err != nil {
+		return 0, fmt.Errorf("invalid milestone_index: %v", err)
+	}
+	return uint8(v), nil
 }
 
 func textResult(text string) *mcp.CallToolResult {
