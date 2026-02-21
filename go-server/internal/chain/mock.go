@@ -55,6 +55,18 @@ type MockClient struct {
 	ClaimArbitratorTimeErr error
 	StatusVal              uint8
 	StatusErr              error
+
+	// Milestone-specific error fields
+	SubmitMilestoneErr              error
+	ApproveMilestoneBuyerErr        error
+	ApproveMilestoneVerifierErr     error
+	RejectMilestoneVerifierErr      error
+	DisputeMilestoneErr             error
+	EscalateMilestoneSilenceErr     error
+	ResolveMilestoneDisputeErr      error
+	ClaimMilestoneTimeoutErr        error
+	ClaimMilestoneArbitratorTimeErr error
+	AbortRemainingMilestonesErr     error
 }
 
 type MockTxRecord struct {
@@ -284,6 +296,106 @@ func (m *MockClient) Status(_ context.Context, _ common.Address) (uint8, error) 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.StatusVal, m.StatusErr
+}
+
+func (m *MockClient) SubmitMilestone(_ context.Context, addr common.Address, idx uint8, _ [32]byte, _ string) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.SubmitMilestoneErr != nil {
+		return nil, m.SubmitMilestoneErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "submitMilestone", To: addr})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) ApproveMilestoneByBuyer(_ context.Context, addr common.Address, _ uint8) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ApproveMilestoneBuyerErr != nil {
+		return nil, m.ApproveMilestoneBuyerErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "approveMilestoneByBuyer", To: addr})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) ApproveMilestoneByVerifier(_ context.Context, addr common.Address, _ uint8) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ApproveMilestoneVerifierErr != nil {
+		return nil, m.ApproveMilestoneVerifierErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "approveMilestoneByVerifier", To: addr})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) RejectMilestoneByVerifier(_ context.Context, addr common.Address, _ uint8, _ string) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.RejectMilestoneVerifierErr != nil {
+		return nil, m.RejectMilestoneVerifierErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "rejectMilestoneByVerifier", To: addr})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) DisputeMilestone(_ context.Context, addr common.Address, _ uint8, _ string) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.DisputeMilestoneErr != nil {
+		return nil, m.DisputeMilestoneErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "disputeMilestone", To: addr})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) EscalateMilestoneSilence(_ context.Context, addr common.Address, _ uint8, _ string) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.EscalateMilestoneSilenceErr != nil {
+		return nil, m.EscalateMilestoneSilenceErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "escalateMilestoneSilence", To: addr})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) ResolveMilestoneDispute(_ context.Context, addr common.Address, _ uint8, _ uint16, _ string) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ResolveMilestoneDisputeErr != nil {
+		return nil, m.ResolveMilestoneDisputeErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "resolveMilestoneDispute", To: addr})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) ClaimMilestoneTimeoutRefund(_ context.Context, addr common.Address, _ uint8) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ClaimMilestoneTimeoutErr != nil {
+		return nil, m.ClaimMilestoneTimeoutErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "claimMilestoneTimeoutRefund", To: addr})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) ClaimMilestoneArbitratorTimeout(_ context.Context, addr common.Address, _ uint8) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ClaimMilestoneArbitratorTimeErr != nil {
+		return nil, m.ClaimMilestoneArbitratorTimeErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "claimMilestoneArbitratorTimeout", To: addr})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) AbortRemainingMilestones(_ context.Context, addr common.Address) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.AbortRemainingMilestonesErr != nil {
+		return nil, m.AbortRemainingMilestonesErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "abortRemainingMilestones", To: addr})
+	return makeFakeTx(), nil
 }
 
 // MakeEscrowCreatedReceipt builds a fake receipt containing an EscrowCreated event log

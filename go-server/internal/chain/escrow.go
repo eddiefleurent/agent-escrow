@@ -125,3 +125,85 @@ func (c *Client) Status(ctx context.Context, escrow common.Address) (uint8, erro
 	}
 	return values[0].(uint8), nil
 }
+
+// Milestone-specific operations (V2 multi-milestone)
+
+func (c *Client) SubmitMilestone(ctx context.Context, escrow common.Address, milestoneIndex uint8, submissionHash [32]byte, submissionURI string) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("submitMilestone", milestoneIndex, submissionHash, submissionURI)
+	if err != nil {
+		return nil, fmt.Errorf("pack submitMilestone: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, nil)
+}
+
+func (c *Client) ApproveMilestoneByBuyer(ctx context.Context, escrow common.Address, milestoneIndex uint8) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("approveMilestoneByBuyer", milestoneIndex)
+	if err != nil {
+		return nil, fmt.Errorf("pack approveMilestoneByBuyer: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, nil)
+}
+
+func (c *Client) ApproveMilestoneByVerifier(ctx context.Context, escrow common.Address, milestoneIndex uint8) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("approveMilestoneByVerifier", milestoneIndex)
+	if err != nil {
+		return nil, fmt.Errorf("pack approveMilestoneByVerifier: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, nil)
+}
+
+func (c *Client) RejectMilestoneByVerifier(ctx context.Context, escrow common.Address, milestoneIndex uint8, reasonURI string) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("rejectMilestoneByVerifier", milestoneIndex, reasonURI)
+	if err != nil {
+		return nil, fmt.Errorf("pack rejectMilestoneByVerifier: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, nil)
+}
+
+func (c *Client) DisputeMilestone(ctx context.Context, escrow common.Address, milestoneIndex uint8, reasonURI string) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("disputeMilestone", milestoneIndex, reasonURI)
+	if err != nil {
+		return nil, fmt.Errorf("pack disputeMilestone: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, nil)
+}
+
+func (c *Client) EscalateMilestoneSilence(ctx context.Context, escrow common.Address, milestoneIndex uint8, reasonURI string) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("escalateMilestoneSilence", milestoneIndex, reasonURI)
+	if err != nil {
+		return nil, fmt.Errorf("pack escalateMilestoneSilence: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, nil)
+}
+
+func (c *Client) ResolveMilestoneDispute(ctx context.Context, escrow common.Address, milestoneIndex uint8, workerAwardBps uint16, resolutionURI string) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("resolveMilestoneDispute", milestoneIndex, workerAwardBps, resolutionURI)
+	if err != nil {
+		return nil, fmt.Errorf("pack resolveMilestoneDispute: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, nil)
+}
+
+func (c *Client) ClaimMilestoneTimeoutRefund(ctx context.Context, escrow common.Address, milestoneIndex uint8) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("claimMilestoneTimeoutRefund", milestoneIndex)
+	if err != nil {
+		return nil, fmt.Errorf("pack claimMilestoneTimeoutRefund: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, nil)
+}
+
+func (c *Client) ClaimMilestoneArbitratorTimeout(ctx context.Context, escrow common.Address, milestoneIndex uint8) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("claimMilestoneArbitratorTimeout", milestoneIndex)
+	if err != nil {
+		return nil, fmt.Errorf("pack claimMilestoneArbitratorTimeout: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, nil)
+}
+
+func (c *Client) AbortRemainingMilestones(ctx context.Context, escrow common.Address) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("abortRemainingMilestones")
+	if err != nil {
+		return nil, fmt.Errorf("pack abortRemainingMilestones: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, nil)
+}
