@@ -79,6 +79,12 @@ func NewWebhookHandler(idx *indexer.Indexer, secret string) *WebhookHandler {
 
 // HandleCDPWebhook is the HTTP handler for POST /webhooks/cdp.
 func (wh *WebhookHandler) HandleCDPWebhook(w http.ResponseWriter, r *http.Request) {
+	if wh.secret == "" {
+		slog.Error("webhook: secret is not configured — rejecting request")
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "webhook secret not configured"})
+		return
+	}
+
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxWebhookBodySize))
 	if err != nil {
 		slog.Error("webhook: failed to read body", "error", err)
@@ -150,7 +156,7 @@ func (wh *WebhookHandler) processWebhookEvent(payload cdpWebhookPayload) error {
 		return fmt.Errorf("invalid blockNumber %q: %w", data.BlockNumber.String(), err)
 	}
 
-	// Deduplicate: use the same chain_log mechanism as the polling indexer
+	// Deduplicate: use the same chain_log mechanism as the polling indexer.
 	exists, err := db.ChainLogExists(data.TransactionHash, logIdx)
 	if err != nil {
 		return fmt.Errorf("check chain log: %w", err)
@@ -159,19 +165,26 @@ func (wh *WebhookHandler) processWebhookEvent(payload cdpWebhookPayload) error {
 		return nil
 	}
 
+	// Run the handler before recording the chain log so that a handler failure
+	// doesn't permanently mark the event as processed (which would drop it on retry).
+	var handlerErr error
+	switch data.EventName {
+	case "EscrowCreated":
+		handlerErr = wh.handleEscrowCreated(data)
+	case "OutcomeRecorded":
+		handlerErr = wh.handleOutcomeRecorded(data)
+	default:
+		slog.Info("webhook: ignoring unhandled factory event", "event_name", data.EventName)
+	}
+	if handlerErr != nil {
+		return handlerErr
+	}
+
 	if err := db.CreateChainLog(data.TransactionHash, logIdx, blockNum, data.EventName, data.ContractAddress, ""); err != nil {
 		return fmt.Errorf("create chain log: %w", err)
 	}
 
-	switch data.EventName {
-	case "EscrowCreated":
-		return wh.handleEscrowCreated(data)
-	case "OutcomeRecorded":
-		return wh.handleOutcomeRecorded(data)
-	default:
-		slog.Info("webhook: ignoring unhandled factory event", "event_name", data.EventName)
-		return nil
-	}
+	return nil
 }
 
 // handleEscrowCreated processes an EscrowCreated event from the CDP webhook.
@@ -179,12 +192,10 @@ func (wh *WebhookHandler) processWebhookEvent(payload cdpWebhookPayload) error {
 func (wh *WebhookHandler) handleEscrowCreated(data cdpWebhookEventData) error {
 	db := wh.idx.DB()
 
-	escrowAddr := data.Escrow
-	if escrowAddr == "" {
-		return fmt.Errorf("EscrowCreated: missing escrow address")
+	if !common.IsHexAddress(data.Escrow) {
+		return fmt.Errorf("EscrowCreated: invalid escrow address: %q", data.Escrow)
 	}
-	// Normalize to checksummed form
-	escrowAddr = common.HexToAddress(escrowAddr).Hex()
+	escrowAddr := common.HexToAddress(data.Escrow).Hex()
 
 	// Check if escrow already exists (e.g. created via API/MCP handler)
 	_, err := db.GetEscrowByAddress(escrowAddr)
@@ -201,8 +212,8 @@ func (wh *WebhookHandler) handleEscrowCreated(data cdpWebhookEventData) error {
 		{"verifier", data.Verifier},
 		{"arbitrator", data.Arbitrator},
 	} {
-		if pair.val == "" {
-			return fmt.Errorf("EscrowCreated: missing %s address", pair.name)
+		if !common.IsHexAddress(pair.val) {
+			return fmt.Errorf("EscrowCreated: invalid %s address: %q", pair.name, pair.val)
 		}
 	}
 
@@ -222,6 +233,9 @@ func (wh *WebhookHandler) handleEscrowCreated(data cdpWebhookEventData) error {
 
 	tokenAddr := common.Address{}
 	if data.Token != "" {
+		if !common.IsHexAddress(data.Token) {
+			return fmt.Errorf("EscrowCreated: invalid token address: %q", data.Token)
+		}
 		tokenAddr = common.HexToAddress(data.Token)
 	}
 
@@ -264,10 +278,11 @@ func (wh *WebhookHandler) handleEscrowCreated(data cdpWebhookEventData) error {
 // handleOutcomeRecorded processes an OutcomeRecorded event from the CDP webhook.
 // Mirrors the logic in indexer.handleOutcomeRecorded.
 func (wh *WebhookHandler) handleOutcomeRecorded(data cdpWebhookEventData) error {
-	participant := data.Participant
-	if participant == "" {
-		return fmt.Errorf("OutcomeRecorded: missing participant")
+	if !common.IsHexAddress(data.Participant) {
+		return fmt.Errorf("OutcomeRecorded: invalid participant address: %q", data.Participant)
 	}
+
+	participant := strings.ToLower(common.HexToAddress(data.Participant).Hex())
 
 	slog.Info("webhook: outcome recorded",
 		"participant", participant,
@@ -275,11 +290,7 @@ func (wh *WebhookHandler) handleOutcomeRecorded(data cdpWebhookEventData) error 
 		"outcome", data.Outcome,
 	)
 
-	return wh.idx.DB().UpsertReputation(
-		strings.ToLower(common.HexToAddress(participant).Hex()),
-		data.Role,
-		data.Outcome,
-	)
+	return wh.idx.DB().UpsertReputation(participant, data.Role, data.Outcome)
 }
 
 // verifyCDPSignature verifies the HMAC-SHA256 signature from a CDP webhook.
