@@ -235,12 +235,14 @@ The factory records per-address outcome counters on-chain, implementing the pape
 | Outcome | Trigger | Description |
 |---|---|---|
 | `completed` | Approval path (single-shot or all milestones approved) | Task delivered and accepted |
-| `disputed` | Dispute resolution path, or mixed milestone outcomes | Task required arbitration or partial completion |
-| `failed` | Timeout refund, arbitrator timeout, cancel, or all milestones cancelled | Task not delivered or fully refunded |
+| `disputed` | Dispute resolution path, arbitrator timeout, or mixed milestone outcomes | Task required arbitration or was unresolved |
+| `failed` | Timeout refund, or all milestones cancelled | Task not delivered or fully refunded |
 
 ### Recording Mechanism
 
-The escrow contract calls `factory.recordOutcome(outcome)` on every terminal state transition. The factory validates that the caller is a registered escrow (via `escrowToId` reverse lookup), reads the buyer and active worker from stored mappings, and increments the appropriate counter in `workerReputation` and `buyerReputation`.
+The escrow contract calls `factory.recordOutcome(outcome)` on terminal state transitions that involve actual task activity. The factory validates that the caller is a registered escrow (via `escrowToId` reverse lookup), reads the buyer and active worker from stored mappings, and increments the appropriate counter in `workerReputation` and `buyerReputation`.
+
+Pre-funding cancellation (`cancelBeforeFunding`) does **not** record an outcome since no work was attempted and no funds were at risk.
 
 ### Backup Worker Attribution
 
@@ -277,7 +279,7 @@ Rationale (paper §4.3, §4.4): 24h/48h windows balance oversight with capital e
 - **Late submission**: reverts if `block.timestamp > submissionDeadline`.
 - **Approval/dispute race**: first confirmed transition wins; subsequent calls revert by status guard.
 - **Buyer inactivity after submission**: verifier can still approve within review window. Worker can escalate silence to Disputed after review window lapse; arbitrator remains final payout authority.
-- **Arbitrator inactivity**: buyer can claim full refund via `claimArbitratorTimeout()` after the configured timeout period.
+- **Arbitrator inactivity**: buyer can claim full refund via `claimArbitratorTimeout()` after the configured timeout period. This records a `disputed` outcome (not `failed`) since the arbitrator's inaction -- not the worker's performance -- caused the refund.
 - **ERC20 vs ETH**: `token == address(0)` means ETH-denominated. All settlement math is token-agnostic; the transfer mechanism differs.
 - **Zero worker stake**: `depositStake()` reverts. Submit proceeds without stake check.
 - **Abort eligibility**: `abortRemainingMilestones()` requires the current milestone to be in a terminal failure state (Resolved or Cancelled). Cannot abort while a milestone is actively in progress with time remaining.

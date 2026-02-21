@@ -2,7 +2,9 @@ package mcpserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -718,19 +720,25 @@ func (s *Server) handleGetReputation(ctx context.Context, req *mcp.CallToolReque
 	if args.Role != "" {
 		rep, err := s.db.GetReputation(addr, args.Role)
 		if err != nil {
-			return jsonResult(map[string]any{
-				"address":   addr,
-				"role":      args.Role,
-				"completed": 0,
-				"disputed":  0,
-				"failed":    0,
-			})
+			if errors.Is(err, sql.ErrNoRows) {
+				return jsonResult(map[string]any{
+					"address":   addr,
+					"role":      args.Role,
+					"completed": 0,
+					"disputed":  0,
+					"failed":    0,
+				})
+			}
+			return nil, nil, fmt.Errorf("get reputation: %w", err)
 		}
 		return jsonResult(rep)
 	}
 
 	reps, err := s.db.GetReputationByAddress(addr)
-	if err != nil || len(reps) == 0 {
+	if err != nil {
+		return nil, nil, fmt.Errorf("get reputation by address: %w", err)
+	}
+	if len(reps) == 0 {
 		return jsonResult([]map[string]any{
 			{"address": addr, "role": "worker", "completed": 0, "disputed": 0, "failed": 0},
 			{"address": addr, "role": "buyer", "completed": 0, "disputed": 0, "failed": 0},

@@ -65,6 +65,7 @@ contract TaskEscrow {
     error InvalidMilestoneDeadlineOrder();
     error BackupAlreadyActivated();
     error NoBackupDesignated();
+    error FactoryCallbackFailed();
 
     event EscrowFunded(address indexed buyer, uint256 amount);
     event WorkerStakeDeposited(address indexed worker, uint256 amount);
@@ -282,7 +283,6 @@ contract TaskEscrow {
         if (status != Status.Created) revert InvalidState();
         status = Status.Cancelled;
         emit Cancelled();
-        _recordOutcome(OUTCOME_FAILED);
     }
 
     function depositStake() external payable nonReentrant {
@@ -396,7 +396,7 @@ contract TaskEscrow {
         _send(buyer, amount + sf);
         emit ArbitratorTimeoutClaimed(msg.sender, uint64(block.timestamp));
         emit Refunded(amount, sf);
-        _recordOutcome(OUTCOME_FAILED);
+        _recordOutcome(OUTCOME_DISPUTED);
     }
 
     // ── Backup agent activation (paper §4.4) ──
@@ -744,7 +744,7 @@ contract TaskEscrow {
     function _recordOutcome(uint8 outcome) internal {
         if (factory != address(0)) {
             (bool ok,) = factory.call(abi.encodeWithSelector(ITaskEscrowFactory.recordOutcome.selector, outcome));
-            if (!ok) revert TransferFailed();
+            if (!ok) revert FactoryCallbackFailed();
         }
     }
 

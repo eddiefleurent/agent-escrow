@@ -132,8 +132,21 @@ func (wh *WebhookHandler) processWebhookEvent(payload cdpWebhookPayload) error {
 	data := payload.Data
 	db := wh.idx.DB()
 
+	if !common.IsHexAddress(data.ContractAddress) {
+		return fmt.Errorf("invalid contract address: %q", data.ContractAddress)
+	}
+
+	logIdx, err := strconv.Atoi(data.LogIndex.String())
+	if err != nil {
+		return fmt.Errorf("invalid logIndex %q: %w", data.LogIndex.String(), err)
+	}
+
+	blockNum, err := strconv.ParseInt(data.BlockNumber.String(), 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid blockNumber %q: %w", data.BlockNumber.String(), err)
+	}
+
 	// Deduplicate: use the same chain_log mechanism as the polling indexer
-	logIdx, _ := strconv.Atoi(data.LogIndex.String())
 	exists, err := db.ChainLogExists(data.TransactionHash, logIdx)
 	if err != nil {
 		return fmt.Errorf("check chain log: %w", err)
@@ -142,9 +155,6 @@ func (wh *WebhookHandler) processWebhookEvent(payload cdpWebhookPayload) error {
 		return nil
 	}
 
-	blockNum, _ := strconv.ParseInt(data.BlockNumber.String(), 10, 64)
-
-	// Record the chain log for deduplication
 	if err := db.CreateChainLog(data.TransactionHash, logIdx, blockNum, data.EventName, data.ContractAddress, ""); err != nil {
 		return fmt.Errorf("create chain log: %w", err)
 	}
@@ -183,7 +193,11 @@ func (wh *WebhookHandler) handleEscrowCreated(data cdpWebhookEventData) error {
 
 	var escrowID int64
 	if data.EscrowID != "" {
-		escrowID, _ = strconv.ParseInt(data.EscrowID, 10, 64)
+		var err error
+		escrowID, err = strconv.ParseInt(data.EscrowID, 10, 64)
+		if err != nil {
+			return fmt.Errorf("EscrowCreated: malformed escrowId %q: %w", data.EscrowID, err)
+		}
 	}
 
 	taskSpecHash := data.TaskSpecHash

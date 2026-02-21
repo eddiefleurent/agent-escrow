@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -826,10 +828,15 @@ func (h *Handlers) GetReputation(w http.ResponseWriter, r *http.Request) {
 	if role != "" {
 		rep, err := h.db.GetReputation(addr, role)
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{
-				"address": addr, "role": role,
-				"completed": 0, "disputed": 0, "failed": 0,
-			})
+			if errors.Is(err, sql.ErrNoRows) {
+				writeJSON(w, http.StatusOK, map[string]any{
+					"address": addr, "role": role,
+					"completed": 0, "disputed": 0, "failed": 0,
+				})
+				return
+			}
+			slog.Error("GetReputation DB error", "address", addr, "role", role, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 			return
 		}
 		writeJSON(w, http.StatusOK, rep)
@@ -837,7 +844,12 @@ func (h *Handlers) GetReputation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reps, err := h.db.GetReputationByAddress(addr)
-	if err != nil || len(reps) == 0 {
+	if err != nil {
+		slog.Error("GetReputationByAddress DB error", "address", addr, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	if len(reps) == 0 {
 		writeJSON(w, http.StatusOK, []map[string]any{
 			{"address": addr, "role": "worker", "completed": 0, "disputed": 0, "failed": 0},
 			{"address": addr, "role": "buyer", "completed": 0, "disputed": 0, "failed": 0},

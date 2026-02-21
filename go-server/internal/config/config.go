@@ -33,7 +33,7 @@ type Config struct {
 
 // WebhookMode reports whether CDP webhook mode is enabled (secret is configured).
 func (c *Config) WebhookMode() bool {
-	return c.CDPWebhookSecret != ""
+	return strings.TrimSpace(c.CDPWebhookSecret) != ""
 }
 
 func Load() (*Config, error) {

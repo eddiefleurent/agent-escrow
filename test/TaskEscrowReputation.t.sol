@@ -190,7 +190,7 @@ contract TaskEscrowReputationTest is Test {
 
     // ── Arbitrator timeout ──
 
-    function testArbitratorTimeoutRecordsFailed() public {
+    function testArbitratorTimeoutRecordsDisputed() public {
         (, TaskEscrow escrow) = _createEscrow();
 
         vm.prank(buyer);
@@ -206,31 +206,31 @@ contract TaskEscrowReputationTest is Test {
         escrow.claimArbitratorTimeout();
 
         (, uint32 wd, uint32 wf) = factory.getWorkerReputation(worker);
-        assertEq(wd, 0);
-        assertEq(wf, 1, "worker failed after arb timeout");
+        assertEq(wd, 1, "worker disputed after arb timeout");
+        assertEq(wf, 0);
 
         (, uint32 bd, uint32 bf) = factory.getBuyerReputation(buyer);
-        assertEq(bd, 0);
-        assertEq(bf, 1, "buyer failed after arb timeout");
+        assertEq(bd, 1, "buyer disputed after arb timeout");
+        assertEq(bf, 0);
     }
 
     // ── Cancel before funding ──
 
-    function testCancelBeforeFundingRecordsFailed() public {
+    function testCancelBeforeFundingNoReputation() public {
         (, TaskEscrow escrow) = _createEscrow();
 
         vm.prank(buyer);
         escrow.cancelBeforeFunding();
 
         (uint32 wc, uint32 wd, uint32 wf) = factory.getWorkerReputation(worker);
-        assertEq(wc, 0);
-        assertEq(wd, 0);
-        assertEq(wf, 1, "worker failed on cancel");
+        assertEq(wc, 0, "worker completed unchanged");
+        assertEq(wd, 0, "worker disputed unchanged");
+        assertEq(wf, 0, "worker failed unchanged");
 
         (uint32 bc, uint32 bd, uint32 bf) = factory.getBuyerReputation(buyer);
-        assertEq(bc, 0);
-        assertEq(bd, 0);
-        assertEq(bf, 1, "buyer failed on cancel");
+        assertEq(bc, 0, "buyer completed unchanged");
+        assertEq(bd, 0, "buyer disputed unchanged");
+        assertEq(bf, 0, "buyer failed unchanged");
     }
 
     // ── Backup activation + completion ──
