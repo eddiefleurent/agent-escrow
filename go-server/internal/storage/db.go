@@ -15,6 +15,9 @@ var migrationSQL string
 //go:embed migrations/002_add_milestones.sql
 var migration002SQL string
 
+//go:embed migrations/003_add_backup_agent.sql
+var migration003SQL string
+
 type DB struct {
 	db *sql.DB
 }
@@ -59,6 +62,27 @@ func Open(dsn string) (*DB, error) {
 		tx.Rollback()
 		sqlDB.Close()
 		return nil, fmt.Errorf("commit migration 002: %w", err)
+	}
+
+	// Run migration 003 (backup agent) idempotently
+	tx3, err := sqlDB.Begin()
+	if err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("begin migration 003 tx: %w", err)
+	}
+	for _, stmt := range splitStatements(migration003SQL) {
+		if _, err := tx3.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) {
+				tx3.Rollback()
+				sqlDB.Close()
+				return nil, fmt.Errorf("run migration 003: %w", err)
+			}
+		}
+	}
+	if err := tx3.Commit(); err != nil {
+		tx3.Rollback()
+		sqlDB.Close()
+		return nil, fmt.Errorf("commit migration 003: %w", err)
 	}
 
 	return &DB{db: sqlDB}, nil

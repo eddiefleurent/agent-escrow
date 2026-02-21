@@ -124,6 +124,8 @@ contract TaskEscrowInvariantsTest is StdInvariant, Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );

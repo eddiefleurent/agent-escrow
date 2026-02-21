@@ -46,6 +46,9 @@ type ChainClient interface {
 	ClaimMilestoneTimeoutRefund(ctx context.Context, escrow common.Address, milestoneIndex uint8) (*types.Transaction, error)
 	ClaimMilestoneArbitratorTimeout(ctx context.Context, escrow common.Address, milestoneIndex uint8) (*types.Transaction, error)
 	AbortRemainingMilestones(ctx context.Context, escrow common.Address) (*types.Transaction, error)
+
+	// Backup agent operations
+	ActivateBackup(ctx context.Context, escrow common.Address) (*types.Transaction, error)
 }
 
 // Compile-time check that *Client satisfies ChainClient.

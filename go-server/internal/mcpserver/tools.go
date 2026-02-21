@@ -34,6 +34,8 @@ type createEscrowArgs struct {
 	ArbitratorTimeoutSeconds string         `json:"arbitrator_timeout_seconds" jsonschema:"Arbitrator timeout in seconds"`
 	Token                    string         `json:"token,omitempty" jsonschema:"ERC20 token address; omit or use 0x0000000000000000000000000000000000000000 for ETH"`
 	Milestones               []milestoneArg `json:"milestones,omitempty" jsonschema:"Optional array of milestones; omit for single-milestone (V1) escrow"`
+	BackupWorker             string         `json:"backup_worker,omitempty" jsonschema:"Optional backup worker address; omit for no backup agent"`
+	BackupDeadlineExtension  string         `json:"backup_deadline_extension,omitempty" jsonschema:"Seconds to extend deadline when backup activates; omit or 0 for no extension"`
 }
 
 type escrowIDArgs struct {
@@ -122,6 +124,11 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Name:        "abort_remaining_milestones",
 		Description: "Abort remaining milestones after a terminal failure (buyer only, multi-milestone escrows)",
 	}, s.handleAbortRemainingMilestones)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "activate_backup",
+		Description: "Activate the backup worker, replacing the current worker (buyer only, requires backup_worker to be set at creation)",
+	}, s.handleActivateBackup)
 }
 
 func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolRequest, args createEscrowArgs) (*mcp.CallToolResult, any, error) {
@@ -181,6 +188,25 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		})
 	}
 
+	var backupWorkerAddr common.Address
+	if args.BackupWorker != "" {
+		if !common.IsHexAddress(args.BackupWorker) {
+			return textResult("invalid backup_worker address"), nil, nil
+		}
+		backupWorkerAddr = common.HexToAddress(args.BackupWorker)
+	}
+	var backupDeadlineExt uint64
+	if args.BackupDeadlineExtension != "" {
+		bde, err := strconv.ParseUint(args.BackupDeadlineExtension, 10, 64)
+		if err != nil {
+			return textResult(fmt.Sprintf("invalid backup_deadline_extension: %v", err)), nil, nil
+		}
+		backupDeadlineExt = bde
+	}
+	if backupDeadlineExt > 0 && (args.BackupWorker == "" || common.HexToAddress(args.BackupWorker) == (common.Address{})) {
+		return textResult("backup_deadline_extension set but no backup_worker provided"), nil, nil
+	}
+
 	factory := common.HexToAddress(s.cfg.FactoryAddress)
 	params := chain.CreateEscrowParams{
 		Buyer:                    common.HexToAddress(args.Buyer),
@@ -196,6 +222,8 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		ArbitratorTimeoutSeconds: arbTimeout,
 		Token:                    tokenAddr,
 		Milestones:               milestones,
+		BackupWorker:             backupWorkerAddr,
+		BackupDeadlineExtension:  backupDeadlineExt,
 	}
 
 	tx, err := s.chain.CreateEscrow(ctx, factory, params)
@@ -238,6 +266,9 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		ArbitratorTimeoutSeconds: int64(arbTimeout),
 		MilestoneCount:           milestoneCount,
 		CurrentMilestone:         0,
+		BackupWorker:             backupWorkerAddr.Hex(),
+		BackupDeadlineExtension:  int64(backupDeadlineExt),
+		ActiveWorker:             args.Worker,
 	})
 	if err != nil {
 		return textResult(fmt.Sprintf("db error: %v", err)), nil, nil
@@ -629,6 +660,32 @@ func (s *Server) handleAbortRemainingMilestones(ctx context.Context, req *mcp.Ca
 	}
 
 	tx, err := s.chain.AbortRemainingMilestones(ctx, common.HexToAddress(escrow.EscrowAddress))
+	if err != nil {
+		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+	}
+
+	_ = s.idx.RunOnce(ctx)
+	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+}
+
+func (s *Server) handleActivateBackup(ctx context.Context, req *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
+	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+	}
+	escrow, err := s.db.GetEscrow(escrowID)
+	if err != nil {
+		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
+	}
+
+	if escrow.BackupWorker == "" || escrow.BackupWorker == "0x0000000000000000000000000000000000000000" {
+		return textResult("this escrow has no backup worker designated"), nil, nil
+	}
+	if escrow.BackupActivated {
+		return textResult("backup already active"), nil, nil
+	}
+
+	tx, err := s.chain.ActivateBackup(ctx, common.HexToAddress(escrow.EscrowAddress))
 	if err != nil {
 		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
 	}

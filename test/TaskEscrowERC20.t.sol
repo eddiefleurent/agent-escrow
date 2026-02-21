@@ -173,6 +173,8 @@ contract TaskEscrowERC20Test is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(usdc),
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -214,6 +216,8 @@ contract TaskEscrowERC20Test is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -471,6 +475,8 @@ contract TaskEscrowERC20Test is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(fot),
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -620,6 +626,8 @@ contract TaskEscrowERC20Test is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(usdt),
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );

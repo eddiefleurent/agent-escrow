@@ -59,6 +59,8 @@ contract TaskEscrow {
     error TooManyMilestones();
     error MilestoneAmountMismatch();
     error InvalidMilestoneDeadlineOrder();
+    error BackupAlreadyActivated();
+    error NoBackupDesignated();
 
     event EscrowFunded(address indexed buyer, uint256 amount);
     event WorkerStakeDeposited(address indexed worker, uint256 amount);
@@ -82,6 +84,7 @@ contract TaskEscrow {
     event MilestoneSettled(uint8 indexed milestoneIndex, uint256 workerNet, uint256 buyerRefund, uint256 protocolFee);
     event MilestoneCancelled(uint8 indexed milestoneIndex);
     event RemainingMilestonesAborted(uint8 fromIndex, uint256 refundAmount);
+    event BackupActivated(address indexed previousWorker, address indexed newWorker, uint64 newDeadline);
 
     address public immutable token;
     address public immutable buyer;
@@ -97,6 +100,12 @@ contract TaskEscrow {
     uint16 public immutable protocolFeeBpsSnapshot;
     address public immutable treasurySnapshot;
     uint64 public immutable arbitratorTimeoutSeconds;
+    address public immutable backupWorker;
+    uint64 public immutable backupDeadlineExtension;
+
+    address public activeWorker;
+    bool public backupActivated;
+    uint64 public deadlineExtensionApplied;
 
     uint64 public submittedAt;
     uint64 public approvedAt;
@@ -133,6 +142,8 @@ contract TaskEscrow {
         address treasurySnapshot;
         uint64 arbitratorTimeoutSeconds;
         address token;
+        address backupWorker;
+        uint64 backupDeadlineExtension;
         CreateMilestoneParams[] milestones;
     }
 
@@ -150,6 +161,14 @@ contract TaskEscrow {
                 || p.worker == p.arbitrator || p.verifier == p.arbitrator
         ) {
             revert RolesNotDistinct();
+        }
+        if (p.backupWorker != address(0)) {
+            if (
+                p.backupWorker == p.buyer || p.backupWorker == p.worker || p.backupWorker == p.verifier
+                    || p.backupWorker == p.arbitrator
+            ) {
+                revert RolesNotDistinct();
+            }
         }
         if (p.amount == 0) revert InvalidAmount();
         if (p.submissionDeadline <= block.timestamp) revert InvalidDeadline();
@@ -169,6 +188,9 @@ contract TaskEscrow {
         treasurySnapshot = p.treasurySnapshot;
         arbitratorTimeoutSeconds = p.arbitratorTimeoutSeconds;
         token = p.token;
+        backupWorker = p.backupWorker;
+        backupDeadlineExtension = p.backupDeadlineExtension;
+        activeWorker = p.worker;
         status = Status.Created;
 
         _initMilestones(p);
@@ -252,7 +274,7 @@ contract TaskEscrow {
     }
 
     function depositStake() external payable nonReentrant {
-        if (msg.sender != worker) revert Unauthorized();
+        if (msg.sender != activeWorker) revert Unauthorized();
         if (status != Status.Funded) revert InvalidState();
         if (workerStake == 0) revert InvalidAmount();
         if (workerStaked) revert StakeAlreadyDeposited();
@@ -269,9 +291,9 @@ contract TaskEscrow {
     }
 
     function submit(bytes32 _submissionHash, string calldata _submissionURI) external {
-        if (msg.sender != worker) revert Unauthorized();
+        if (msg.sender != activeWorker) revert Unauthorized();
         if (status != Status.Funded) revert InvalidState();
-        if (block.timestamp > submissionDeadline) revert WindowExpired();
+        if (block.timestamp > uint256(submissionDeadline) + uint256(deadlineExtensionApplied)) revert WindowExpired();
         if (_submissionHash == bytes32(0)) revert InvalidHash();
         if (workerStake > 0 && !workerStaked) revert StakeNotDeposited();
         submissionHash = _submissionHash;
@@ -316,7 +338,7 @@ contract TaskEscrow {
     }
 
     function escalateSilence(string calldata reasonURI) external {
-        if (msg.sender != worker) revert Unauthorized();
+        if (msg.sender != activeWorker) revert Unauthorized();
         if (status != Status.Submitted) revert InvalidState();
         if (block.timestamp <= _reviewWindowEnds()) revert WindowNotOpen();
         if (block.timestamp > _disputeWindowEnds()) revert WindowExpired();
@@ -341,7 +363,7 @@ contract TaskEscrow {
     function claimTimeoutRefund() external nonReentrant {
         if (msg.sender != buyer) revert Unauthorized();
         if (status != Status.Funded) revert InvalidState();
-        if (block.timestamp <= submissionDeadline) revert WindowNotOpen();
+        if (block.timestamp <= uint256(submissionDeadline) + uint256(deadlineExtensionApplied)) revert WindowNotOpen();
         uint256 sf = workerStaked ? workerStake : 0;
         status = Status.Refunded;
         if (milestoneCount == 1) milestones[0].status = MilestoneStatus.Cancelled;
@@ -363,10 +385,52 @@ contract TaskEscrow {
         emit Refunded(amount, sf);
     }
 
+    // ── Backup agent activation (paper §4.4) ──
+
+    function activateBackup() external nonReentrant {
+        if (msg.sender != buyer) revert Unauthorized();
+        if (status != Status.Funded) revert InvalidState();
+        if (backupWorker == address(0)) revert NoBackupDesignated();
+        if (backupActivated) revert BackupAlreadyActivated();
+
+        if (milestoneCount <= 1) {
+            // Single-shot: primary must have missed the submission deadline
+            if (block.timestamp <= uint256(submissionDeadline) + uint256(deadlineExtensionApplied)) {
+                revert WindowNotOpen();
+            }
+        } else {
+            // Milestone mode: current milestone must have timed out
+            Milestone storage ms = milestones[currentMilestone];
+            if (ms.status != MilestoneStatus.Pending) revert InvalidState();
+            if (block.timestamp <= ms.submissionDeadline) revert WindowNotOpen();
+        }
+
+        address previousWorker = activeWorker;
+
+        // Forfeit primary's stake to buyer if deposited
+        if (workerStaked) {
+            _send(buyer, workerStake);
+            workerStaked = false;
+        }
+
+        activeWorker = backupWorker;
+        backupActivated = true;
+
+        if (milestoneCount <= 1) {
+            deadlineExtensionApplied = uint64(uint256(deadlineExtensionApplied) + uint256(backupDeadlineExtension));
+            uint64 newDeadline = uint64(uint256(submissionDeadline) + uint256(deadlineExtensionApplied));
+            emit BackupActivated(previousWorker, backupWorker, newDeadline);
+        } else {
+            Milestone storage ms = milestones[currentMilestone];
+            ms.submissionDeadline = uint64(uint256(ms.submissionDeadline) + uint256(backupDeadlineExtension));
+            emit BackupActivated(previousWorker, backupWorker, ms.submissionDeadline);
+        }
+    }
+
     // ── Milestone functions (multi-milestone mode, milestoneCount > 1) ──
 
     function submitMilestone(uint8 milestoneIndex, bytes32 _submissionHash, string calldata _submissionURI) external {
-        if (msg.sender != worker) revert Unauthorized();
+        if (msg.sender != activeWorker) revert Unauthorized();
         if (status != Status.Funded) revert InvalidState();
         if (milestoneCount <= 1) revert InvalidState();
         if (milestoneIndex != currentMilestone) revert InvalidMilestoneIndex();
@@ -423,7 +487,7 @@ contract TaskEscrow {
 
     function escalateMilestoneSilence(uint8 milestoneIndex, string calldata reasonURI) external {
         _requireMultiMsFunded();
-        if (msg.sender != worker) revert Unauthorized();
+        if (msg.sender != activeWorker) revert Unauthorized();
         if (milestoneIndex != currentMilestone) revert InvalidMilestoneIndex();
         Milestone storage ms = milestones[milestoneIndex];
         if (ms.status != MilestoneStatus.Submitted) revert InvalidState();
@@ -570,7 +634,7 @@ contract TaskEscrow {
         (uint256 wn, uint256 fee, uint256 sr) =
             MilestoneLib.settleApproved(amount, protocolFeeBpsSnapshot, workerStake, workerStaked);
         status = Status.Settled;
-        _send(worker, wn + sr);
+        _send(activeWorker, wn + sr);
         if (fee > 0) _send(treasurySnapshot, fee);
         emit Settled(wn, 0, fee, sr);
     }
@@ -579,7 +643,7 @@ contract TaskEscrow {
         (uint256 wn, uint256 br, uint256 fee, uint256 sr, uint256 sf) =
             MilestoneLib.settleResolved(amount, workerAwardBps, protocolFeeBpsSnapshot, workerStake, workerStaked);
         status = Status.Settled;
-        if (wn + sr > 0) _send(worker, wn + sr);
+        if (wn + sr > 0) _send(activeWorker, wn + sr);
         if (br + sf > 0) _send(buyer, br + sf);
         if (fee > 0) _send(treasurySnapshot, fee);
         emit Settled(wn, br, fee, sr);
@@ -588,7 +652,7 @@ contract TaskEscrow {
     function _doMsApprovedSettle(uint8 idx) internal {
         MilestoneLib.SettleApprovedResult memory r =
             MilestoneLib.settleMilestoneApproved(milestones[idx].amount, protocolFeeBpsSnapshot);
-        _send(worker, r.workerNet);
+        _send(activeWorker, r.workerNet);
         if (r.fee > 0) _send(treasurySnapshot, r.fee);
         emit MilestoneSettled(idx, r.workerNet, 0, r.fee);
     }
@@ -596,7 +660,7 @@ contract TaskEscrow {
     function _doMsResolvedSettle(uint8 idx, uint16 bps) internal {
         MilestoneLib.SettleResolvedResult memory r =
             MilestoneLib.settleMilestoneResolved(milestones[idx].amount, bps, protocolFeeBpsSnapshot);
-        if (r.workerNet > 0) _send(worker, r.workerNet);
+        if (r.workerNet > 0) _send(activeWorker, r.workerNet);
         if (r.buyerRefund > 0) _send(buyer, r.buyerRefund);
         if (r.fee > 0) _send(treasurySnapshot, r.fee);
         emit MilestoneSettled(idx, r.workerNet, r.buyerRefund, r.fee);
@@ -639,7 +703,7 @@ contract TaskEscrow {
             sr = (workerStake * workerAwarded) / total;
         }
         uint256 sf = workerStake - sr;
-        if (sr > 0) _send(worker, sr);
+        if (sr > 0) _send(activeWorker, sr);
         if (sf > 0) _send(buyer, sf);
         emit Settled(0, 0, 0, sr);
     }

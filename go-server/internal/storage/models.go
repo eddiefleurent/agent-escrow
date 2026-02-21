@@ -29,8 +29,12 @@ type Escrow struct {
 	ReviewPeriodSeconds      int64
 	DisputePeriodSeconds     int64
 	ArbitratorTimeoutSeconds int64
-	MilestoneCount           int `json:"milestone_count"`
-	CurrentMilestone         int `json:"current_milestone"`
+	MilestoneCount           int    `json:"milestone_count"`
+	CurrentMilestone         int    `json:"current_milestone"`
+	BackupWorker             string `json:"backup_worker"`
+	BackupDeadlineExtension  int64  `json:"backup_deadline_extension"`
+	ActiveWorker             string `json:"active_worker"`
+	BackupActivated          bool   `json:"backup_activated"`
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
 }

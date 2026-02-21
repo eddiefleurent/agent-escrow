@@ -67,6 +67,9 @@ type MockClient struct {
 	ClaimMilestoneTimeoutErr        error
 	ClaimMilestoneArbitratorTimeErr error
 	AbortRemainingMilestonesErr     error
+
+	// Backup agent error field
+	ActivateBackupErr error
 }
 
 type MockTxRecord struct {
@@ -395,6 +398,16 @@ func (m *MockClient) AbortRemainingMilestones(_ context.Context, addr common.Add
 		return nil, m.AbortRemainingMilestonesErr
 	}
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "abortRemainingMilestones", To: addr})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) ActivateBackup(_ context.Context, addr common.Address) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ActivateBackupErr != nil {
+		return nil, m.ActivateBackupErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "activateBackup", To: addr})
 	return makeFakeTx(), nil
 }
 

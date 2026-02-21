@@ -429,6 +429,8 @@ func (idx *Indexer) processEscrowLog(lg types.Log, dbEscrowID int64) error {
 		return idx.handleMilestoneDisputeResolved(lg, dbEscrowID)
 	case "RemainingMilestonesAborted":
 		return idx.handleRemainingMilestonesAborted(lg, dbEscrowID)
+	case "BackupActivated":
+		return idx.handleBackupActivated(lg, dbEscrowID)
 	}
 
 	return nil
@@ -518,6 +520,36 @@ func (idx *Indexer) handleDisputeResolved(lg types.Log, dbEscrowID int64) error 
 	}
 
 	return idx.db.UpdateDispute(dispute.ID, resolutionURI, int(workerAwardBps))
+}
+
+func (idx *Indexer) handleBackupActivated(lg types.Log, dbEscrowID int64) error {
+	// BackupActivated(address indexed previousWorker, address indexed newWorker, uint64 newDeadline)
+	if len(lg.Topics) < 3 {
+		return fmt.Errorf("BackupActivated: insufficient topics (got %d, need >= 3)", len(lg.Topics))
+	}
+
+	newWorker := common.BytesToAddress(lg.Topics[2].Bytes())
+
+	vals, err := chain.EscrowABI.Events["BackupActivated"].Inputs.NonIndexed().Unpack(lg.Data)
+	if err != nil {
+		return fmt.Errorf("BackupActivated: unpack non-indexed args: %w", err)
+	}
+	if len(vals) == 0 {
+		return fmt.Errorf("BackupActivated: missing non-indexed args")
+	}
+	newDeadline, ok := vals[0].(uint64)
+	if !ok {
+		return fmt.Errorf("BackupActivated: unexpected type for newDeadline: %T", vals[0])
+	}
+
+	slog.Info("backup worker activated",
+		"escrow_id", dbEscrowID,
+		"previous_worker", common.BytesToAddress(lg.Topics[1].Bytes()).Hex(),
+		"new_worker", newWorker.Hex(),
+		"new_deadline", newDeadline,
+	)
+
+	return idx.db.UpdateEscrowBackupActivated(dbEscrowID, newWorker.Hex(), newDeadline)
 }
 
 // extractMilestoneIndex reads the milestone index from the first indexed topic
