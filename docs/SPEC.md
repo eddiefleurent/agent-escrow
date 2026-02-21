@@ -14,6 +14,7 @@ Included:
 - Verifier reject path and worker silence-escalation path
 
 Not yet implemented:
+- Milestone-based escrow (V2 -- specified below, not yet coded)
 - On-chain reputation
 - Open marketplace bidding/auctions
 - Multi-verifier quorum
@@ -411,3 +412,233 @@ Rationale linked to the paper's delegation axes:
 - Go server (MCP + HTTP API) can execute full lifecycle on testnet.
 - Event indexer keeps off-chain state in sync with chain.
 - Security checklist complete with no high-severity unresolved findings.
+
+---
+
+## V2 Extensions
+
+### 21) Milestone-Based Escrow
+
+#### 21.1 Paper Grounding
+
+The paper identifies milestones as a core mechanism across multiple pillars:
+
+- **Adaptive Coordination (§4.4)**: "Delegation agreements encoded as smart contracts may also contain pre-agreed executable clauses for adaptive coordination. For example, a clause in the delegation agreement can specify a backup agent, the function that would automatically re-allocate the task, and the associated payment to the backup should the primary delegatee fail to submit a valid zero-knowledge proof checkpoint by a given deadline."
+- **Monitoring (§4.5)**: "Smart contracts on blockchain can be used to make the delegatee agent commit to publishing key progress milestones or checkpoints to the blockchain. These could be coupled by algorithmic triggers in response to performance degradation."
+- **Verifiable Task Completion (§4.8)**: "Verification serves as the definitive event that transforms a provisional output into a settled fact within the agentic market, establishing the basis for payment release, reputation updates, and the assignment of liability."
+- **Protocol Extensions (§6.1)**: "It would need to be further coupled with explicit clauses within the smart contract that enable partial compensation, and verification of the task completion percentage."
+
+Milestones transform the single-shot escrow into a staged contract with intermediate verification checkpoints and partial payouts, enabling adaptive coordination for long-running or complex tasks.
+
+#### 21.2 Overview
+
+A milestone escrow divides a task into ordered stages (milestones), each with its own payment amount, submission deadline, and review cycle. The total escrow amount equals the sum of all milestone amounts. The buyer funds the full amount upfront; payouts are released incrementally as each milestone is approved.
+
+Key properties:
+- Milestones are defined at escrow creation and are immutable.
+- Each milestone progresses through its own submit → review → approve/dispute cycle.
+- Approved milestones pay out immediately (partial settlement).
+- A disputed milestone follows the same arbitrator resolution flow as V1.
+- The buyer can cancel remaining milestones after a dispute resolution or timeout, receiving a refund for uncompleted work.
+- Worker stake (if any) is held for the full escrow duration and returned/forfeited at final settlement.
+
+#### 21.3 Data Model Extension
+
+New fields on `TaskEscrow` (milestone mode):
+
+```solidity
+struct Milestone {
+    uint256 amount;           // payment for this milestone
+    uint64 submissionDeadline; // unix timestamp deadline for this milestone's submission
+    bytes32 submissionHash;   // set on submit
+    string submissionURI;     // set on submit
+    uint64 submittedAt;       // set on submit
+    uint64 approvedAt;        // set on approve
+    uint64 disputedAt;        // set on dispute
+    string disputeReasonURI;  // set on dispute/reject
+    MilestoneStatus status;   // per-milestone status
+}
+
+enum MilestoneStatus {
+    Pending,     // not yet submitted
+    Submitted,   // worker submitted, awaiting review
+    Approved,    // approved, payout released
+    Disputed,    // under dispute
+    Resolved,    // dispute resolved, payout split
+    Cancelled    // cancelled by buyer (remaining milestones after abort)
+}
+```
+
+- `uint8 public milestoneCount` -- number of milestones (1 = V1-equivalent single-shot; >1 = milestone mode).
+- `uint8 public currentMilestone` -- index of the active milestone (0-based).
+- `Milestone[] public milestones` -- milestone array, length = `milestoneCount`.
+- `uint256 public totalAmount` -- sum of all milestone amounts (replaces `amount` as the funding target).
+- The existing `amount` field becomes `totalAmount` in milestone mode. For backward compatibility, single-milestone escrows behave identically to V1.
+
+Escrow-level `status` semantics in milestone mode:
+- `Created` → `Funded` → active milestone cycling → `Settled` (all milestones approved/resolved) or `Refunded` (remaining milestones cancelled after abort).
+- The escrow-level status reflects the aggregate: `Funded` while milestones are in progress, `Settled` when all milestones reach a terminal state.
+
+#### 21.4 Milestone Lifecycle
+
+```text
+Pending ──submit()──> Submitted
+                        │  │  │
+                        │  │  └─ approve() ──> Approved (payout released)
+                        │  │
+                        │  └─ dispute()/rejectByVerifier()/escalateSilence() ──> Disputed
+                        │                                                          │
+                        │                                                    resolveDispute()
+                        │                                                          │
+                        │                                                          v
+                        │                                                       Resolved
+                        │
+                        └─ claimTimeoutRefund() (if deadline passed) ──> Cancelled
+```
+
+After each milestone reaches a terminal state (Approved, Resolved, or Cancelled), the escrow advances `currentMilestone`. When all milestones are terminal, the escrow-level status transitions to `Settled` or `Refunded`.
+
+#### 21.5 Contract Interface Extension
+
+```solidity
+struct CreateMilestoneParams {
+    uint256 amount;           // payment for this milestone
+    uint64 submissionDeadline; // deadline for this milestone
+}
+
+struct CreateEscrowParams {
+    // ... existing fields ...
+    CreateMilestoneParams[] milestones; // empty array = single-shot (V1 behavior)
+}
+```
+
+New/modified functions:
+
+```solidity
+// Submit work for the current milestone
+function submitMilestone(uint8 milestoneIndex, bytes32 _submissionHash, string calldata _submissionURI) external;
+
+// Approve current milestone (buyer or verifier)
+function approveMilestoneByBuyer(uint8 milestoneIndex) external;
+function approveMilestoneByVerifier(uint8 milestoneIndex) external;
+
+// Dispute current milestone
+function disputeMilestone(uint8 milestoneIndex, string calldata reasonURI) external;
+function rejectMilestoneByVerifier(uint8 milestoneIndex, string calldata reasonURI) external;
+function escalateMilestoneSilence(uint8 milestoneIndex, string calldata reasonURI) external;
+
+// Resolve dispute on a milestone
+function resolveMilestoneDispute(uint8 milestoneIndex, uint16 workerAwardBps, string calldata resolutionURI) external;
+
+// Claim timeout refund for a milestone whose deadline passed without submission
+function claimMilestoneTimeoutRefund(uint8 milestoneIndex) external;
+
+// Abort remaining milestones after a dispute resolution or timeout on any milestone
+// Refunds the sum of all Pending milestone amounts to buyer
+function abortRemainingMilestones() external;
+```
+
+The `milestoneIndex` parameter prevents race conditions and ensures the caller is operating on the intended milestone.
+
+#### 21.6 Settlement Math (Milestone Mode)
+
+Per-milestone approval:
+- `grossWorker = milestone.amount`
+- `fee = grossWorker * protocolFeeBpsSnapshot / 10000`
+- `workerNet = grossWorker - fee`
+- Transfer `workerNet` to worker, `fee` to treasury
+- Emit `MilestoneSettled(milestoneIndex, workerNet, 0, fee)`
+
+Per-milestone dispute resolution:
+- `workerGross = milestone.amount * workerAwardBps / 10000`
+- `buyerRefund = milestone.amount - workerGross`
+- `fee = workerGross * protocolFeeBpsSnapshot / 10000`
+- `workerNet = workerGross - fee`
+- Transfer `workerNet` to worker, `buyerRefund` to buyer, `fee` to treasury
+- Emit `MilestoneSettled(milestoneIndex, workerNet, buyerRefund, fee)`
+
+Worker stake settlement (escrow-level, after all milestones terminal):
+- If all milestones approved: full stake returned to worker.
+- If any milestones disputed/resolved: stake split proportionally based on the ratio of worker-awarded amounts to total amount.
+- If aborted: stake forfeited proportionally to cancelled milestone amounts.
+- Stake is settled once when the escrow reaches its terminal state, not per-milestone.
+
+Abort refund:
+- Sum of all `Pending` milestone amounts returned to buyer.
+- Pending milestones set to `Cancelled`.
+
+#### 21.7 Events (Milestone Mode)
+
+```solidity
+event MilestoneSubmitted(uint8 indexed milestoneIndex, bytes32 submissionHash, string submissionURI);
+event MilestoneApproved(uint8 indexed milestoneIndex, address indexed approver, uint64 approvedAt);
+event MilestoneRejected(uint8 indexed milestoneIndex, address indexed verifier, string reasonURI);
+event MilestoneDisputed(uint8 indexed milestoneIndex, address indexed raisedBy, string reasonURI);
+event MilestoneSilenceEscalated(uint8 indexed milestoneIndex, address indexed worker, string reasonURI);
+event MilestoneDisputeResolved(uint8 indexed milestoneIndex, uint16 workerAwardBps, string resolutionURI);
+event MilestoneSettled(uint8 indexed milestoneIndex, uint256 workerNet, uint256 buyerRefund, uint256 protocolFee);
+event MilestoneCancelled(uint8 indexed milestoneIndex);
+event RemainingMilestonesAborted(uint8 fromIndex, uint256 refundAmount);
+```
+
+#### 21.8 Constraints and Invariants
+
+- Maximum milestone count: 16 (prevents gas exhaustion in loops; sufficient for practical task decomposition).
+- Milestone amounts must sum to `totalAmount` exactly.
+- Milestones must be processed in order: `milestoneIndex` must equal `currentMilestone` for submit/approve/dispute operations.
+- Each milestone's `submissionDeadline` must be strictly after the previous milestone's deadline.
+- `abortRemainingMilestones()` can only be called by the buyer, and only after the current milestone reaches `Disputed` → `Resolved` or `Cancelled` (timeout). It cannot be called while a milestone is in `Pending` or `Submitted` state with time remaining.
+- Conservation of funds: sum of all milestone payouts + refunds + fees + remaining stake = `totalAmount + workerStake`.
+- Single-milestone escrows (milestoneCount = 1) must behave identically to V1 escrows. This is the backward compatibility requirement.
+
+#### 21.9 Arbitrator Timeout (Milestone Mode)
+
+- `claimArbitratorTimeout()` applies per-milestone: if `milestone.disputedAt + arbitratorTimeoutSeconds` passes without resolution, the buyer can claim a refund for that milestone's amount.
+- After an arbitrator timeout on any milestone, the buyer may call `abortRemainingMilestones()` to cancel all subsequent milestones.
+
+#### 21.10 Off-chain Integration (Milestone Mode)
+
+Storage:
+- New `milestones` table: `escrow_id`, `milestone_index`, `amount`, `submission_deadline`, `status`, `submission_hash`, `submission_uri`, `submitted_at`, `approved_at`, `disputed_at`, `dispute_reason_uri`.
+- The `escrows` table gains `milestone_count` and `current_milestone` columns.
+
+Indexer:
+- Must reconcile all milestone-specific events.
+- Must track per-milestone status independently.
+
+MCP tools:
+- `create_escrow` gains an optional `milestones` array parameter.
+- `submit_work`, `approve_work`, `dispute_work`, `resolve_dispute` gain a `milestone_index` parameter (defaults to 0 for single-shot escrows).
+- New `abort_remaining_milestones` tool.
+- `get_escrow` response includes milestone details.
+
+HTTP API:
+- `POST /api/v1/escrows` request body gains optional `milestones` array.
+- `GET /api/v1/escrows/{id}` response includes milestone array with per-milestone status.
+- Existing action endpoints gain optional `milestone_index` query/body parameter.
+- New `POST /api/v1/escrows/{id}/abort-milestones` endpoint.
+
+#### 21.11 Testing Requirements (Milestone Mode)
+
+Unit tests:
+- Happy path: create 3-milestone escrow → fund → submit/approve each → settle
+- Partial completion: approve 2 of 3 milestones, abort remaining
+- Dispute on milestone 2: resolve with split, abort milestone 3
+- Timeout on milestone 1: refund, abort remaining
+- Arbitrator timeout on a milestone: refund, abort remaining
+- Permission failures for milestone-specific functions
+- State transition reverts (wrong milestone index, wrong status)
+- Worker stake settlement across mixed milestone outcomes
+- Single-milestone escrow behaves identically to V1
+- Fee calculation correctness per-milestone
+
+Invariant/property tests:
+- Conservation of funds across all milestones
+- No payouts for cancelled milestones
+- Milestone ordering is enforced
+- Terminal state immutability per-milestone
+
+Fuzz tests:
+- Variable milestone counts (1-16)
+- Variable `workerAwardBps` per disputed milestone
+- Timing boundaries at exact milestone deadlines
