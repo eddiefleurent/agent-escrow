@@ -6,22 +6,34 @@ The paper defines five framework pillars, nine technical protocols, ethical cons
 
 ---
 
-## Relationship to x402
+## Relationship to Coinbase Developer Platform
 
-[x402](https://docs.cdp.coinbase.com/x402/welcome) is an open payment protocol developed by Coinbase that enables instant stablecoin payments over HTTP by reviving the HTTP 402 status code. Its companion [Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) layer provides machine-readable service discovery for payable API endpoints. Both target Base and operate in the same ecosystem as this project.
+Several [Coinbase Developer Platform](https://docs.cdp.coinbase.com/) (CDP) products operate in the same ecosystem as this project -- Base, stablecoins, agent tooling -- and address infrastructure layers the paper's framework depends on. The paper calls for extending existing protocols rather than competing with them (§6). These products are natural infrastructure to build on.
+
+### x402 and Bazaar (payment rail and service discovery)
+
+[x402](https://docs.cdp.coinbase.com/x402/welcome) is an open payment protocol that enables instant stablecoin payments over HTTP by reviving the HTTP 402 status code. Its companion [Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) layer provides machine-readable service discovery for payable API endpoints.
 
 x402 and this project address adjacent but distinct problems. x402 provides a stateless, single-interaction payment flow: a client requests a resource, pays, and receives it. This project implements the paper's delegation framework: a stateful, multi-party lifecycle where funds are held in conditional escrow across task assignment, execution, submission, verification, dispute resolution, and settlement. The paper identifies this gap explicitly -- existing payment protocols lack conditionality, milestone releases, clawback, and verification slots (§6).
 
-The two are complementary. The paper calls for extending existing protocols rather than competing with them (§6), and x402 addresses one of the infrastructure gaps the framework depends on: a standardized, low-friction payment rail for the agentic web.
-
-### Where x402 serves as infrastructure
+Where x402 serves as infrastructure for this project:
 
 - **Escrow funding**: x402's [EIP-3009](https://eips.ethereum.org/EIPS/eip-3009) gasless transfers via its facilitator can streamline the escrow funding step, replacing the manual `approve + fund` two-step. The facilitator sponsors gas and handles on-chain settlement; the escrow contract remains the custodial destination. This reduces wallet UX friction for participants who are not crypto-native.
 - **Service discovery**: rather than building a standalone discovery index for Task_RFQ, escrow-backed delegation services can be registered on Bazaar alongside simple paid APIs. Bazaar provides the discoverability layer; the bidding protocol (Task_RFQ + Bid_Object) handles negotiation and escrow formalization on top.
 - **AP2 mandate funding**: x402 serves as the payment mechanism within the AP2 mandate-to-escrow bridge -- it handles fund movement from mandate authorization into the escrow contract, which then governs conditional custody and release.
 - **Complexity floor calibration**: the x402 facilitator fee ($0.001/tx beyond the free tier) plus on-chain gas provides a concrete lower bound for the paper's complexity floor parameter (§4.3) -- delegation overhead must exceed this threshold to justify escrow.
 
-### What x402 does not cover
+### AgentKit (agent wallet and on-chain identity)
+
+[AgentKit](https://docs.cdp.coinbase.com/agent-kit/welcome) is a toolkit that gives AI agents secure wallet management and on-chain capabilities across any AI framework (LangChain, Vercel AI SDK, MCP). It is model-agnostic, framework-agnostic, and wallet-provider-agnostic, with an extensible action provider system.
+
+The paper's permission handling requirements (§4.7) specify that agents must hold their own cryptographic credentials, that permissions must be scoped to the immediate task via least privilege, and that each participant should sign its own messages for non-repudiation (§4.9). In V1, the Go server holds a single private key and signs all transactions on behalf of every participant -- a deliberate simplification that the paper's framework would not permit at marketplace scale. AgentKit provides the migration path:
+
+- **Agent-owned wallets**: each agent manages its own wallet and signs its own escrow transactions (fund, submit, approve, dispute). The server shifts from transaction signer to indexer-only, resolving the single-key bottleneck.
+- **Escrow action provider**: the escrow lifecycle (create, fund, submit, approve, dispute, resolve) can be packaged as a custom AgentKit action provider, making delegation tools available alongside an agent's existing on-chain capabilities (transfers, swaps, contract deployments).
+- **Payments MCP as client complement**: [Payments MCP](https://docs.cdp.coinbase.com/payments-mcp/welcome) combines AgentKit wallets with x402 payments in a single MCP server. Agents already running Payments MCP have a wallet and USDC balance ready to fund escrows -- a natural on-ramp into the delegation lifecycle.
+
+### What CDP products do not cover
 
 Everything that distinguishes delegation from payment remains this project's scope: the 9-state escrow machine with conditional release and timeout recovery; dispute resolution through verifier rejection, arbitrator escalation, and silence escalation; worker stake and Sybil resistance; milestones with partial payouts; backup agent re-allocation; on-chain reputation; Delegation Capability Tokens; attestation chains and recursive verification; ZK verification slots; checkpoint/resume for mid-task agent swaps; multi-verifier quorum; and the ethical safeguards the paper defines in Section 5.
 
@@ -160,6 +172,7 @@ How each version maps to the five pillars from ["Intelligent AI Delegation"](htt
 | **A2A** | No verification slots, no escrow, assumes trust | Settlement adapter agent card; `verification_policy` + `escrow_trigger` on A2A Task objects; Bazaar-discoverable | V2 |
 | **AP2** | No conditional settlement, no milestone releases, no clawback | Mandate-to-escrow funding bridge via x402 payment rail; stake-on-bid Sybil resistance | V2 |
 | **UCP** | Optimized for commercial intent, not abstract computational delegation | UCP fulfillment provider exposing escrow lifecycle | V3 |
+| **AgentKit** | Agent wallet and on-chain actions; no delegation lifecycle | Agent-owned wallet signing (§4.7 least privilege, §4.9 cryptographic identity); escrow actions as custom action provider | V2-V3 |
 
 ---
 
