@@ -168,6 +168,10 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 	}
 	var backupDeadlineExt uint64
 	if req.BackupDeadlineExtension != "" {
+		if req.BackupWorker == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "backup_deadline_extension set without backup_worker"})
+			return
+		}
 		bde, err := strconv.ParseUint(req.BackupDeadlineExtension, 10, 64)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid backup_deadline_extension"})

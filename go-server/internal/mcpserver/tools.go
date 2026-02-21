@@ -681,6 +681,9 @@ func (s *Server) handleActivateBackup(ctx context.Context, req *mcp.CallToolRequ
 	if escrow.BackupWorker == "" || escrow.BackupWorker == "0x0000000000000000000000000000000000000000" {
 		return textResult("this escrow has no backup worker designated"), nil, nil
 	}
+	if escrow.BackupActivated {
+		return textResult("backup already active"), nil, nil
+	}
 
 	tx, err := s.chain.ActivateBackup(ctx, common.HexToAddress(escrow.EscrowAddress))
 	if err != nil {

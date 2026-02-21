@@ -534,6 +534,9 @@ func (idx *Indexer) handleBackupActivated(lg types.Log, dbEscrowID int64) error 
 	if err != nil {
 		return fmt.Errorf("BackupActivated: unpack non-indexed args: %w", err)
 	}
+	if len(vals) == 0 {
+		return fmt.Errorf("BackupActivated: missing non-indexed args")
+	}
 	newDeadline, ok := vals[0].(uint64)
 	if !ok {
 		return fmt.Errorf("BackupActivated: unexpected type for newDeadline: %T", vals[0])
