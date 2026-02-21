@@ -76,3 +76,72 @@ note right of Resolved
 end note
 
 @enduml
+
+@startuml milestone-state-machine
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam ArrowColor #555555
+skinparam ArrowFontSize 11
+skinparam ArrowFontColor #666666
+
+skinparam state {
+  FontSize 14
+  FontStyle bold
+  AttributeFontSize 11
+}
+
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #E0D68A
+  FontSize 11
+}
+
+title Milestone State Machine (Multi-Milestone Escrow)
+
+state "Escrow: Funded" as EscrowFunded #E3F2FD ##42A5F5 {
+
+  state "Milestone[i]" as ms {
+    state Pending #E3F2FD ##42A5F5
+    state MsSubmitted as "Submitted" #E3F2FD ##42A5F5
+    state MsApproved as "Approved" #E8F5E9 ##66BB6A
+    state MsDisputed as "Disputed" #FFF3E0 ##FFA726
+    state MsResolved as "Resolved" #FFF3E0 ##FFA726
+    state MsCancelled as "Cancelled" #E0E0E0 ##9E9E9E
+
+    [*] --> Pending
+
+    Pending --> MsSubmitted : submitMilestone()
+    Pending --> MsCancelled : timeout / abort
+
+    MsSubmitted --> MsApproved : buyer/verifier approves
+    MsSubmitted --> MsDisputed : buyer disputes
+    MsSubmitted --> MsDisputed : verifier rejects
+    MsSubmitted --> MsDisputed : worker escalates
+
+    MsDisputed --> MsResolved : arbitrator resolves
+    MsDisputed --> MsCancelled : arbitrator timeout
+
+    MsApproved --> [*] : settle & advance
+    MsResolved --> [*] : settle & advance
+    MsCancelled --> [*] : refund & advance
+  }
+}
+
+note right of EscrowFunded
+  Escrow stays **Funded** throughout
+  milestone processing. Terminal
+  state reached when all milestones
+  are in Approved/Resolved/Cancelled.
+end note
+
+note bottom of ms
+  Sequential: milestoneIndex == currentMilestone.
+  Max 16 milestones. Worker stake settled
+  once at escrow terminal state.
+  abortRemainingMilestones() cancels
+  all pending milestones after a failure.
+end note
+
+@enduml

@@ -19,7 +19,7 @@ type ChainClient interface {
 	CallContract(ctx context.Context, to common.Address, data []byte) ([]byte, error)
 	TransactionReceipt(ctx context.Context, txHash common.Hash) (*types.Receipt, error)
 
-	// High-level escrow operations
+	// High-level escrow operations (V1 single-milestone)
 	CreateEscrow(ctx context.Context, factory common.Address, p CreateEscrowParams) (*types.Transaction, error)
 	Fund(ctx context.Context, escrow common.Address, amount *big.Int) (*types.Transaction, error)
 	DepositStake(ctx context.Context, escrow common.Address, stakeAmount *big.Int) (*types.Transaction, error)
@@ -34,6 +34,18 @@ type ChainClient interface {
 	ClaimTimeoutRefund(ctx context.Context, escrow common.Address) (*types.Transaction, error)
 	ClaimArbitratorTimeout(ctx context.Context, escrow common.Address) (*types.Transaction, error)
 	Status(ctx context.Context, escrow common.Address) (uint8, error)
+
+	// Milestone-specific operations (V2 multi-milestone)
+	SubmitMilestone(ctx context.Context, escrow common.Address, milestoneIndex uint8, submissionHash [32]byte, submissionURI string) (*types.Transaction, error)
+	ApproveMilestoneByBuyer(ctx context.Context, escrow common.Address, milestoneIndex uint8) (*types.Transaction, error)
+	ApproveMilestoneByVerifier(ctx context.Context, escrow common.Address, milestoneIndex uint8) (*types.Transaction, error)
+	RejectMilestoneByVerifier(ctx context.Context, escrow common.Address, milestoneIndex uint8, reasonURI string) (*types.Transaction, error)
+	DisputeMilestone(ctx context.Context, escrow common.Address, milestoneIndex uint8, reasonURI string) (*types.Transaction, error)
+	EscalateMilestoneSilence(ctx context.Context, escrow common.Address, milestoneIndex uint8, reasonURI string) (*types.Transaction, error)
+	ResolveMilestoneDispute(ctx context.Context, escrow common.Address, milestoneIndex uint8, workerAwardBps uint16, resolutionURI string) (*types.Transaction, error)
+	ClaimMilestoneTimeoutRefund(ctx context.Context, escrow common.Address, milestoneIndex uint8) (*types.Transaction, error)
+	ClaimMilestoneArbitratorTimeout(ctx context.Context, escrow common.Address, milestoneIndex uint8) (*types.Transaction, error)
+	AbortRemainingMilestones(ctx context.Context, escrow common.Address) (*types.Transaction, error)
 }
 
 // Compile-time check that *Client satisfies ChainClient.

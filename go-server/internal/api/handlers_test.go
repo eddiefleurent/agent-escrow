@@ -211,8 +211,12 @@ func TestGetEscrow_Success(t *testing.T) {
 	}
 
 	resp := decodeJSON(t, rr)
-	if resp["Buyer"] != "0xB" {
-		t.Fatalf("expected buyer 0xB, got %v", resp["Buyer"])
+	escrowData, ok := resp["escrow"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected escrow object in response, got %v", resp)
+	}
+	if escrowData["Buyer"] != "0xB" {
+		t.Fatalf("expected buyer 0xB, got %v", escrowData["Buyer"])
 	}
 }
 

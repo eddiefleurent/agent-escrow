@@ -123,7 +123,8 @@ contract TaskEscrowInvariantsTest is StdInvariant, Test {
                 disputePeriodSeconds: DISPUTE,
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0)
+                token: address(0),
+                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
         escrow = TaskEscrow(escrowAddr);

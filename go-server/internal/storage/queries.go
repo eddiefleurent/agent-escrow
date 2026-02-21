@@ -42,12 +42,17 @@ func (d *DB) GetTask(id int64) (*Task, error) {
 // Escrow queries
 
 func (d *DB) CreateEscrow(e *Escrow) (*Escrow, error) {
+	msCount := e.MilestoneCount
+	if msCount == 0 {
+		msCount = 1
+	}
 	res, err := d.db.Exec(
-		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.TaskID, e.ChainID, e.FactoryAddress, e.EscrowAddress, e.EscrowID,
 		e.Buyer, e.Worker, e.Verifier, e.Arbitrator, e.Amount, e.WorkerStake, e.Token, e.Status,
 		e.SubmissionDeadline, e.ReviewPeriodSeconds, e.DisputePeriodSeconds, e.ArbitratorTimeoutSeconds,
+		msCount, e.CurrentMilestone,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert escrow: %w", err)
@@ -59,50 +64,44 @@ func (d *DB) CreateEscrow(e *Escrow) (*Escrow, error) {
 	return d.GetEscrow(id)
 }
 
-func (d *DB) GetEscrow(id int64) (*Escrow, error) {
+const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, created_at, updated_at`
+
+func scanEscrow(scanner interface{ Scan(...any) error }) (*Escrow, error) {
 	e := &Escrow{}
 	var createdAt, updatedAt string
-	err := d.db.QueryRow(
-		`SELECT id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, created_at, updated_at
-		 FROM escrows WHERE id = ?`, id,
-	).Scan(&e.ID, &e.TaskID, &e.ChainID, &e.FactoryAddress, &e.EscrowAddress, &e.EscrowID,
+	err := scanner.Scan(&e.ID, &e.TaskID, &e.ChainID, &e.FactoryAddress, &e.EscrowAddress, &e.EscrowID,
 		&e.Buyer, &e.Worker, &e.Verifier, &e.Arbitrator, &e.Amount, &e.WorkerStake, &e.Token, &e.Status,
 		&e.SubmissionDeadline, &e.ReviewPeriodSeconds, &e.DisputePeriodSeconds, &e.ArbitratorTimeoutSeconds,
+		&e.MilestoneCount, &e.CurrentMilestone,
 		&createdAt, &updatedAt)
 	if err != nil {
-		return nil, fmt.Errorf("get escrow: %w", err)
+		return nil, err
 	}
 	e.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
 	if err != nil {
-		return nil, fmt.Errorf("parse created_at in GetEscrow: %w", err)
+		return nil, fmt.Errorf("parse created_at: %w", err)
 	}
 	e.UpdatedAt, err = time.Parse("2006-01-02 15:04:05", updatedAt)
 	if err != nil {
-		return nil, fmt.Errorf("parse updated_at in GetEscrow: %w", err)
+		return nil, fmt.Errorf("parse updated_at: %w", err)
+	}
+	return e, nil
+}
+
+func (d *DB) GetEscrow(id int64) (*Escrow, error) {
+	row := d.db.QueryRow(`SELECT `+escrowColumns+` FROM escrows WHERE id = ?`, id)
+	e, err := scanEscrow(row)
+	if err != nil {
+		return nil, fmt.Errorf("get escrow: %w", err)
 	}
 	return e, nil
 }
 
 func (d *DB) GetEscrowByAddress(addr string) (*Escrow, error) {
-	e := &Escrow{}
-	var createdAt, updatedAt string
-	err := d.db.QueryRow(
-		`SELECT id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, created_at, updated_at
-		 FROM escrows WHERE escrow_address = ?`, addr,
-	).Scan(&e.ID, &e.TaskID, &e.ChainID, &e.FactoryAddress, &e.EscrowAddress, &e.EscrowID,
-		&e.Buyer, &e.Worker, &e.Verifier, &e.Arbitrator, &e.Amount, &e.WorkerStake, &e.Token, &e.Status,
-		&e.SubmissionDeadline, &e.ReviewPeriodSeconds, &e.DisputePeriodSeconds, &e.ArbitratorTimeoutSeconds,
-		&createdAt, &updatedAt)
+	row := d.db.QueryRow(`SELECT `+escrowColumns+` FROM escrows WHERE escrow_address = ?`, addr)
+	e, err := scanEscrow(row)
 	if err != nil {
 		return nil, fmt.Errorf("get escrow by address: %w", err)
-	}
-	e.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
-	if err != nil {
-		return nil, fmt.Errorf("parse created_at in GetEscrowByAddress: %w", err)
-	}
-	e.UpdatedAt, err = time.Parse("2006-01-02 15:04:05", updatedAt)
-	if err != nil {
-		return nil, fmt.Errorf("parse updated_at in GetEscrowByAddress: %w", err)
 	}
 	return e, nil
 }
@@ -131,7 +130,7 @@ func (d *DB) UpdateEscrowOnChainFields(id int64, escrowAddress string, escrowID 
 }
 
 func (d *DB) ListEscrows(role, address, status string) ([]*Escrow, error) {
-	query := `SELECT id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, created_at, updated_at FROM escrows WHERE 1=1`
+	query := `SELECT ` + escrowColumns + ` FROM escrows WHERE 1=1`
 	var args []any
 
 	if role != "" && address != "" {
@@ -156,72 +155,50 @@ func (d *DB) ListEscrows(role, address, status string) ([]*Escrow, error) {
 	}
 
 	query += ` ORDER BY id DESC`
+	return d.queryEscrows(query, args...)
+}
 
+func (d *DB) ListEscrowsByChainID(chainID int64) ([]*Escrow, error) {
+	return d.queryEscrows(`SELECT `+escrowColumns+` FROM escrows WHERE chain_id = ? ORDER BY id DESC`, chainID)
+}
+
+func (d *DB) queryEscrows(query string, args ...any) ([]*Escrow, error) {
 	rows, err := d.db.Query(query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list escrows: %w", err)
+		return nil, fmt.Errorf("query escrows: %w", err)
 	}
 	defer rows.Close()
 
 	var escrows []*Escrow
 	for rows.Next() {
-		e := &Escrow{}
-		var createdAt, updatedAt string
-		if err := rows.Scan(&e.ID, &e.TaskID, &e.ChainID, &e.FactoryAddress, &e.EscrowAddress, &e.EscrowID,
-			&e.Buyer, &e.Worker, &e.Verifier, &e.Arbitrator, &e.Amount, &e.WorkerStake, &e.Token, &e.Status,
-			&e.SubmissionDeadline, &e.ReviewPeriodSeconds, &e.DisputePeriodSeconds, &e.ArbitratorTimeoutSeconds,
-			&createdAt, &updatedAt); err != nil {
+		e, err := scanEscrow(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan escrow: %w", err)
-		}
-		e.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
-		if err != nil {
-			return nil, fmt.Errorf("parse created_at in ListEscrows: %w", err)
-		}
-		e.UpdatedAt, err = time.Parse("2006-01-02 15:04:05", updatedAt)
-		if err != nil {
-			return nil, fmt.Errorf("parse updated_at in ListEscrows: %w", err)
 		}
 		escrows = append(escrows, e)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list escrows: %w", err)
+		return nil, fmt.Errorf("iterate escrows: %w", err)
 	}
 	return escrows, nil
 }
 
-func (d *DB) ListEscrowsByChainID(chainID int64) ([]*Escrow, error) {
-	query := `SELECT id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, created_at, updated_at FROM escrows WHERE chain_id = ? ORDER BY id DESC`
-
-	rows, err := d.db.Query(query, chainID)
+func (d *DB) UpdateEscrowMilestoneProgress(id int64, currentMilestone int) error {
+	res, err := d.db.Exec(
+		`UPDATE escrows SET current_milestone = ?, updated_at = datetime('now') WHERE id = ?`,
+		currentMilestone, id,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("list escrows by chain id: %w", err)
+		return fmt.Errorf("UpdateEscrowMilestoneProgress: %w", err)
 	}
-	defer rows.Close()
-
-	var escrows []*Escrow
-	for rows.Next() {
-		e := &Escrow{}
-		var createdAt, updatedAt string
-		if err := rows.Scan(&e.ID, &e.TaskID, &e.ChainID, &e.FactoryAddress, &e.EscrowAddress, &e.EscrowID,
-			&e.Buyer, &e.Worker, &e.Verifier, &e.Arbitrator, &e.Amount, &e.WorkerStake, &e.Token, &e.Status,
-			&e.SubmissionDeadline, &e.ReviewPeriodSeconds, &e.DisputePeriodSeconds, &e.ArbitratorTimeoutSeconds,
-			&createdAt, &updatedAt); err != nil {
-			return nil, fmt.Errorf("scan escrow: %w", err)
-		}
-		e.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
-		if err != nil {
-			return nil, fmt.Errorf("parse created_at in ListEscrowsByChainID: %w", err)
-		}
-		e.UpdatedAt, err = time.Parse("2006-01-02 15:04:05", updatedAt)
-		if err != nil {
-			return nil, fmt.Errorf("parse updated_at in ListEscrowsByChainID: %w", err)
-		}
-		escrows = append(escrows, e)
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("UpdateEscrowMilestoneProgress rows affected: %w", err)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate escrows by chain id: %w", err)
+	if n == 0 {
+		return fmt.Errorf("UpdateEscrowMilestoneProgress id=%d: %w", id, sql.ErrNoRows)
 	}
-	return escrows, nil
+	return nil
 }
 
 // Submission queries
@@ -391,4 +368,140 @@ func (d *DB) SetCursor(chainID int64, cursorKey string, blockNumber int64) error
 		chainID, cursorKey, blockNumber,
 	)
 	return err
+}
+
+// Milestone queries
+
+func (d *DB) CreateMilestone(m *MilestoneRecord) (*MilestoneRecord, error) {
+	res, err := d.db.Exec(
+		`INSERT INTO milestones (escrow_id, milestone_index, amount, submission_deadline, status)
+		 VALUES (?, ?, ?, ?, ?)`,
+		m.EscrowID, m.MilestoneIndex, m.Amount, m.SubmissionDeadline, m.Status,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert milestone: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("last insert id: %w", err)
+	}
+	return d.GetMilestone(id)
+}
+
+const milestoneColumns = `id, escrow_id, milestone_index, amount, submission_deadline, status,
+        submission_hash, submission_uri, submitted_at, approved_at, disputed_at,
+        dispute_reason_uri, created_at, updated_at`
+
+func scanMilestone(scanner interface{ Scan(...any) error }) (*MilestoneRecord, error) {
+	m := &MilestoneRecord{}
+	var createdAt, updatedAt string
+	var submittedAt, approvedAt, disputedAt sql.NullString
+	err := scanner.Scan(&m.ID, &m.EscrowID, &m.MilestoneIndex, &m.Amount, &m.SubmissionDeadline, &m.Status,
+		&m.SubmissionHash, &m.SubmissionURI, &submittedAt, &approvedAt, &disputedAt,
+		&m.DisputeReasonURI, &createdAt, &updatedAt)
+	if err != nil {
+		return nil, err
+	}
+	m.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse created_at: %w", err)
+	}
+	m.UpdatedAt, err = time.Parse("2006-01-02 15:04:05", updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse updated_at: %w", err)
+	}
+	m.SubmittedAt, err = parseNullTime(submittedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse submitted_at: %w", err)
+	}
+	m.ApprovedAt, err = parseNullTime(approvedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse approved_at: %w", err)
+	}
+	m.DisputedAt, err = parseNullTime(disputedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse disputed_at: %w", err)
+	}
+	return m, nil
+}
+
+func (d *DB) GetMilestone(id int64) (*MilestoneRecord, error) {
+	row := d.db.QueryRow(`SELECT `+milestoneColumns+` FROM milestones WHERE id = ?`, id)
+	m, err := scanMilestone(row)
+	if err != nil {
+		return nil, fmt.Errorf("get milestone: %w", err)
+	}
+	return m, nil
+}
+
+func (d *DB) GetMilestonesByEscrow(escrowID int64) ([]*MilestoneRecord, error) {
+	rows, err := d.db.Query(
+		`SELECT `+milestoneColumns+` FROM milestones WHERE escrow_id = ? ORDER BY milestone_index`, escrowID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list milestones: %w", err)
+	}
+	defer rows.Close()
+
+	var milestones []*MilestoneRecord
+	for rows.Next() {
+		m, err := scanMilestone(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan milestone: %w", err)
+		}
+		milestones = append(milestones, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list milestones: %w", err)
+	}
+	return milestones, nil
+}
+
+func (d *DB) UpdateMilestoneStatus(escrowID int64, milestoneIndex int, status string) error {
+	res, err := d.db.Exec(
+		`UPDATE milestones SET status = ?, updated_at = datetime('now') WHERE escrow_id = ? AND milestone_index = ?`,
+		status, escrowID, milestoneIndex,
+	)
+	if err != nil {
+		return fmt.Errorf("UpdateMilestoneStatus: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("UpdateMilestoneStatus rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("UpdateMilestoneStatus escrow_id=%d milestone_index=%d: %w", escrowID, milestoneIndex, sql.ErrNoRows)
+	}
+	return nil
+}
+
+func (d *DB) UpdateMilestoneSubmission(escrowID int64, milestoneIndex int, hash, uri string) error {
+	res, err := d.db.Exec(
+		`UPDATE milestones SET submission_hash = ?, submission_uri = ?, submitted_at = datetime('now'),
+		        status = 'submitted', updated_at = datetime('now')
+		 WHERE escrow_id = ? AND milestone_index = ?`,
+		hash, uri, escrowID, milestoneIndex,
+	)
+	if err != nil {
+		return fmt.Errorf("UpdateMilestoneSubmission: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("UpdateMilestoneSubmission rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("UpdateMilestoneSubmission escrow_id=%d milestone_index=%d: %w", escrowID, milestoneIndex, sql.ErrNoRows)
+	}
+	return nil
+}
+
+func parseNullTime(ns sql.NullString) (*time.Time, error) {
+	if !ns.Valid || ns.String == "" {
+		return nil, nil
+	}
+	t, err := time.Parse("2006-01-02 15:04:05", ns.String)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
 }

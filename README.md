@@ -1,5 +1,7 @@
 # Agent Escrow
 
+[![Ask DeepWiki — explore this codebase with AI](https://deepwiki.com/badge.svg)](https://deepwiki.com/eddiefleurent/agent-escrow)
+
 Escrow-based settlement for AI agent delegation -- a reference implementation of [**"Intelligent AI Delegation"**](https://arxiv.org/abs/2602.11865) (Tomašev, Franklin, Osindero -- Google DeepMind, 2026).
 
 The paper defines a framework for task decomposition, delegation, verification, and settlement in open agentic economies. It identifies a critical gap: existing agent protocols (MCP, A2A, AP2, UCP) handle communication and coordination but lack **conditional settlement**, **verifiable task completion**, and **dispute resolution**. This project implements the financial settlement kernel that fills that gap, and builds toward the paper's full vision across four delivery phases.

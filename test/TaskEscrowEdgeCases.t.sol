@@ -108,20 +108,21 @@ contract TaskEscrowEdgeCasesTest is Test {
         vm.expectRevert(TaskEscrowFactory.Paused.selector);
         vm.prank(randomUser);
         factory.createEscrow(
-            TaskEscrowFactory.CreateParams(
-                buyer,
-                worker,
-                verifier,
-                arbitrator,
-                AMOUNT,
-                0,
-                uint64(block.timestamp + 7 days),
-                REVIEW,
-                DISPUTE,
-                keccak256("spec-2"),
-                ARB_TIMEOUT,
-                address(0)
-            )
+            TaskEscrowFactory.CreateParams({
+                buyer: buyer,
+                worker: worker,
+                verifier: verifier,
+                arbitrator: arbitrator,
+                amount: AMOUNT,
+                workerStake: 0,
+                submissionDeadline: uint64(block.timestamp + 7 days),
+                reviewPeriodSeconds: REVIEW,
+                disputePeriodSeconds: DISPUTE,
+                taskSpecHash: keccak256("spec-2"),
+                arbitratorTimeoutSeconds: ARB_TIMEOUT,
+                token: address(0),
+                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
+            })
         );
     }
 
@@ -175,20 +176,21 @@ contract TaskEscrowEdgeCasesTest is Test {
         vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
         vm.prank(randomUser);
         factory.createEscrow(
-            TaskEscrowFactory.CreateParams(
-                buyer,
-                buyer,
-                verifier,
-                arbitrator,
-                AMOUNT,
-                0,
-                uint64(block.timestamp + 7 days),
-                REVIEW,
-                DISPUTE,
-                keccak256("spec"),
-                ARB_TIMEOUT,
-                address(0)
-            )
+            TaskEscrowFactory.CreateParams({
+                buyer: buyer,
+                worker: buyer,
+                verifier: verifier,
+                arbitrator: arbitrator,
+                amount: AMOUNT,
+                workerStake: 0,
+                submissionDeadline: uint64(block.timestamp + 7 days),
+                reviewPeriodSeconds: REVIEW,
+                disputePeriodSeconds: DISPUTE,
+                taskSpecHash: keccak256("spec"),
+                arbitratorTimeoutSeconds: ARB_TIMEOUT,
+                token: address(0),
+                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
+            })
         );
     }
 
@@ -196,20 +198,21 @@ contract TaskEscrowEdgeCasesTest is Test {
         vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
         vm.prank(randomUser);
         factory.createEscrow(
-            TaskEscrowFactory.CreateParams(
-                buyer,
-                worker,
-                buyer,
-                arbitrator,
-                AMOUNT,
-                0,
-                uint64(block.timestamp + 7 days),
-                REVIEW,
-                DISPUTE,
-                keccak256("spec"),
-                ARB_TIMEOUT,
-                address(0)
-            )
+            TaskEscrowFactory.CreateParams({
+                buyer: buyer,
+                worker: worker,
+                verifier: buyer,
+                arbitrator: arbitrator,
+                amount: AMOUNT,
+                workerStake: 0,
+                submissionDeadline: uint64(block.timestamp + 7 days),
+                reviewPeriodSeconds: REVIEW,
+                disputePeriodSeconds: DISPUTE,
+                taskSpecHash: keccak256("spec"),
+                arbitratorTimeoutSeconds: ARB_TIMEOUT,
+                token: address(0),
+                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
+            })
         );
     }
 
@@ -217,20 +220,21 @@ contract TaskEscrowEdgeCasesTest is Test {
         vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
         vm.prank(randomUser);
         factory.createEscrow(
-            TaskEscrowFactory.CreateParams(
-                buyer,
-                worker,
-                verifier,
-                buyer,
-                AMOUNT,
-                0,
-                uint64(block.timestamp + 7 days),
-                REVIEW,
-                DISPUTE,
-                keccak256("spec"),
-                ARB_TIMEOUT,
-                address(0)
-            )
+            TaskEscrowFactory.CreateParams({
+                buyer: buyer,
+                worker: worker,
+                verifier: verifier,
+                arbitrator: buyer,
+                amount: AMOUNT,
+                workerStake: 0,
+                submissionDeadline: uint64(block.timestamp + 7 days),
+                reviewPeriodSeconds: REVIEW,
+                disputePeriodSeconds: DISPUTE,
+                taskSpecHash: keccak256("spec"),
+                arbitratorTimeoutSeconds: ARB_TIMEOUT,
+                token: address(0),
+                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
+            })
         );
     }
 
@@ -238,20 +242,21 @@ contract TaskEscrowEdgeCasesTest is Test {
         vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
         vm.prank(randomUser);
         factory.createEscrow(
-            TaskEscrowFactory.CreateParams(
-                buyer,
-                worker,
-                worker,
-                arbitrator,
-                AMOUNT,
-                0,
-                uint64(block.timestamp + 7 days),
-                REVIEW,
-                DISPUTE,
-                keccak256("spec"),
-                ARB_TIMEOUT,
-                address(0)
-            )
+            TaskEscrowFactory.CreateParams({
+                buyer: buyer,
+                worker: worker,
+                verifier: worker,
+                arbitrator: arbitrator,
+                amount: AMOUNT,
+                workerStake: 0,
+                submissionDeadline: uint64(block.timestamp + 7 days),
+                reviewPeriodSeconds: REVIEW,
+                disputePeriodSeconds: DISPUTE,
+                taskSpecHash: keccak256("spec"),
+                arbitratorTimeoutSeconds: ARB_TIMEOUT,
+                token: address(0),
+                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
+            })
         );
     }
 
@@ -259,20 +264,21 @@ contract TaskEscrowEdgeCasesTest is Test {
         vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
         vm.prank(randomUser);
         factory.createEscrow(
-            TaskEscrowFactory.CreateParams(
-                buyer,
-                worker,
-                verifier,
-                worker,
-                AMOUNT,
-                0,
-                uint64(block.timestamp + 7 days),
-                REVIEW,
-                DISPUTE,
-                keccak256("spec"),
-                ARB_TIMEOUT,
-                address(0)
-            )
+            TaskEscrowFactory.CreateParams({
+                buyer: buyer,
+                worker: worker,
+                verifier: verifier,
+                arbitrator: worker,
+                amount: AMOUNT,
+                workerStake: 0,
+                submissionDeadline: uint64(block.timestamp + 7 days),
+                reviewPeriodSeconds: REVIEW,
+                disputePeriodSeconds: DISPUTE,
+                taskSpecHash: keccak256("spec"),
+                arbitratorTimeoutSeconds: ARB_TIMEOUT,
+                token: address(0),
+                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
+            })
         );
     }
 
@@ -280,20 +286,21 @@ contract TaskEscrowEdgeCasesTest is Test {
         vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
         vm.prank(randomUser);
         factory.createEscrow(
-            TaskEscrowFactory.CreateParams(
-                buyer,
-                worker,
-                verifier,
-                verifier,
-                AMOUNT,
-                0,
-                uint64(block.timestamp + 7 days),
-                REVIEW,
-                DISPUTE,
-                keccak256("spec"),
-                ARB_TIMEOUT,
-                address(0)
-            )
+            TaskEscrowFactory.CreateParams({
+                buyer: buyer,
+                worker: worker,
+                verifier: verifier,
+                arbitrator: verifier,
+                amount: AMOUNT,
+                workerStake: 0,
+                submissionDeadline: uint64(block.timestamp + 7 days),
+                reviewPeriodSeconds: REVIEW,
+                disputePeriodSeconds: DISPUTE,
+                taskSpecHash: keccak256("spec"),
+                arbitratorTimeoutSeconds: ARB_TIMEOUT,
+                token: address(0),
+                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
+            })
         );
     }
 
@@ -411,7 +418,8 @@ contract TaskEscrowEdgeCasesTest is Test {
                 disputePeriodSeconds: DISPUTE,
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: tokenAddr
+                token: tokenAddr,
+                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
         return TaskEscrow(escrowAddress);

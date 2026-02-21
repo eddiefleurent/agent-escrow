@@ -7,7 +7,7 @@ Operating guide for Claude Code in this repository.
 This project implements the ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) paper (Tomašev, Franklin, Osindero -- Google DeepMind, 2026) as a working escrow-based delegation marketplace on Base (Ethereum L2).
 
 - Active work: `docs/ROADMAP.md` -- the phase marked "(Current)" contains the next incomplete items.
-- Contract specification (prescriptive -- what contracts must do): `docs/SPEC.md`
+- Contract design intent (state machine, settlement math, invariants, paper traceability): `docs/SPEC.md`
 - Architecture and design (high-level context): `docs/ARCHITECTURE.md`
 - Visual diagrams (state machine, lifecycle, architecture): `docs/diagrams/*.puml`
 - Implementation status: `docs/ROADMAP.md`
@@ -120,11 +120,11 @@ Verify contract source on block explorer after deployment. Record deployed addre
 
 Three docs are kept in sync with the code:
 
-- **`docs/SPEC.md`** -- prescriptive contract specification (state machine, settlement math, invariants). Update when contract behavior changes. This is what tests are written against.
+- **`docs/SPEC.md`** -- contract design intent: state machine, settlement math, invariants, and paper traceability. Does not duplicate Solidity interfaces, events, or off-chain details (those live in the code and ARCHITECTURE.md). Update only when the state machine, settlement formulas, or invariants change.
 - **`docs/diagrams/*.puml`** -- PlantUML visual diagrams. Update when contract state transitions, lifecycle flows, or system architecture change. Multiple `@startuml` blocks can live in one file; prefer extending existing files over creating new ones. When editing, match the existing style, formatting conventions, and level of detail of the surrounding diagram. After any `.puml` change, regenerate the corresponding PNGs with `plantuml docs/diagrams/*.puml`.
 - **`docs/ARCHITECTURE.md`** -- high-level system design and paper grounding. Update when major structural changes occur (new components, new integration paths). Code-level documentation is handled by DeepWiki; ARCHITECTURE.md covers the "why" and "how things connect."
 
-When updating `docs/SPEC.md` or `docs/ARCHITECTURE.md`, always check whether `docs/diagrams/*.puml` also needs updating. State transitions, event signatures, settlement flows, role semantics, and system component changes described in the spec or architecture doc are often visualized in the diagrams -- keep them in sync.
+When updating `docs/SPEC.md` or `docs/ARCHITECTURE.md`, always check whether `docs/diagrams/*.puml` also needs updating. State transitions, settlement flows, and role semantics described in the spec or architecture doc are often visualized in the diagrams -- keep them in sync.
 
 Do not create new documentation files unless explicitly requested. Prefer updating existing docs.
 

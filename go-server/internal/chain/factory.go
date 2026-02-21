@@ -9,6 +9,12 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
+// MilestoneParam describes a single milestone for multi-milestone escrow creation.
+type MilestoneParam struct {
+	Amount             *big.Int
+	SubmissionDeadline uint64
+}
+
 type CreateEscrowParams struct {
 	Buyer                    common.Address
 	Worker                   common.Address
@@ -22,6 +28,13 @@ type CreateEscrowParams struct {
 	TaskSpecHash             [32]byte
 	ArbitratorTimeoutSeconds uint64
 	Token                    common.Address // address(0) for ETH, non-zero for ERC20
+	Milestones               []MilestoneParam
+}
+
+// milestoneTuple matches the Solidity CreateMilestoneParams struct layout for ABI encoding.
+type milestoneTuple struct {
+	Amount             *big.Int
+	SubmissionDeadline uint64
 }
 
 // createParamsTuple is the struct layout that matches the Solidity CreateParams struct
@@ -39,12 +52,20 @@ type createParamsTuple struct {
 	TaskSpecHash             [32]byte
 	ArbitratorTimeoutSeconds uint64
 	Token                    common.Address
+	Milestones               []milestoneTuple
 }
 
 func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p CreateEscrowParams) (*types.Transaction, error) {
 	workerStake := p.WorkerStake
 	if workerStake == nil {
 		workerStake = big.NewInt(0)
+	}
+	milestones := make([]milestoneTuple, len(p.Milestones))
+	for i, m := range p.Milestones {
+		milestones[i] = milestoneTuple{
+			Amount:             m.Amount,
+			SubmissionDeadline: m.SubmissionDeadline,
+		}
 	}
 	tuple := createParamsTuple{
 		Buyer:                    p.Buyer,
@@ -59,6 +80,7 @@ func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p Cre
 		TaskSpecHash:             p.TaskSpecHash,
 		ArbitratorTimeoutSeconds: p.ArbitratorTimeoutSeconds,
 		Token:                    p.Token,
+		Milestones:               milestones,
 	}
 	data, err := FactoryABI.Pack("createEscrow", tuple)
 	if err != nil {

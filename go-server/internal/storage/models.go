@@ -29,8 +29,27 @@ type Escrow struct {
 	ReviewPeriodSeconds      int64
 	DisputePeriodSeconds     int64
 	ArbitratorTimeoutSeconds int64
+	MilestoneCount           int `json:"milestone_count"`
+	CurrentMilestone         int `json:"current_milestone"`
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
+}
+
+type MilestoneRecord struct {
+	ID                 int64
+	EscrowID           int64
+	MilestoneIndex     int
+	Amount             string
+	SubmissionDeadline int64
+	Status             string
+	SubmissionHash     string
+	SubmissionURI      string
+	SubmittedAt        *time.Time
+	ApprovedAt         *time.Time
+	DisputedAt         *time.Time
+	DisputeReasonURI   string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type Submission struct {

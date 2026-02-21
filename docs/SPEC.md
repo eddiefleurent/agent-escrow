@@ -1,413 +1,240 @@
 # Contract Specification
 
-## 1) Scope
-This specification defines the contract behavior for escrow-based task delegation on Base (Ethereum L2).
+## 1) Purpose
 
-Included:
-- `TaskEscrowFactory` contract
-- `TaskEscrow` contract instances
-- ETH and ERC20 escrow and settlement
-- Roles: buyer, worker, verifier, arbitrator
-- Worker stake (anti-Sybil bond)
-- Hash-based submission commitment
-- Dispute flow and final resolution
-- Verifier reject path and worker silence-escalation path
+This document specifies the **design intent** behind the escrow contracts: the state machine, settlement math, role semantics, and invariants. It exists so that someone reading the paper can understand *why* the contracts work the way they do without reading Solidity.
 
-Not yet implemented:
-- On-chain reputation
-- Open marketplace bidding/auctions
-- Multi-verifier quorum
+It does **not** duplicate information that lives authoritatively elsewhere:
+- Solidity interfaces, struct definitions, events, and error types → the contracts themselves (`src/`)
+- Off-chain storage schema, API surface, MCP tools → `docs/ARCHITECTURE.md` and the Go code
+- Deployment procedures → `docs/SETUP.md`
+- Testing requirements → the test files (`test/`)
 
-## 1.1 Paper Traceability
-Traces to ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) (Tomašev, Franklin, Osindero -- Google DeepMind, 2026). V1 implements the settlement kernel: financial accountability and bounded authority. Adaptive delegation intelligence is deferred to subsequent phases.
+## 2) Paper Traceability
 
-Requirement mapping:
-- Clear role boundaries: enforced via immutable per-escrow roles (`buyer`, `worker`, `verifier`, `arbitrator`).
-- Transfer of authority + accountability: each lifecycle transition is role-gated and event-logged.
-- Task constraints: deadlines, review/dispute periods, and strict state-machine transitions.
-- Verifiability axis: on-chain submission hash commitments and explicit verifier approval path.
-- Reversibility axis: refund and split-settlement outcomes for failed/disputed tasks.
-- Monitoring axis: canonical events as machine-readable oversight surface.
-- Trust calibration: V1 uses designated verifier/arbitrator identities rather than open trustless proving.
+Implements ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) (Tomašev, Franklin, Osindero -- Google DeepMind, 2026). V1 implements the settlement kernel: financial accountability and bounded authority. V2 adds market primitives. Adaptive delegation intelligence is deferred to subsequent phases.
 
-Explicitly deferred paper dimensions:
-- Dynamic capability lookup/matching
-- Adaptive multi-agent delegation policies
-- Distributed reputation markets as primary trust substrate
-- Hybrid human/AI oversight optimization at scale
+### Requirement Mapping
 
-## 2) Terminology
-- Task: an off-chain work agreement linked to one escrow contract.
-- Submission: worker-delivered off-chain artifact referenced by URI and hash.
-- Review Window: period after submission for approval/dispute.
-- Dispute Window: period in which buyer may escalate.
+| Paper Concept | Section | Implementation |
+|---|---|---|
+| Transfer of authority, responsibility, accountability | §2.1 | Immutable per-escrow roles (`buyer`, `worker`, `verifier`, `arbitrator`) with signed on-chain transitions |
+| Task constraints and boundaries | §2.2 | Deadlines, review/dispute windows, strict state-machine transitions |
+| Verifiability axis | §2.2(h) | On-chain submission hash commitments; explicit verifier approval path |
+| Reversibility axis | §2.2(i) | Refund and split-settlement outcomes for failed/disputed tasks |
+| Dynamic cognitive friction | §2.3 | `rejectByVerifier` and `escalateSilence` force explicit decisions rather than passive acceptance |
+| Principal-agent alignment | §2.3 | Escrow links payment to verified outcomes, making misalignment financially costly |
+| Transaction cost economics | §2.3 | Protocol fee snapshotting; complexity floor (V2) ensures delegation overhead doesn't exceed task value |
+| Monitoring requirements | §4.5 | Canonical events for every state transition; off-chain indexer as machine-readable oversight surface |
+| Trust calibration | §4.6 | Designated verifier/arbitrator identities; financial outcomes auditable on-chain |
+| Adaptive coordination | §4.4 | Milestone-based escrow with intermediate checkpoints, partial payouts, and abort-on-failure; arbitrator timeout prevents permanent fund lock |
+| Smart contract as settlement | §4.2 | Escrow holds funds; verification clause gates release |
+| Verifiable task completion | §4.8 | Hash commitments transform provisional output into settled fact; verification gates payout |
+| Delegatee stake / Sybil resistance | §4.8 | Worker deposits anti-Sybil bond before submission; stake returned on success, forfeited proportionally on failure |
+| Partial compensation | §6.1 | Per-milestone payouts enable compensation proportional to verified completion |
+| Privilege attenuation | §4.7 | Role-gated actions enforce least privilege per escrow |
 
-## 3) Chain + Tooling
-- Network: Base Sepolia
-- Solidity: `^0.8.34`
-- Framework: Foundry
-- Libraries: OpenZeppelin (`ReentrancyGuard`, `Pausable`, `Ownable`/`AccessControl`)
+### Explicitly Deferred
 
-## 4) Roles
-- `buyer`: funds escrow and receives refund if task fails.
-- `worker`: submits delivery and receives payout when approved/resolved in their favor.
-- `verifier`: can mark submission as pass/fail based on agreed criteria.
-- `arbitrator`: final authority in disputed cases.
-- `treasury`: receives protocol fee from successful payouts.
+- Dynamic capability lookup/matching (§4.1-4.2)
+- Adaptive multi-agent delegation policies (§4.4 advanced)
+- Distributed reputation markets as primary trust substrate (§4.6)
+- Delegation Capability Tokens / Macaroons (§4.7)
+- ZK verification slots (§4.8)
+- Hybrid human/AI oversight optimization at scale (§5)
 
-Role assignment is immutable per escrow in V1.
+## 3) Roles
 
-## 5) Economic Parameters
+| Role | Responsibility |
+|---|---|
+| `buyer` | Funds escrow, approves or disputes submissions, receives refund on failure |
+| `worker` | Submits delivery, deposits stake (if required), receives payout on approval |
+| `verifier` | Checks submission quality; can approve or reject within review window |
+| `arbitrator` | Final authority in disputed cases; resolves with proportional split |
+| `treasury` | Receives protocol fee from successful payouts |
+
+Role assignment is immutable per escrow. This is a V1 constraint reflecting the paper's high-control fixed-role approach (§4.6) before open market matching.
+
+## 4) State Machine
+
+### Single-Shot Escrow
+
+```text
+Created ──fund()──> Funded ──submit()──> Submitted
+  │                   │                    │  │  │
+  │                   │                    │  │  └─ approve ──> Approved ──> Settled
+  │                   │                    │  │
+  │                   │                    │  └─ dispute/reject/escalate ──> Disputed
+  │                   │                    │                                    │
+  │                   │                    │                              resolveDispute
+  │                   │                    │                                    │
+  │                   │                    │                                    v
+  │                   │                    │                                 Resolved ──> Settled
+  │                   │                    │
+  cancelBeforeFunding │                    └─ (timeout path via Funded)
+  │                   │
+  v                   └─ claimTimeoutRefund ──> Refunded
+Cancelled                                        ^
+                                                 │
+                              claimArbitratorTimeout (from Disputed)
+```
+
+Nine states: Created, Funded, Submitted, Approved, Disputed, Resolved, Settled, Refunded, Cancelled.
+
+Terminal states (Settled, Refunded, Cancelled) are mutually exclusive and irreversible.
+
+### Transition Rules
+
+| Transition | Who | From State | Guard |
+|---|---|---|---|
+| `fund` | buyer | Created | Exact amount (ETH or ERC20) |
+| `depositStake` | worker | Funded | `workerStake > 0`, not already deposited |
+| `cancelBeforeFunding` | buyer | Created | -- |
+| `submit` | worker | Funded | Before deadline; stake deposited if required |
+| `approveByBuyer` | buyer | Submitted | Within review window |
+| `approveByVerifier` | verifier | Submitted | Within review window |
+| `rejectByVerifier` | verifier | Submitted | Within review window |
+| `dispute` | buyer | Submitted | Within review + dispute window |
+| `escalateSilence` | worker | Submitted | After review window lapse without action |
+| `resolveDispute` | arbitrator | Disputed | `workerAwardBps` in [0, 10000] |
+| `claimTimeoutRefund` | buyer | Funded | Past submission deadline |
+| `claimArbitratorTimeout` | buyer | Disputed | Past `disputedAt + arbitratorTimeoutSeconds` |
+
+Invalid transitions revert with custom errors.
+
+### Milestone-Based Escrow (V2)
+
+Milestones transform the single-shot escrow into a staged contract with intermediate verification checkpoints and partial payouts. This implements the paper's adaptive coordination (§4.4): "delegation agreements encoded as smart contracts may also contain pre-agreed executable clauses for adaptive coordination."
+
+Escrow-level lifecycle: `Created → Funded → [milestone cycling] → Settled or Refunded`.
+
+Each milestone progresses independently through: `Pending → Submitted → Approved/Disputed → Resolved`. The buyer can abort remaining milestones after a terminal failure on any milestone.
+
+Key properties:
+- Milestones are defined at creation and are immutable. Maximum 16.
+- Processed in strict order (`milestoneIndex == currentMilestone`).
+- Each has its own amount, submission deadline, and review cycle.
+- Approved milestones pay out immediately (partial settlement).
+- Disputed milestones follow the same arbitrator resolution flow as single-shot.
+- Worker stake is held for the full escrow duration and settled once at the end.
+- Single-milestone escrows behave identically to V1 (backward compatibility).
+
+## 5) Settlement Math
+
+### Approval (Single-Shot)
+
+```text
+grossWorker  = amount
+fee          = grossWorker * protocolFeeBpsSnapshot / 10000
+workerNet    = grossWorker - fee
+stakeReturn  = workerStaked ? workerStake : 0
+```
+
+Transfers: `workerNet + stakeReturn` → worker, `fee` → treasury.
+
+### Dispute Resolution (Single-Shot)
+
+```text
+workerGross    = amount * workerAwardBps / 10000
+buyerRefund    = amount - workerGross
+fee            = workerGross * protocolFeeBpsSnapshot / 10000
+workerNet      = workerGross - fee
+stakeReturn    = workerStaked ? workerStake * workerAwardBps / 10000 : 0
+stakeForfeited = workerStaked ? workerStake - stakeReturn : 0
+```
+
+Transfers: `workerNet + stakeReturn` → worker, `buyerRefund + stakeForfeited` → buyer, `fee` → treasury.
+
+`workerAwardBps` semantics: 0 = full refund to buyer, 10000 = full payout to worker, intermediate = proportional split.
+
+### Timeout Refund
+
+Applies when the worker doesn't submit by the deadline, or when the arbitrator doesn't resolve within the timeout period.
+
+```text
+stakeForfeited = workerStaked ? workerStake : 0
+```
+
+Transfers: `amount + stakeForfeited` → buyer.
+
+### Milestone Approval
+
+Per-milestone, same formula as single-shot approval but using `milestone.amount` instead of `amount`. No stake movement -- stake is settled at escrow end.
+
+### Milestone Dispute Resolution
+
+Per-milestone, same formula as single-shot dispute resolution but using `milestone.amount`. No stake movement per-milestone.
+
+### Milestone Worker Stake Settlement
+
+Settled once when all milestones reach terminal states:
+
+```text
+workerAwarded = Σ (Approved milestones: milestone.amount)
+              + Σ (Resolved milestones: milestone.amount * milestone.awardBps / 10000)
+total         = Σ all milestone amounts
+stakeReturn   = workerStake * workerAwarded / total    (if workerAwarded > 0 and < total)
+              = workerStake                            (if workerAwarded == total)
+              = 0                                      (if workerAwarded == 0)
+stakeForfeited = workerStake - stakeReturn
+```
+
+Cancelled/aborted milestones contribute to `total` but not `workerAwarded`, so their weight dilutes the stake return proportionally.
+
+### Abort Refund
+
+Sum of all `Pending` milestone amounts returned to buyer. Those milestones are set to `Cancelled`.
+
+### Rounding
+
+All divisions floor toward zero (Solidity default). Remainders stay with the buyer path due to subtraction order.
+
+## 6) Invariants
+
+These must hold for every escrow at all times:
+
+1. **Balance conservation**: escrow balance is either `0` (after terminal settlement/refund) or `amount` (or `amount + workerStake` when stake deposited) during active states.
+2. **Terminal exclusivity**: Settled, Refunded, and Cancelled are mutually exclusive. No function can transition from a terminal state to a non-terminal state.
+3. **Fund conservation**: total funds distributed never exceeds `amount + workerStake`.
+4. **Fee bound**: protocol fee never exceeds worker gross award.
+5. **Stake lifecycle**: returned fully on approval, split proportionally on dispute, forfeited on timeout.
+6. **Milestone ordering**: milestones are processed sequentially; `milestoneIndex` must equal `currentMilestone`.
+7. **Milestone fund conservation**: sum of all milestone payouts + refunds + fees + remaining stake = `amount + workerStake`.
+
+## 7) Economic Parameters
+
 Global (factory-level):
-- `protocolFeeBps` (0-10000)
-- `treasury` address
+- `protocolFeeBps` (0-10000) -- snapshotted at escrow creation to prevent governance race conditions mid-task.
+- `treasury` address -- snapshotted at creation.
 
-Per-task:
-- `amount` (ETH or ERC20 escrow amount)
-- `workerStake` (anti-Sybil bond amount; 0 means no stake required -- paper §4.8)
-- `submissionDeadline` (unix timestamp)
-- `reviewPeriodSeconds`
-- `disputePeriodSeconds`
+Per-escrow:
+- `amount` -- total escrow amount (ETH or ERC20). For milestone escrows, equals sum of all milestone amounts.
+- `workerStake` -- anti-Sybil bond (paper §4.8). `0` means no stake required.
+- `submissionDeadline` -- unix timestamp (single-shot) or per-milestone deadlines.
+- `reviewPeriodSeconds` -- window for approval/rejection after submission.
+- `disputePeriodSeconds` -- window for buyer dispute after review period.
+- `arbitratorTimeoutSeconds` -- maximum time for arbitrator to resolve before buyer can claim refund.
 
-V1 default values:
-- `reviewPeriodSeconds = 86_400` (24 hours)
-- `disputePeriodSeconds = 172_800` (48 hours)
+Default values: review = 86,400s (24h), dispute = 172,800s (48h).
 
-## 6) Data Model
-## 6.1 TaskEscrowFactory
-- `uint256 public nextEscrowId`
-- `mapping(uint256 => address) public escrowById`
-- `uint16 public protocolFeeBps`
-- `address public treasury`
-- `bool public paused`
+Rationale (paper §4.3, §4.4): 24h/48h windows balance oversight with capital efficiency. Explicit reject avoids passive acceptance under ambiguity (criticality and accountability). Silence-escalation prevents indefinite lock under asymmetric power/inattention (monitoring and authority gradients).
 
-## 6.2 TaskEscrow
-- `enum Status { Created, Funded, Submitted, Approved, Disputed, Resolved, Settled, Refunded, Cancelled }`
-- `address public buyer`
-- `address public worker`
-- `address public verifier`
-- `address public arbitrator`
-- `uint256 public amount`
-- `uint256 public workerStake` (anti-Sybil bond; 0 = no stake required)
-- `bool public workerStaked` (true after worker calls `depositStake()`)
-- `uint64 public submissionDeadline`
-- `uint64 public reviewPeriodSeconds`
-- `uint64 public disputePeriodSeconds`
-- `uint64 public arbitratorTimeoutSeconds` (immutable, set at creation)
-- `uint64 public submittedAt`
-- `uint64 public approvedAt`
-- `uint64 public disputedAt` (set when entering Disputed state)
-- `Status public status`
-- `bytes32 public taskSpecHash`
-- `bytes32 public submissionHash`
-- `string public submissionURI`
-- `string public disputeReasonURI`
-- `uint16 public protocolFeeBpsSnapshot`
-- `address public treasurySnapshot`
+## 8) Edge Cases
 
-Design notes:
-- Fee and treasury are snapshotted at creation to prevent governance race conditions mid-task.
-- Off-chain content is referenced by URI and hash only; no on-chain content storage.
+- **Late submission**: reverts if `block.timestamp > submissionDeadline`.
+- **Approval/dispute race**: first confirmed transition wins; subsequent calls revert by status guard.
+- **Buyer inactivity after submission**: verifier can still approve within review window. Worker can escalate silence to Disputed after review window lapse; arbitrator remains final payout authority.
+- **Arbitrator inactivity**: buyer can claim full refund via `claimArbitratorTimeout()` after the configured timeout period.
+- **ERC20 vs ETH**: `token == address(0)` means ETH-denominated. All settlement math is token-agnostic; the transfer mechanism differs.
+- **Zero worker stake**: `depositStake()` reverts. Submit proceeds without stake check.
+- **Abort eligibility**: `abortRemainingMilestones()` requires the current milestone to be in a terminal failure state (Resolved or Cancelled). Cannot abort while a milestone is actively in progress with time remaining.
 
-## 7) Contract Interfaces
-## 7.1 Factory
-```solidity
-struct CreateParams {
-    address buyer;
-    address worker;
-    address verifier;
-    address arbitrator;
-    uint256 amount;
-    uint256 workerStake;
-    uint64 submissionDeadline;
-    uint64 reviewPeriodSeconds;
-    uint64 disputePeriodSeconds;
-    bytes32 taskSpecHash;
-    uint64 arbitratorTimeoutSeconds;
-    address token;
-}
+## 9) Security Model
 
-function createEscrow(CreateParams calldata p) external returns (uint256 escrowId, address escrow);
-
-function setProtocolFeeBps(uint16 newFeeBps) external;
-function setTreasury(address newTreasury) external;
-function setPaused(bool shouldPause) external;
-```
-
-## 7.2 Escrow
-```solidity
-function fund() external payable;
-function depositStake() external payable;
-function cancelBeforeFunding() external;
-function submit(bytes32 _submissionHash, string calldata _submissionURI) external;
-function approveByBuyer() external;
-function approveByVerifier() external;
-function rejectByVerifier(string calldata reasonURI) external;
-function dispute(string calldata reasonURI) external;
-function escalateSilence(string calldata reasonURI) external;
-function resolveDispute(
-    uint16 workerAwardBps,
-    string calldata resolutionURI
-) external;
-function claimTimeoutRefund() external;
-function claimArbitratorTimeout() external;
-```
-
-`workerAwardBps` split semantics in dispute:
-- 0 = full refund to buyer
-- 10000 = full payout to worker
-- intermediate = proportional split
-
-## 8) Events
-```solidity
-event EscrowCreated(
-    uint256 indexed escrowId,
-    address indexed escrow,
-    address indexed buyer,
-    address worker,
-    address verifier,
-    address arbitrator,
-    bytes32 taskSpecHash
-);
-
-event EscrowFunded(address indexed buyer, uint256 amount);
-event WorkerStakeDeposited(address indexed worker, uint256 amount);
-event SubmissionMade(address indexed worker, bytes32 submissionHash, string submissionURI);
-event Approved(address indexed approver, uint64 approvedAt);
-event Rejected(address indexed verifier, string reasonURI, uint64 rejectedAt);
-event Disputed(address indexed raisedBy, string reasonURI, uint64 disputedAt);
-event SilenceEscalated(address indexed worker, string reasonURI, uint64 escalatedAt);
-event DisputeResolved(address indexed arbitrator, uint16 workerAwardBps, string resolutionURI);
-event Settled(uint256 workerNet, uint256 buyerRefund, uint256 protocolFee, uint256 workerStakeReturned);
-event Refunded(uint256 amount, uint256 workerStakeForfeited);
-event ArbitratorTimeoutClaimed(address indexed buyer, uint64 claimedAt);
-event Cancelled();
-```
-
-## 9) State Machine
-Allowed transitions:
-- `Created -> Funded` via `fund()`
-- `Created -> Cancelled` via `cancelBeforeFunding()` (buyer only)
-- `Funded -> Submitted` via `submit()`
-- `Submitted -> Approved` via `approveByBuyer()` or `approveByVerifier()`
-- `Submitted -> Disputed` via `rejectByVerifier()` (verifier only, within review window)
-- `Submitted -> Disputed` via `dispute()` (buyer only, within review/dispute window)
-- `Submitted -> Disputed` via `escalateSilence()` (worker only, after review window lapse without approval/dispute)
-- `Approved -> Settled` internal settlement execution
-- `Disputed -> Resolved` via `resolveDispute()` (arbitrator only)
-- `Resolved -> Settled` internal settlement execution
-- `Funded -> Refunded` via `claimTimeoutRefund()` if submission deadline passes with no submission
-- `Disputed -> Refunded` via `claimArbitratorTimeout()` if arbitrator timeout passes with no resolution
-
-Invalid transitions MUST revert with custom errors.
-
-## 10) Function Semantics
-## 10.1 `fund()`
-- Caller must be `buyer`.
-- Must send exactly `amount`.
-- Status must be `Created`.
-- On success set status `Funded`, emit `EscrowFunded`.
-
-## 10.2 `depositStake()`
-- Caller must be `worker`.
-- Status must be `Funded`.
-- `workerStake > 0` (reverts if no stake required).
-- Must not have already deposited (reverts with `StakeAlreadyDeposited`).
-- For ETH: must send exactly `workerStake`.
-- For ERC20: worker must approve token first; contract transfers `workerStake` via `transferFrom`.
-- Set `workerStaked = true`, emit `WorkerStakeDeposited`.
-
-## 10.3 `submit(...)`
-- Caller must be `worker`.
-- Status must be `Funded`.
-- `block.timestamp <= submissionDeadline`.
-- `submissionHash != bytes32(0)`.
-- If `workerStake > 0`, `workerStaked` must be `true` (reverts with `StakeNotDeposited`).
-- Set submission fields and `submittedAt`, status `Submitted`, emit `SubmissionMade`.
-
-## 10.4 `approveByBuyer()` / `approveByVerifier()`
-- Caller must match respective role.
-- Status must be `Submitted`.
-- Must be within `submittedAt + reviewPeriodSeconds`.
-- Set `approvedAt`, status `Approved`, execute settlement immediately.
-
-## 10.5 `dispute(reasonURI)`
-- Caller must be `buyer`.
-- Status must be `Submitted`.
-- Must be within `submittedAt + reviewPeriodSeconds + disputePeriodSeconds`.
-- Set `disputeReasonURI`, status `Disputed`, emit `Disputed`.
-
-## 10.6 `rejectByVerifier(reasonURI)`
-- Caller must be `verifier`.
-- Status must be `Submitted`.
-- Must be within `submittedAt + reviewPeriodSeconds`.
-- Set `disputeReasonURI`, status `Disputed`.
-- Emit `Rejected` and `Disputed`.
-
-## 10.7 `escalateSilence(reasonURI)`
-- Caller must be `worker`.
-- Status must be `Submitted`.
-- `block.timestamp > submittedAt + reviewPeriodSeconds`.
-- No prior approval/dispute is possible due to status guard.
-- Set `disputeReasonURI`, status `Disputed`.
-- Emit `SilenceEscalated`.
-
-## 10.8 `resolveDispute(workerAwardBps, resolutionURI)`
-- Caller must be `arbitrator`.
-- Status must be `Disputed`.
-- `workerAwardBps <= 10000`.
-- Set status `Resolved`, emit `DisputeResolved`, execute split settlement.
-
-## 10.9 `claimTimeoutRefund()`
-- Caller must be `buyer`.
-- Status must be `Funded`.
-- `block.timestamp > submissionDeadline`.
-- Refund full amount to buyer, set status `Refunded`, emit `Refunded`.
-
-## 10.10 `claimArbitratorTimeout()`
-- Caller must be `buyer`.
-- Status must be `Disputed`.
-- `block.timestamp > disputedAt + arbitratorTimeoutSeconds`.
-- Refund full amount to buyer, set status `Refunded`.
-- Emit `ArbitratorTimeoutClaimed` and `Refunded`.
-
-## 10.11 `cancelBeforeFunding()`
-- Caller must be `buyer`.
-- Status must be `Created`.
-- Set status `Cancelled`, emit `Cancelled`.
-
-## 11) Settlement Math
-For non-dispute approval:
-- `grossWorker = amount`
-- `fee = grossWorker * protocolFeeBpsSnapshot / 10000`
-- `workerNet = grossWorker - fee`
-- `stakeReturn = workerStaked ? workerStake : 0`
-- Transfer `workerNet + stakeReturn` to worker, `fee` to treasury
-- Emit `Settled(workerNet, 0, fee, stakeReturn)`
-
-For dispute resolution:
-- `workerGross = amount * workerAwardBps / 10000`
-- `buyerRefund = amount - workerGross`
-- `fee = workerGross * protocolFeeBpsSnapshot / 10000`
-- `workerNet = workerGross - fee`
-- `stakeReturn = workerStaked ? workerStake * workerAwardBps / 10000 : 0`
-- `stakeForfeited = workerStaked ? workerStake - stakeReturn : 0`
-- Transfer `workerNet + stakeReturn` to worker, `buyerRefund + stakeForfeited` to buyer, `fee` to treasury
-- Emit `Settled(workerNet, buyerRefund, fee, stakeReturn)`
-
-For timeout refund (worker didn't submit):
-- `stakeForfeited = workerStaked ? workerStake : 0`
-- Transfer `amount + stakeForfeited` to buyer
-- Emit `Refunded(amount, stakeForfeited)`
-
-For arbitrator timeout:
-- `stakeForfeited = workerStaked ? workerStake : 0`
-- Transfer `amount + stakeForfeited` to buyer
-- Emit `Refunded(amount, stakeForfeited)`
-
-Rounding:
-- All divisions floor toward zero (Solidity default).
-- Any remainder remains with buyer path due to subtraction order above.
-
-## 12) Access Control Rules
-- Factory admin can update fee and treasury, and pause/unpause factory creation.
-- Escrow role permissions are strictly per-task and immutable.
-- Pausing factory does not freeze existing escrows in V1.
-
-## 13) Security Requirements
-- Use `nonReentrant` on payable state-changing functions that transfer ETH.
-- Use checks-effects-interactions ordering.
+- `nonReentrant` on payable state-changing functions that transfer ETH.
+- Checks-effects-interactions ordering throughout.
 - Revert on failed ETH transfers.
-- Avoid unbounded loops.
-- Emit events for all terminal and role actions.
-- Use custom errors instead of string reverts where possible.
-
-## 14) Invariants
-- Escrow balance can only be:
-  - `0` after terminal settlement/refund
-  - `amount` (or `amount + workerStake` when stake deposited) during active funded/submitted/disputed states
-- Terminal states are mutually exclusive: `Settled`, `Refunded`, `Cancelled`.
-- No function can move from terminal state to non-terminal state.
-- Total funds distributed from escrow never exceeds `amount + workerStake`.
-- Fee never exceeds worker gross award.
-- Worker stake is returned fully on approval, split proportionally on dispute, forfeited on timeout.
-
-## 15) Edge Cases
-- Late submission: reject if block time past deadline.
-- Dual approval/dispute race: first confirmed transition wins; subsequent calls revert by status.
-- Buyer inactivity after submission:
-  - Verifier can still approve within review window.
-  - Worker can escalate silence to `Disputed`; arbitrator remains final payout authority.
-- Arbitrator inactivity: buyer can claim full refund via `claimArbitratorTimeout()` after the configured timeout period elapses.
-
-## 16) Off-chain Integration Requirements
-Go server must persist (SQLite):
-- `chainId`
-- `factoryAddress`
-- `escrowAddress`
-- `escrowId`
-- tx hashes for each state transition
-
-Indexer must reconcile events:
-- `EscrowCreated`
-- `EscrowFunded`
-- `WorkerStakeDeposited`
-- `SubmissionMade`
-- `Approved`
-- `Rejected`
-- `Disputed`
-- `SilenceEscalated`
-- `DisputeResolved`
-- `Settled`
-- `Refunded`
-- `ArbitratorTimeoutClaimed`
-- `Cancelled`
-
-MCP tools and HTTP API must expose on-chain status as source of truth for payment state.
-
-## 17) Testing Requirements (Foundry)
-Unit tests:
-- Happy path: create -> fund -> submit -> approve -> settle
-- Timeout refund path
-- Dispute + split resolution path (0, 5000, 10000 bps)
-- Verifier reject path
-- Worker silence-escalation path
-- Permission failures for every role-gated function
-- State transition reverts
-- Fee calculation correctness and rounding behavior
-
-Invariant/property tests:
-- Conservation of funds
-- No payouts in invalid states
-- Terminal state immutability
-
-Fuzz tests:
-- `workerAwardBps` bounds
-- Timing boundaries at exact cutoff timestamps
-
-## 18) Deployment + Ops (V1)
-- Deploy factory with:
-  - conservative fee bps
-  - multisig treasury
-  - multisig admin key
-- Verify contracts on explorer.
-- Publish ABI and addresses in repo.
-- Add pause runbook and incident response checklist.
-
-## 19) Parameter Rationale (Paper-Grounded)
-- `reviewPeriodSeconds = 86_400` (24 hours)
-- `disputePeriodSeconds = 172_800` (48 hours)
-- Verifier explicit reject: enabled via `rejectByVerifier`.
-- Worker silence escalation: enabled via `escalateSilence`.
-
-Rationale linked to the paper's delegation axes:
-- Criticality and accountability: explicit reject avoids passive acceptance under ambiguity.
-- Monitoring and authority gradients: silence-escalation prevents indefinite lock under asymmetric power/inattention.
-- Transaction cost and reversibility: 24h/48h windows balance oversight with capital efficiency.
-
-## 20) Definition of Done (V1)
-- Contracts implemented and deployed to Base Sepolia.
-- All required tests passing in CI.
-- Go server (MCP + HTTP API) can execute full lifecycle on testnet.
-- Event indexer keeps off-chain state in sync with chain.
-- Security checklist complete with no high-severity unresolved findings.
+- No unbounded loops (milestone count capped at 16).
+- Custom errors instead of string reverts.
+- Events emitted for all state transitions and administrative actions.
+- Fee and treasury snapshotted at creation to prevent governance manipulation mid-lifecycle.

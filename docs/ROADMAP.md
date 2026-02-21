@@ -56,7 +56,7 @@ Marketplace layer built on top of the settlement kernel.
 
 1. **ERC20/USDC payment support** ✓ -- escrow accepts ERC20 tokens alongside ETH; token field propagated through contracts, storage, indexer, API, and MCP tools
 2. **Worker stake activation** ✓ -- `workerStake` field activated as anti-Sybil bond; worker deposits stake via `depositStake()` after buyer funding and before submission; stake returned on approval, forfeited proportionally on dispute, forfeited fully on timeout/arbitrator timeout (paper §4.8: delegatee posts financial stake into escrow prior to execution)
-3. **Milestone-based escrow** -- multiple submission/approval checkpoints within a single escrow with partial payouts (paper §4.4: smart contracts with pre-agreed executable clauses for adaptive coordination)
+3. **Milestone-based escrow** ✓ -- multiple submission/approval checkpoints within a single escrow with partial payouts; per-milestone submit/approve/dispute/resolve cycles; sequential processing, max 16 milestones, immutable after creation; buyer-only `abortRemainingMilestones()` after terminal failure; worker stake settled at escrow terminal state; propagated through contracts, storage, indexer, MCP tools, HTTP API, and PlantUML diagrams (paper §4.4: smart contracts with pre-agreed executable clauses for adaptive coordination)
 4. **Backup agent clause** -- pre-designated fallback worker if primary defaults, with penalty coverage (paper §4.4: backup agent auto-re-allocation on failed ZK checkpoint)
 5. **On-chain reputation seed** -- factory-level outcome recording per address: tasks completed, disputed, failed (paper §4.6 Table 3: immutable ledger approach)
 6. **Complexity floor parameter** -- minimum escrow amount to justify delegation overhead, gas + protocol fee; lower bound calibrated against x402 facilitator fee + on-chain gas (paper §4.3: complexity floor below which delegation overhead exceeds task value)
@@ -124,9 +124,9 @@ How each version maps to the five pillars from ["Intelligent AI Delegation"](htt
 
 **V1**: Canonical events for every state transition. Submission hash commitments. Event indexer for off-chain reconciliation. MCP tools for monitoring. Verifier/buyer approval for direct outcome verification. Arbitrator for third-party auditing.
 
-**V2**: Attestation chains across delegation links -- each link produces signed attestation of sub-task completion. Real-time event subscriptions (paper's L0-L3 granularity levels).
+**V2**: Milestone-based escrow -- on-chain progress checkpoints with per-milestone verification and partial payouts (paper §4.5: "smart contracts can be used to make the delegatee agent commit to publishing key progress milestones"). Real-time event subscriptions (paper's L0-L3 granularity levels).
 
-**V3**: ZK verification integration for formally verifiable tasks. Multi-verifier quorum for game-theoretic consensus.
+**V3**: Attestation chains across delegation links -- each link produces signed attestation of sub-task completion (paper §4.8). ZK verification integration for formally verifiable tasks. Multi-verifier quorum for game-theoretic consensus.
 
 ### Pillar 4: Scalable Market Coordination (Sections 4.3, 4.6)
 

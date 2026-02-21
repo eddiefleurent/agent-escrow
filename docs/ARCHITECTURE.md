@@ -74,6 +74,19 @@ V1 implements the financial settlement kernel -- the paper's foundational layer 
 | Smart contract as settlement (§4.2) | Escrow holds funds; verification clause gates release |
 | Dispute resolution (§4.8) | Arbitrator resolves disputes; split payout via basis points |
 
+### V2 Paper Coverage (Milestone-Based Escrow)
+
+Milestone-based escrow extends V1's coverage of the paper's framework:
+
+| Paper Concept | V2 Milestone Implementation |
+|---|---|
+| Adaptive coordination (§4.4) | Pre-agreed executable clauses: milestones are on-chain checkpoints that enable staged verification and adaptive re-delegation |
+| Monitoring via smart contracts (§4.5) | "Smart contracts on blockchain can be used to make the delegatee agent commit to publishing key progress milestones" -- each milestone submission is a committed checkpoint |
+| Partial compensation (§6.1) | "Explicit clauses within the smart contract that enable partial compensation, and verification of the task completion percentage" -- per-milestone payouts |
+| Verifiable task completion (§4.8) | Each milestone is independently verified before payout, enabling fine-grained verification aligned with task decomposition |
+| Contract-first decomposition (§4.1) | Milestones enforce that task decomposition is reflected in the settlement structure -- each sub-task maps to a verifiable, payable milestone |
+| Abort and re-delegation (§4.4) | `abortRemainingMilestones()` enables the buyer to exit after a failed milestone, recovering funds for uncompleted work and enabling re-delegation to another agent |
+
 ### Protocol Integration Strategy
 
 The paper's insight (Section 6): extend existing agent protocols rather than compete with them.
@@ -183,7 +196,7 @@ The current architecture -- single Go binary, SQLite, one factory contract -- is
 
 **Components that scale without changes:**
 
-- **On-chain contracts.** Each escrow is an independent contract instance with no shared state bottleneck. The factory is a thin deployer. ETH/ERC20 support and worker-stake anti-Sybil bonding were originally planned for V2 and are now implemented in the current contract baseline. Milestone escrow (V2) and ZK verification slots (V3) extend the escrow contract without changing the factory pattern.
+- **On-chain contracts.** Each escrow is an independent contract instance with no shared state bottleneck. The factory is a thin deployer. ETH/ERC20 support and worker-stake anti-Sybil bonding were originally planned for V2 and are now implemented in the current contract baseline. Milestone escrow (V2) extends the escrow contract with per-milestone state tracking and partial payouts; ZK verification slots (V3) add optional proof hashes per submission. Neither changes the factory pattern.
 - **On-chain/off-chain boundary.** The design principle -- settle on-chain, everything else off-chain -- is the correct long-term split. Bidding, matching, reputation scoring, task decomposition, and agent orchestration all remain off-chain where they can iterate independently.
 - **Go as the server language.** Go's concurrency model, low memory footprint, and single-binary deployment are well-suited through V4+. The go-ethereum client, the MCP SDK, and the HTTP server all scale to high concurrency without architectural changes.
 - **MCP + HTTP dual interface.** MCP is the primary agent integration surface; HTTP serves dashboards, external integrations, and tooling. This dual-surface pattern holds through V4 and beyond.
@@ -247,7 +260,7 @@ The riskiest V4+ item is **cross-chain settlement**, which introduces bridge tru
 - **`TaskEscrowFactory`** (`src/TaskEscrowFactory.sol`) -- creates escrow instances, stores protocol-level configuration (fee basis points, treasury, pause state).
 - **`TaskEscrow`** (`src/TaskEscrow.sol`) -- holds escrowed ETH or ERC20, enforces the lifecycle state machine with role-gated transitions.
 
-### State Machine
+### State Machine (Single-Shot Escrow)
 
 ```text
 Created ──fund()──> Funded ──submit()──> Submitted
@@ -280,6 +293,52 @@ When `workerStake > 0`, worker must call `depositStake()` before `submit()`.
 
 Nine states: Created, Funded, Submitted, Approved, Disputed, Resolved, Settled, Refunded, Cancelled.
 
+### Milestone-Based Escrow (V2)
+
+For tasks requiring intermediate verification checkpoints, the escrow supports multiple milestones within a single contract. This implements the paper's adaptive coordination (§4.4) and monitoring (§4.5) requirements: "Smart contracts on blockchain can be used to make the delegatee agent commit to publishing key progress milestones or checkpoints to the blockchain."
+
+**Design rationale.** The paper identifies that static execution plans are insufficient for high-uncertainty or long-duration tasks (§4.4). Milestones provide the on-chain primitive for staged verification: each milestone is a checkpoint where the delegator can verify progress, release partial payment, or trigger adaptive re-delegation. This transforms the escrow from a single-shot settlement into a staged contract with intermediate verification and partial payouts.
+
+**Escrow-level state machine (milestone mode):**
+
+```text
+Created ──fund()──> Funded ──[milestone cycling]──> Settled
+  │                   │                                │
+  │cancelBeforeFunding│                                │
+  v                   │                                │
+Cancelled            claimTimeoutRefund               Refunded
+                      │                                ^
+                      v                                │
+                   Refunded <── abortRemainingMilestones()
+```
+
+**Per-milestone state machine:**
+
+```text
+Pending ──submit()──> Submitted
+                        │  │  │
+                        │  │  └─ approve() ──> Approved (partial payout)
+                        │  │
+                        │  └─ dispute/reject/escalate ──> Disputed
+                        │                                    │
+                        │                              resolveDispute()
+                        │                                    │
+                        │                                    v
+                        │                                 Resolved
+                        │
+                        └─ timeout ──> Cancelled
+```
+
+Key properties:
+- Milestones are defined at creation and processed in order.
+- Each milestone has its own amount, deadline, and review cycle.
+- Approved milestones pay out immediately (no waiting for later milestones).
+- Worker stake is held for the full escrow duration, settled once when all milestones reach terminal states.
+- The buyer can abort remaining milestones after a dispute resolution or timeout, receiving a refund for uncompleted work.
+- Single-milestone escrows behave identically to V1 (backward compatibility).
+
+See [`SPEC.md`](SPEC.md) for the state machine, settlement math, and invariants.
+
 ### Roles
 
 | Role | Responsibility |
@@ -294,9 +353,10 @@ Roles are immutable per escrow in V1.
 
 ### Economics
 
-- Protocol fee: basis points on successful payout (snapshotted at escrow creation to prevent governance races).
+- Protocol fee: basis points on successful payout (snapshotted at escrow creation to prevent governance races). In milestone mode, the fee is applied per-milestone payout.
 - ETH and ERC20 (originally planned for V2, now part of the current baseline).
-- `workerStake`: optional anti-Sybil bond the worker deposits before submission (paper §4.8). Set at escrow creation; 0 means no stake required. If approved, the stake is returned to the worker in full; disputed stakes follow the same proportional split as payment; on timeout or arbitrator timeout, the stake is forfeited to the buyer.
+- `workerStake`: optional anti-Sybil bond the worker deposits before submission (paper §4.8). Set at escrow creation; 0 means no stake required. If approved, the stake is returned to the worker in full; disputed stakes follow the same proportional split as payment; on timeout or arbitrator timeout, the stake is forfeited to the buyer. In milestone mode, stake is held for the full escrow duration and settled once at the end.
+- Milestone payouts: each milestone pays out independently on approval. The buyer funds the full `totalAmount` upfront; partial payouts are released as milestones complete. This reduces capital lock-up risk for the worker while maintaining buyer protection for uncompleted work.
 
 ### Trust Model
 
@@ -304,7 +364,7 @@ Roles are immutable per escrow in V1.
 - Verifier/arbitrator identities are the trust substrate in V1.
 - All critical state transitions are auditable and replayable via events.
 
-Full contract specification: [`SPEC.md`](SPEC.md)
+Contract design intent (state machine, settlement math, invariants, paper traceability): [`SPEC.md`](SPEC.md)
 
 ---
 
@@ -362,7 +422,8 @@ SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 | Table | Purpose |
 |---|---|
 | `tasks` | Task metadata (title, description, spec hash) |
-| `escrows` | Escrow records mirroring on-chain state |
+| `escrows` | Escrow records mirroring on-chain state (includes `milestone_count`, `current_milestone`) |
+| `milestones` | Per-milestone records: amount, deadline, status, submission/dispute data (V2) |
 | `submissions` | Worker submission records |
 | `disputes` | Dispute and resolution records |
 | `chain_logs` | Raw chain event log (idempotent by tx_hash + log_index) |
@@ -387,14 +448,15 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 
 | Tool | Inputs | Chain Method |
 |---|---|---|
-| `create_escrow` | title, roles, amount, worker_stake, token, deadlines | `Factory.createEscrow` |
+| `create_escrow` | title, roles, amount, worker_stake, token, deadlines, milestones (optional) | `Factory.createEscrow` |
 | `fund_escrow` | escrow_id | `Escrow.fund` |
 | `deposit_stake` | escrow_id | `Escrow.depositStake` |
-| `submit_work` | escrow_id, submission_uri | `Escrow.submit` |
-| `approve_work` | escrow_id, role | `Escrow.approveByBuyer/Verifier` |
-| `dispute_work` | escrow_id, role, reason_uri | `Escrow.dispute/rejectByVerifier/escalateSilence` |
-| `resolve_dispute` | escrow_id, worker_award_bps, resolution_uri | `Escrow.resolveDispute` |
-| `get_escrow` | escrow_id | DB read |
+| `submit_work` | escrow_id, submission_uri, milestone_index (optional) | `Escrow.submit` / `Escrow.submitMilestone` |
+| `approve_work` | escrow_id, role, milestone_index (optional) | `Escrow.approveByBuyer/Verifier` / milestone variants |
+| `dispute_work` | escrow_id, role, reason_uri, milestone_index (optional) | `Escrow.dispute/rejectByVerifier/escalateSilence` / milestone variants |
+| `resolve_dispute` | escrow_id, worker_award_bps, resolution_uri, milestone_index (optional) | `Escrow.resolveDispute` / milestone variant |
+| `abort_milestones` | escrow_id | `Escrow.abortRemainingMilestones` |
+| `get_escrow` | escrow_id | DB read (includes milestone details) |
 | `list_escrows` | role, address, status | DB query |
 
 ### HTTP API (Secondary Interface)
@@ -402,15 +464,16 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/v1/health` | Health check |
-| POST | `/api/v1/escrows` | Create escrow |
+| POST | `/api/v1/escrows` | Create escrow (optional `milestones` array in body) |
 | GET | `/api/v1/escrows` | List (query: role, address, status) |
-| GET | `/api/v1/escrows/{id}` | Get escrow |
+| GET | `/api/v1/escrows/{id}` | Get escrow (includes milestone details if applicable) |
 | POST | `/api/v1/escrows/{id}/fund` | Fund |
 | POST | `/api/v1/escrows/{id}/deposit-stake` | Deposit worker stake |
-| POST | `/api/v1/escrows/{id}/submit` | Submit work |
-| POST | `/api/v1/escrows/{id}/approve` | Approve (body: role) |
-| POST | `/api/v1/escrows/{id}/dispute` | Dispute (body: role, reason_uri) |
-| POST | `/api/v1/escrows/{id}/resolve` | Resolve (body: worker_award_bps, resolution_uri) |
+| POST | `/api/v1/escrows/{id}/submit` | Submit work (optional `milestone_index` in body) |
+| POST | `/api/v1/escrows/{id}/approve` | Approve (body: role, optional milestone_index) |
+| POST | `/api/v1/escrows/{id}/dispute` | Dispute (body: role, reason_uri, optional milestone_index) |
+| POST | `/api/v1/escrows/{id}/resolve` | Resolve (body: worker_award_bps, resolution_uri, optional milestone_index) |
+| POST | `/api/v1/escrows/{id}/abort-milestones` | Abort remaining milestones (buyer only) |
 
 ### Configuration
 
