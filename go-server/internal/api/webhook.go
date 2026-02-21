@@ -308,6 +308,7 @@ func verifyCDPSignature(body []byte, sigHeader, secret string, headers http.Head
 
 	var timestamp, headerNames, providedSig string
 	for _, p := range parts {
+		p = strings.TrimSpace(p)
 		switch {
 		case strings.HasPrefix(p, "t="):
 			timestamp = strings.TrimPrefix(p, "t=")
