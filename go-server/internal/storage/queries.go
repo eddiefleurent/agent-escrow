@@ -503,13 +503,20 @@ func (d *DB) UpdateMilestoneSubmission(escrowID int64, milestoneIndex int, hash,
 	return nil
 }
 
-func (d *DB) UpdateEscrowBackupActivated(id int64, activeWorker string) error {
-	_, err := d.db.Exec(
-		`UPDATE escrows SET active_worker = ?, backup_activated = 1, updated_at = datetime('now') WHERE id = ?`,
-		activeWorker, id,
+func (d *DB) UpdateEscrowBackupActivated(id int64, activeWorker string, newDeadline uint64) error {
+	res, err := d.db.Exec(
+		`UPDATE escrows SET active_worker = ?, backup_activated = 1, submission_deadline = ?, updated_at = datetime('now') WHERE id = ?`,
+		activeWorker, newDeadline, id,
 	)
 	if err != nil {
 		return fmt.Errorf("UpdateEscrowBackupActivated: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("UpdateEscrowBackupActivated rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("UpdateEscrowBackupActivated id=%d: %w", id, sql.ErrNoRows)
 	}
 	return nil
 }

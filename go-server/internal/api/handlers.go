@@ -789,6 +789,11 @@ func (h *Handlers) ActivateBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if escrow.BackupActivated {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "backup already activated"})
+		return
+	}
+
 	tx, err := h.chain.ActivateBackup(r.Context(), common.HexToAddress(escrow.EscrowAddress))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})

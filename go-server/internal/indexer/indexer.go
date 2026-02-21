@@ -530,13 +530,23 @@ func (idx *Indexer) handleBackupActivated(lg types.Log, dbEscrowID int64) error 
 
 	newWorker := common.BytesToAddress(lg.Topics[2].Bytes())
 
+	vals, err := chain.EscrowABI.Events["BackupActivated"].Inputs.NonIndexed().Unpack(lg.Data)
+	if err != nil {
+		return fmt.Errorf("BackupActivated: unpack non-indexed args: %w", err)
+	}
+	newDeadline, ok := vals[0].(uint64)
+	if !ok {
+		return fmt.Errorf("BackupActivated: unexpected type for newDeadline: %T", vals[0])
+	}
+
 	slog.Info("backup worker activated",
 		"escrow_id", dbEscrowID,
 		"previous_worker", common.BytesToAddress(lg.Topics[1].Bytes()).Hex(),
 		"new_worker", newWorker.Hex(),
+		"new_deadline", newDeadline,
 	)
 
-	return idx.db.UpdateEscrowBackupActivated(dbEscrowID, newWorker.Hex())
+	return idx.db.UpdateEscrowBackupActivated(dbEscrowID, newWorker.Hex(), newDeadline)
 }
 
 // extractMilestoneIndex reads the milestone index from the first indexed topic

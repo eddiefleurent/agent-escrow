@@ -203,6 +203,9 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		}
 		backupDeadlineExt = bde
 	}
+	if backupDeadlineExt > 0 && (args.BackupWorker == "" || common.HexToAddress(args.BackupWorker) == (common.Address{})) {
+		return textResult("backup_deadline_extension set but no backup_worker provided"), nil, nil
+	}
 
 	factory := common.HexToAddress(s.cfg.FactoryAddress)
 	params := chain.CreateEscrowParams{

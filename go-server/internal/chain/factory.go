@@ -41,6 +41,7 @@ type milestoneTuple struct {
 
 // createParamsTuple is the struct layout that matches the Solidity CreateParams struct
 // used in the factory's createEscrow(CreateParams calldata) function.
+// Field order must exactly match the Solidity struct for correct ABI encoding.
 type createParamsTuple struct {
 	Buyer                    common.Address
 	Worker                   common.Address
@@ -54,9 +55,9 @@ type createParamsTuple struct {
 	TaskSpecHash             [32]byte
 	ArbitratorTimeoutSeconds uint64
 	Token                    common.Address
-	Milestones               []milestoneTuple
 	BackupWorker             common.Address
 	BackupDeadlineExtension  uint64
+	Milestones               []milestoneTuple
 }
 
 func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p CreateEscrowParams) (*types.Transaction, error) {
@@ -84,9 +85,9 @@ func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p Cre
 		TaskSpecHash:             p.TaskSpecHash,
 		ArbitratorTimeoutSeconds: p.ArbitratorTimeoutSeconds,
 		Token:                    p.Token,
-		Milestones:               milestones,
 		BackupWorker:             p.BackupWorker,
 		BackupDeadlineExtension:  p.BackupDeadlineExtension,
+		Milestones:               milestones,
 	}
 	data, err := FactoryABI.Pack("createEscrow", tuple)
 	if err != nil {
