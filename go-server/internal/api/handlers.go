@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
@@ -814,7 +815,7 @@ func (h *Handlers) GetReputation(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid address"})
 		return
 	}
-	addr = common.HexToAddress(addr).Hex()
+	addr = strings.ToLower(common.HexToAddress(addr).Hex())
 
 	role := r.URL.Query().Get("role")
 	if role != "" && role != "worker" && role != "buyer" {

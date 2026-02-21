@@ -111,18 +111,7 @@ make go-run
 
 The server starts the HTTP API on port 8080 and the event indexer in the background. Set `MCP_TRANSPORT=stdio` to also enable the MCP server for agent integration.
 
-See [`docs/SETUP.md`](docs/SETUP.md) for the full configuration reference.
-
-### Deploy to Base Sepolia
-
-```bash
-export PRIVATE_KEY=0x...
-export TREASURY=0x...
-export OWNER=0x...
-export PROTOCOL_FEE_BPS=100
-export BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
-make deploy-base-sepolia
-```
+See [`docs/SETUP.md`](docs/SETUP.md) for deployment and the full configuration reference.
 
 ## Agent Integration
 

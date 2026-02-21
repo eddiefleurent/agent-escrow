@@ -33,6 +33,11 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	mux.HandleFunc("POST /api/v1/escrows/{id}/activate-backup", h.ActivateBackup)
 	mux.HandleFunc("GET /api/v1/reputation/{address}", h.GetReputation)
 
+	if cfg.WebhookMode() {
+		wh := NewWebhookHandler(idx, cfg.CDPWebhookSecret)
+		mux.HandleFunc("POST /webhooks/cdp", wh.HandleCDPWebhook)
+	}
+
 	var handler http.Handler = mux
 	handler = timeoutMiddleware(cfg.RequestTimeout, cfg.TxTimeout, handler)
 	handler = corsMiddleware(cfg.CORSOrigins, handler)

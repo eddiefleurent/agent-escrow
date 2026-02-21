@@ -29,6 +29,7 @@ package "AI Agents" as agents #E8EAF6 {
 package "Go Server" as server #E3F2FD {
   [MCP Server\n(stdio / streamable-HTTP)] as mcp_server #BBDEFB
   [HTTP API\n(JSON REST)] as http_api #BBDEFB
+  [Webhook Handler\n(POST /webhooks/cdp)] as webhook #BBDEFB
   [Event Indexer\n(background poller)] as indexer #BBDEFB
 
   package "Shared Logic" as shared #E1F5FE {
@@ -40,6 +41,7 @@ package "Go Server" as server #E3F2FD {
   mcp_server -down-> storage
   http_api -down-> chain_client
   http_api -down-> storage
+  webhook -down-> storage
   indexer -down-> chain_client
   indexer -down-> storage
 }
@@ -51,6 +53,8 @@ package "Base (Ethereum L2)" as chain #E8F5E9 {
   escrow -left-> factory : recordOutcome()
 }
 
+cloud "CDP Webhooks" as cdp #FFF3E0
+
 mcp_client -down-> mcp_server : stdio / HTTP
 http_client -down-> http_api : JSON
 
@@ -59,10 +63,21 @@ chain_client -down-> escrow : JSON-RPC
 indexer ..down..> factory : poll events
 indexer ..down..> escrow : poll events
 
+cdp -down-> webhook : HMAC-signed\nPOST
+cdp ..up..> factory : subscribes to\nfactory events
+
 note right of mcp_server
   Primary agent interface.
   12 tools covering escrow
   lifecycle + reputation.
+end note
+
+note right of webhook
+  Receives real-time factory
+  events (EscrowCreated,
+  OutcomeRecorded) from CDP.
+  Optional: enabled by
+  CDP_WEBHOOK_SECRET.
 end note
 
 note right of storage

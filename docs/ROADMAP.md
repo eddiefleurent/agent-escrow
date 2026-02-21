@@ -63,7 +63,7 @@ Marketplace layer built on top of the settlement kernel.
 7. **Task_RFQ + Bid_Object bidding protocol** -- off-chain bidding with on-chain escrow formalization on bid acceptance; service discovery via [x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) (paper §6.1: Task_RFQ broadcast + signed Bid_Objects)
 8. **A2A settlement adapter** -- agent card advertising escrow capability; `verification_policy` + `escrow_trigger` fields; discoverable via x402 Bazaar (paper §6: A2A Task object extension)
 9. **AP2 mandate-to-escrow bridge** -- AP2 mandate authorization triggers escrow funding via [x402](https://docs.cdp.coinbase.com/x402/welcome) payment rail (EIP-3009 gasless transfer through facilitator into escrow contract) (paper §6: AP2 stake-on-bid + conditional settlement)
-10. **Real-time event subscriptions** -- WebSocket/SSE stream for escrow lifecycle events (paper §4.5: configurable granularity L0-L3)
+10. **Real-time event subscriptions** -- CDP Webhooks deliver factory events (`EscrowCreated`, `OutcomeRecorded`) in real-time via `POST /webhooks/cdp` with HMAC-SHA256 verification (partial ✓); remaining: WebSocket/SSE stream for escrow lifecycle events exposed to clients (paper §4.5: configurable granularity L0-L3)
 11. **Emergency response protocol** -- credential revocation propagation, contract freeze with fund recovery path (paper §4.9: rapid incident response, recursive credential revocation across chains)
 
 ### V3 -- Delegation Intelligence
@@ -202,7 +202,7 @@ Long-horizon items the paper acknowledges as open research:
 - Verifier/arbitrator centralization in V1 (mitigated by multi-verifier quorum in V3)
 - Poor task specification causing avoidable disputes (mitigated by contract-first decomposition tooling in V3)
 - Wallet UX friction for non-crypto-native participants (partially mitigated by x402 gasless funding via facilitator in V2)
-- Off-chain/on-chain state drift if indexing is unreliable
+- Off-chain/on-chain state drift if indexing is unreliable (partially mitigated by dual-mode ingestion: CDP Webhooks for factory events + polling fallback with deduplication)
 - Safety becoming a luxury good if high-assurance delegation is too expensive (mitigated by tiered service levels + governance safety floors)
 - De-skilling risk for human participants who lose proficiency through reduced engagement (mitigated by curriculum-aware routing in V4)
 - Cognitive monoculture if the ecosystem over-depends on a limited number of foundation models (paper §4.9)

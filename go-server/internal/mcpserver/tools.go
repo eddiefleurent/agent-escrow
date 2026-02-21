@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
+	"strings"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
@@ -708,7 +709,7 @@ func (s *Server) handleGetReputation(ctx context.Context, req *mcp.CallToolReque
 	if !common.IsHexAddress(args.Address) {
 		return textResult("invalid address"), nil, nil
 	}
-	addr := common.HexToAddress(args.Address).Hex()
+	addr := strings.ToLower(common.HexToAddress(args.Address).Hex())
 
 	if args.Role != "" && args.Role != "worker" && args.Role != "buyer" {
 		return textResult("role must be 'worker', 'buyer', or omitted"), nil, nil

@@ -4,6 +4,10 @@ pragma solidity ^0.8.34;
 import {IERC20} from "./interfaces/IERC20.sol";
 import {MilestoneLib} from "./MilestoneLib.sol";
 
+interface ITaskEscrowFactory {
+    function recordOutcome(uint8 outcome) external;
+}
+
 contract TaskEscrow {
     enum Status {
         Created,
@@ -739,8 +743,7 @@ contract TaskEscrow {
 
     function _recordOutcome(uint8 outcome) internal {
         if (factory != address(0)) {
-            // recordOutcome(uint8) selector = 0x59e2342e
-            (bool ok,) = factory.call(abi.encodeWithSelector(0x59e2342e, outcome));
+            (bool ok,) = factory.call(abi.encodeWithSelector(ITaskEscrowFactory.recordOutcome.selector, outcome));
             if (!ok) revert TransferFailed();
         }
     }

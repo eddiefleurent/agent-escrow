@@ -288,3 +288,81 @@ note over escrow #C8E6C9
 end note
 
 @enduml
+
+@startuml reputation-seed-sequence
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam sequenceArrowThickness 1.5
+skinparam sequenceLifeLineBorderColor #CCCCCC
+skinparam sequenceDividerBackgroundColor #F5F5F5
+skinparam sequenceDividerFontStyle bold
+skinparam sequenceGroupBackgroundColor #FAFAFA
+skinparam sequenceGroupBorderColor #CCCCCC
+
+skinparam participant {
+  BorderColor #42A5F5
+  BackgroundColor #E3F2FD
+  FontStyle bold
+}
+
+skinparam actor {
+  BorderColor #7E57C2
+  BackgroundColor #EDE7F6
+}
+
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #E0D68A
+  FontSize 11
+}
+
+title Reputation Seed — Recording and Query Flow (§4.6)
+
+actor "Worker" as worker
+participant "TaskEscrow" as escrow
+participant "Factory" as factory
+participant "Indexer" as indexer
+participant "Reputation DB" as db
+participant "HTTP/MCP Client" as client
+
+== Outcome Settlement ==
+
+worker -> escrow : approve / dispute / timeout
+escrow -> escrow : determine outcome\n(completed / disputed / failed)
+escrow -> factory : recordOutcome(outcome)
+factory -> factory : validate escrow registered
+factory -> factory : update workerReputation mapping
+factory -> factory : update buyerReputation mapping
+factory --> escrow : emit OutcomeRecorded event
+note over factory #C8E6C9 : On-chain reputation counters updated
+
+== Off-Chain Indexing (dual-mode) ==
+
+alt #E8F5E9 CDP Webhook (real-time, if configured)
+  factory --> "CDP" as cdp ** #FFF3E0 : OutcomeRecorded event
+  cdp -> "Webhook Handler" as webhook ** #BBDEFB : HMAC-signed POST
+  webhook -> webhook : verify signature\n+ deduplicate via chain_logs
+  webhook -> db : UpsertReputation(address, role, outcome)
+else #F5F5F5 Polling fallback (always active)
+  note over indexer : polls every 15s
+  indexer -> factory : listen for OutcomeRecorded
+  factory --> indexer : OutcomeRecorded(address, role, outcome)
+  indexer -> indexer : decode event\n+ deduplicate via chain_logs
+  indexer -> db : UpsertReputation(address, role, outcome)
+end
+
+db -> db : increment counter\n(completed / disputed / failed)
+note over db #E3F2FD : SQLite reputation record updated
+
+== Reputation Query ==
+
+alt #E8F5E9 Reputation exists
+  client -> db : GET /api/v1/reputation/{address}
+  db --> client : Reputation record
+else #F5F5F5 No data
+  client --> client : return zeroed defaults (0, 0, 0)
+end
+
+@enduml

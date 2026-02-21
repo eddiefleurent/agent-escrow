@@ -77,13 +77,13 @@ type Dispute struct {
 }
 
 type Reputation struct {
-	ID        int64  `json:"id"`
-	Address   string `json:"address"`
-	Role      string `json:"role"`
-	Completed int    `json:"completed"`
-	Disputed  int    `json:"disputed"`
-	Failed    int    `json:"failed"`
-	UpdatedAt string `json:"updated_at"`
+	ID        int64     `json:"id"`
+	Address   string    `json:"address"`
+	Role      string    `json:"role"`
+	Completed int       `json:"completed"`
+	Disputed  int       `json:"disputed"`
+	Failed    int       `json:"failed"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type ChainLog struct {
