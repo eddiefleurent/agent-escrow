@@ -160,7 +160,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 
 	var backupWorkerAddr common.Address
 	if req.BackupWorker != "" {
-		if !common.IsHexAddress(req.BackupWorker) {
+		if !isValidAddress(req.BackupWorker) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid backup_worker address"})
 			return
 		}
@@ -168,7 +168,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 	}
 	var backupDeadlineExt uint64
 	if req.BackupDeadlineExtension != "" {
-		if req.BackupWorker == "" {
+		if backupWorkerAddr == (common.Address{}) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "backup_deadline_extension set without backup_worker"})
 			return
 		}
