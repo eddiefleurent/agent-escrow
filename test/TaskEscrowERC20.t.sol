@@ -172,7 +172,8 @@ contract TaskEscrowERC20Test is Test {
                 disputePeriodSeconds: DISPUTE,
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(usdc)
+                token: address(usdc),
+                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
         return TaskEscrow(addr);
@@ -212,7 +213,8 @@ contract TaskEscrowERC20Test is Test {
                 disputePeriodSeconds: DISPUTE,
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0)
+                token: address(0),
+                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
         assertEq(TaskEscrow(addr).token(), address(0));
@@ -468,7 +470,8 @@ contract TaskEscrowERC20Test is Test {
                 disputePeriodSeconds: DISPUTE,
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(fot)
+                token: address(fot),
+                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
         TaskEscrow escrow = TaskEscrow(addr);
@@ -616,7 +619,8 @@ contract TaskEscrowERC20Test is Test {
                 disputePeriodSeconds: DISPUTE,
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(usdt)
+                token: address(usdt),
+                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
         TaskEscrow escrow = TaskEscrow(addr);
