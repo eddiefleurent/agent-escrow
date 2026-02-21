@@ -183,7 +183,7 @@ go-server/
 docs/
   diagrams/             PlantUML sources + generated PNGs
   ARCHITECTURE.md       System design, paper grounding, scalability analysis
-  SPEC_V1.md            Contract specification: state machine, interfaces, invariants
+  SPEC.md               Contract specification: state machine, interfaces, invariants
   ROADMAP.md            Delivery phases, paper framework mapping
   SETUP.md              Environment setup, configuration reference
   DEMO_RUN.md           Live demo — transactions on Base Sepolia
@@ -196,7 +196,7 @@ docs/
 | Document | Contents |
 |---|---|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System design, paper grounding, scalability analysis |
-| [`docs/SPEC_V1.md`](docs/SPEC_V1.md) | Contract specification: state machine, interfaces, invariants, security |
+| [`docs/SPEC.md`](docs/SPEC.md) | Contract specification: state machine, interfaces, invariants, security |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Implementation phases, paper framework mapping, success metrics |
 | [`docs/SETUP.md`](docs/SETUP.md) | Environment setup, configuration reference |
 | [`docs/DEMO_RUN.md`](docs/DEMO_RUN.md) | Live demo run with on-chain transactions |

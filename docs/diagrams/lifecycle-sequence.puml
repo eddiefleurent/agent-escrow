@@ -44,6 +44,13 @@ factory --> buyer : escrow id + address
 buyer -> escrow : fund
 note over escrow #E3F2FD : **Funded** — ETH/ERC20 held
 
+== Worker Stake (optional) ==
+
+opt workerStake > 0
+  worker -> escrow : depositStake
+  note over escrow #FFFDE7 : Anti-Sybil bond held
+end
+
 == Work Submission ==
 
 worker -> escrow : submit (hash + URI)
@@ -57,7 +64,7 @@ else #E8F5E9 Verifier approves
   "Verifier" as verifier -> escrow : approve
 end
 
-escrow -[#388E3C]> worker : payout (amount - fee)
+escrow -[#388E3C]> worker : payout (amount - fee) + stake returned
 escrow -[#388E3C]> "Treasury" as treasury ** #E8F5E9 : protocol fee
 note over escrow #C8E6C9 : **Settled**
 
@@ -75,8 +82,8 @@ note over escrow #FFF3E0 : **Disputed**
 
 "Arbitrator" as arbitrator -> escrow : resolve (split %)
 
-escrow -[#F57C00]> worker : worker share
-escrow -[#F57C00]> buyer : buyer refund
+escrow -[#F57C00]> worker : worker share + proportional stake
+escrow -[#F57C00]> buyer : buyer refund + forfeited stake
 escrow -[#F57C00]> treasury : protocol fee
 note over escrow #C8E6C9 : **Settled**
 

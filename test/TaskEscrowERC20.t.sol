@@ -561,6 +561,42 @@ contract TaskEscrowERC20Test is Test {
         assertEq(usdc.balanceOf(address(escrow)), 0);
     }
 
+    function testERC20WorkerStakeDisputeSplit50_50() public {
+        uint256 stakeAmount = 50e6;
+        TaskEscrow escrow = _createERC20EscrowWithStake(stakeAmount);
+        usdc.mint(worker, stakeAmount);
+
+        _fundERC20Escrow(escrow);
+
+        vm.startPrank(worker);
+        usdc.approve(address(escrow), stakeAmount);
+        escrow.depositStake();
+        escrow.submit(keccak256("submission"), "ipfs://result");
+        vm.stopPrank();
+
+        vm.prank(buyer);
+        escrow.dispute("ipfs://reason");
+
+        uint256 buyerBefore = usdc.balanceOf(buyer);
+        uint256 workerBefore = usdc.balanceOf(worker);
+        uint256 treasuryBefore = usdc.balanceOf(treasury);
+
+        vm.prank(arbitrator);
+        escrow.resolveDispute(5000, "ipfs://resolution");
+
+        uint256 workerGross = (AMOUNT * 5000) / 10_000;
+        uint256 fee = (workerGross * FEE_BPS) / 10_000;
+        uint256 workerNet = workerGross - fee;
+        uint256 buyerRefund = AMOUNT - workerGross;
+        uint256 stakeReturn = (stakeAmount * 5000) / 10_000;
+        uint256 stakeForfeited = stakeAmount - stakeReturn;
+
+        assertEq(usdc.balanceOf(worker), workerBefore + workerNet + stakeReturn);
+        assertEq(usdc.balanceOf(buyer), buyerBefore + buyerRefund + stakeForfeited);
+        assertEq(usdc.balanceOf(treasury), treasuryBefore + fee);
+        assertEq(usdc.balanceOf(address(escrow)), 0);
+    }
+
     // ── Non-standard ERC20 (no return value, like USDT) ──
 
     function testNoReturnERC20HappyPath() public {

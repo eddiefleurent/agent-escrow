@@ -1,19 +1,19 @@
-# V1 Technical Specification
+# Contract Specification
 
 ## 1) Scope
-This specification defines the V1 contract scope for escrow-based task delegation on Base (Ethereum L2).
+This specification defines the contract behavior for escrow-based task delegation on Base (Ethereum L2).
 
 Included:
 - `TaskEscrowFactory` contract
 - `TaskEscrow` contract instances
-- ETH-only escrow and settlement
+- ETH and ERC20 escrow and settlement
 - Roles: buyer, worker, verifier, arbitrator
+- Worker stake (anti-Sybil bond)
 - Hash-based submission commitment
 - Dispute flow and final resolution
 - Verifier reject path and worker silence-escalation path
 
-Excluded:
-- ERC20 support
+Not yet implemented:
 - On-chain reputation
 - Open marketplace bidding/auctions
 - Multi-verifier quorum
@@ -174,8 +174,8 @@ event Rejected(address indexed verifier, string reasonURI, uint64 rejectedAt);
 event Disputed(address indexed raisedBy, string reasonURI, uint64 disputedAt);
 event SilenceEscalated(address indexed worker, string reasonURI, uint64 escalatedAt);
 event DisputeResolved(address indexed arbitrator, uint16 workerAwardBps, string resolutionURI);
-event Settled(uint256 workerNet, uint256 buyerRefund, uint256 protocolFee);
-event Refunded(uint256 amount);
+event Settled(uint256 workerNet, uint256 buyerRefund, uint256 protocolFee, uint256 workerStakeReturned);
+event Refunded(uint256 amount, uint256 workerStakeReturned);
 event ArbitratorTimeoutClaimed(address indexed buyer, uint64 claimedAt);
 event Cancelled();
 ```

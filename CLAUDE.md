@@ -7,8 +7,9 @@ Operating guide for Claude Code in this repository.
 This project implements the ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) paper (Tomašev, Franklin, Osindero -- Google DeepMind, 2026) as a working escrow-based delegation marketplace on Base (Ethereum L2).
 
 - Active work: `docs/ROADMAP.md` -- the phase marked "(Current)" contains the next incomplete items.
-- Architecture and design: `docs/ARCHITECTURE.md`
-- Contract specification (state machine, interfaces, invariants): `docs/SPEC_V1.md`
+- Contract specification (prescriptive -- what contracts must do): `docs/SPEC.md`
+- Architecture and design (high-level context): `docs/ARCHITECTURE.md`
+- Visual diagrams (state machine, lifecycle, architecture): `docs/diagrams/*.puml`
 - Implementation status: `docs/ROADMAP.md`
 - Setup and deploy commands: `docs/SETUP.md`
 
@@ -23,7 +24,7 @@ This project implements the ["Intelligent AI Delegation"](https://arxiv.org/abs/
 ## Constraints
 
 - Keep Solidity pinned to `0.8.34` unless explicitly requested.
-- Keep V1 behavior aligned with `docs/SPEC_V1.md` (state machine and role semantics).
+- Keep contract behavior aligned with `docs/SPEC.md` (state machine and role semantics).
 - Do not introduce destructive git operations (`reset --hard`, force clean, etc.) unless explicitly requested.
 - Do not remove or weaken tests to make CI pass.
 - Use real implementations over mocks whenever possible in tests.
@@ -114,6 +115,26 @@ make deploy-base-sepolia
 ```
 
 Verify contract source on block explorer after deployment. Record deployed addresses and tx hashes in docs.
+
+## Documentation Maintenance
+
+Three docs are kept in sync with the code:
+
+- **`docs/SPEC.md`** -- prescriptive contract specification (state machine, settlement math, invariants). Update when contract behavior changes. This is what tests are written against.
+- **`docs/diagrams/*.puml`** -- PlantUML visual diagrams. Update when contract state transitions, lifecycle flows, or system architecture change. Multiple `@startuml` blocks can live in one file; prefer extending existing files over creating new ones. When editing, match the existing style, formatting conventions, and level of detail of the surrounding diagram. After any `.puml` change, regenerate the corresponding PNGs with `plantuml docs/diagrams/*.puml`.
+- **`docs/ARCHITECTURE.md`** -- high-level system design and paper grounding. Update when major structural changes occur (new components, new integration paths). Code-level documentation is handled by DeepWiki; ARCHITECTURE.md covers the "why" and "how things connect."
+
+Do not create new documentation files unless explicitly requested. Prefer updating existing docs.
+
+## Worker Stake
+
+- `workerStake` is an optional anti-Sybil bond set at escrow creation (paper §4.8). `0` means no stake required.
+- When `workerStake > 0`, the worker must call `depositStake()` after funding and before `submit()`.
+- ETH stake: `depositStake{value: workerStake}()`.
+- ERC20 stake: worker approves token first, then `depositStake()` (contract calls `transferFrom`).
+- On approval: stake returned to worker in full.
+- On dispute resolution: stake follows the same proportional split as payment (`workerAwardBps`).
+- On timeout / arbitrator timeout: stake forfeited to buyer.
 
 ## ERC20 Token Support
 

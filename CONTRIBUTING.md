@@ -38,7 +38,7 @@ This runs Foundry unit tests, invariant tests, and Go tests.
 
 ## Architecture Notes
 
-- Contract changes require updating tests and `docs/SPEC_V1.md`
+- Contract changes require updating tests, `docs/SPEC.md`, and `docs/diagrams/` PlantUML files
 - Contract ABI changes require rebuilding Go: `make go-abi && make go-build`
 - New MCP tools should have matching HTTP API endpoints
 - See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for system design

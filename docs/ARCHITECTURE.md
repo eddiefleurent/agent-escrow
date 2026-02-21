@@ -183,7 +183,7 @@ The current architecture -- single Go binary, SQLite, one factory contract -- is
 
 **Components that scale without changes:**
 
-- **On-chain contracts.** Each escrow is an independent contract instance with no shared state bottleneck. The factory is a thin deployer. ERC20 support (V2) is additive. Milestone escrow (V2) and ZK verification slots (V3) extend the escrow contract without changing the factory pattern.
+- **On-chain contracts.** Each escrow is an independent contract instance with no shared state bottleneck. The factory is a thin deployer. ETH/ERC20 support and worker-stake anti-Sybil bonding were originally planned for V2 and are now implemented in the current contract baseline. Milestone escrow (V2) and ZK verification slots (V3) extend the escrow contract without changing the factory pattern.
 - **On-chain/off-chain boundary.** The design principle -- settle on-chain, everything else off-chain -- is the correct long-term split. Bidding, matching, reputation scoring, task decomposition, and agent orchestration all remain off-chain where they can iterate independently.
 - **Go as the server language.** Go's concurrency model, low memory footprint, and single-binary deployment are well-suited through V4+. The go-ethereum client, the MCP SDK, and the HTTP server all scale to high concurrency without architectural changes.
 - **MCP + HTTP dual interface.** MCP is the primary agent integration surface; HTTP serves dashboards, external integrations, and tooling. This dual-surface pattern holds through V4 and beyond.
@@ -245,16 +245,19 @@ The riskiest V4+ item is **cross-chain settlement**, which introduces bridge tru
 ### Contracts
 
 - **`TaskEscrowFactory`** (`src/TaskEscrowFactory.sol`) -- creates escrow instances, stores protocol-level configuration (fee basis points, treasury, pause state).
-- **`TaskEscrow`** (`src/TaskEscrow.sol`) -- holds escrowed ETH, enforces the lifecycle state machine with role-gated transitions.
+- **`TaskEscrow`** (`src/TaskEscrow.sol`) -- holds escrowed ETH or ERC20, enforces the lifecycle state machine with role-gated transitions.
 
 ### State Machine
 
 ```
 Created ──fund()──> Funded ──submit()──> Submitted
-  │                   │                    │  │  │
-  │cancelBeforeFunding│claimTimeoutRefund  │  │  │
-  v                   v                    │  │  │
-Cancelled          Refunded <──────────────┘  │  │
+  │                   │  │                 │  │  │
+  │cancelBeforeFunding│  └depositStake()   │  │  │
+  v                   │                    │  │  │
+Cancelled            claimTimeoutRefund    │  │  │
+                      │                    │  │  │
+                      v                    │  │  │
+                   Refunded <──────────────┘  │  │
                       ^                       │  │
                       │claimArbitratorTimeout │  │
                       │                       │  │
@@ -273,6 +276,8 @@ Cancelled          Refunded <──────────────┘  │ 
                                Settled
 ```
 
+When `workerStake > 0`, worker must call `depositStake()` before `submit()`.
+
 Nine states: Created, Funded, Submitted, Approved, Disputed, Resolved, Settled, Refunded, Cancelled.
 
 ### Roles
@@ -290,7 +295,7 @@ Roles are immutable per escrow in V1.
 ### Economics
 
 - Protocol fee: basis points on successful payout (snapshotted at escrow creation to prevent governance races).
-- ETH and ERC20 (V2).
+- ETH and ERC20 (originally planned for V2, now part of the current baseline).
 - `workerStake`: optional anti-Sybil bond the worker deposits before submission (paper §4.8). Set at escrow creation; 0 means no stake required. On approval, stake is returned to worker. On dispute resolution, stake follows the same proportional split as payment. On timeout/arbitrator timeout, stake is forfeited to buyer.
 
 ### Trust Model
@@ -299,7 +304,7 @@ Roles are immutable per escrow in V1.
 - Verifier/arbitrator identities are the trust substrate in V1.
 - All critical state transitions are auditable and replayable via events.
 
-Full contract specification: [`docs/SPEC_V1.md`](SPEC_V1.md)
+Full contract specification: [`docs/SPEC.md`](SPEC.md)
 
 ---
 
@@ -328,7 +333,7 @@ go-server/
     indexer/indexer.go             Event polling -> DB reconciliation
     mcpserver/
       server.go                    MCP server setup
-      tools.go                     8 tool handlers
+      tools.go                     9 tool handlers
     api/
       router.go                    HTTP mux with middleware
       handlers.go                  JSON request/response handlers
@@ -382,7 +387,7 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 
 | Tool | Inputs | Chain Method |
 |---|---|---|
-| `create_escrow` | title, roles, amount, worker_stake, deadlines | `Factory.createEscrow` |
+| `create_escrow` | title, roles, amount, worker_stake, token, deadlines | `Factory.createEscrow` |
 | `fund_escrow` | escrow_id | `Escrow.fund` |
 | `deposit_stake` | escrow_id | `Escrow.depositStake` |
 | `submit_work` | escrow_id, submission_uri | `Escrow.submit` |

@@ -4,19 +4,52 @@ Operating guide for AI coding agents working in this repository.
 
 ## Project Context
 
+This project implements the ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) paper (Tomašev, Franklin, Osindero -- Google DeepMind, 2026) as a working escrow-based delegation marketplace on Base (Ethereum L2).
+
 - Active work: `docs/ROADMAP.md` -- the phase marked "(Current)" contains the next incomplete items.
-- Architecture and design: `docs/ARCHITECTURE.md`
-- Contract specification (state machine, interfaces, invariants): `docs/SPEC_V1.md`
+- Contract specification (prescriptive -- what contracts must do): `docs/SPEC.md`
+- Architecture and design (high-level context): `docs/ARCHITECTURE.md`
+- Visual diagrams (state machine, lifecycle, architecture): `docs/diagrams/*.puml`
 - Implementation status: `docs/ROADMAP.md`
 - Setup and deploy commands: `docs/SETUP.md`
-- Paper being implemented: ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) (Tomašev et al., Google DeepMind, 2026)
+
+## Current Architecture
+
+- **On-chain**: `TaskEscrowFactory` + `TaskEscrow` (Solidity 0.8.34, Foundry)
+- **Off-chain**: Single Go binary -- MCP server + HTTP API + event indexer
+- **Storage**: SQLite via `modernc.org/sqlite` (pure Go, no CGO)
+- **Agent interface**: MCP tools are the primary integration surface
+- **Target chain**: Base Sepolia (chain ID 84532)
 
 ## Constraints
 
 - Keep Solidity pinned to `0.8.34` unless explicitly requested.
-- Keep V1 behavior aligned with `docs/SPEC_V1.md` (state machine and role semantics).
+- Keep contract behavior aligned with `docs/SPEC.md` (state machine and role semantics).
+- When contract behavior changes, update `docs/SPEC.md` and `docs/diagrams/*.puml` to match.
 - Do not introduce destructive git operations (`reset --hard`, force clean, etc.) unless explicitly requested.
 - Do not remove or weaken tests to make CI pass.
+- Use real implementations over mocks whenever possible in tests.
+- Prioritize good design over simply making tests pass.
+
+## Build and Test
+
+```bash
+make build          # forge build
+make test           # forge test -vv
+make test-unit      # forge test for TaskEscrow*.t.sol only (faster)
+make test-invariant # invariant tests
+make go-abi         # copy ABI artifacts from Foundry output to go-server/abi/
+make go-build       # compile Go binary (runs go-abi first)
+make go-test        # go test ./...
+make go-vet         # go vet ./...
+make go-run         # build and run the server locally
+make fmt            # forge fmt + gofmt -w (both Solidity and Go)
+make fmt-check      # lint formatting without writing (used in CI)
+make sizes          # show contract sizes (check proximity to 24KB limit)
+make test-all       # fmt-check + all Solidity + Go vet + Go tests
+```
+
+Always run `make test-all` before finishing changes. If tests fail, fix the root cause, rerun, and report what changed.
 
 ## Solidity Code Standards
 
@@ -38,27 +71,36 @@ Operating guide for AI coding agents working in this repository.
 - Logging: use `log/slog` (stdlib structured logger). Never use `log.Printf` or `fmt.Printf` for operational logging. Use JSON handler with leveled output (`slog.Info`, `slog.Warn`, `slog.Error`). Include relevant context as key-value pairs.
 - Chain operations: depend on the `chain.ChainClient` interface, not `*chain.Client` directly. Use `chain.MockClient` in tests.
 
-## Test Requirements
-
-Run before finishing changes:
+## Python Scripts
 
 ```bash
-make build
-make test
-make test-invariant
-make go-test
+uv venv .venv                              # create venv (one-time)
+uv pip install cdp-sdk python-dotenv       # install deps (one-time)
+uv run scripts/faucet.py                   # request testnet ETH from CDP faucet
+uv run scripts/faucet.py --token usdc      # request testnet USDC
+uv run scripts/faucet.py --claims 10       # batch claims (rate-limited ~10/burst)
 ```
 
-Or all at once:
+CDP faucet credentials (`CDP_API_KEY_ID`, `CDP_API_KEY_SECRET`, `CDP_WALLET_SECRET`) must be in `.env`. See `.env.example`.
 
-```bash
-make test-all
+## Key Directories
+
+```text
+src/                      Solidity contracts
+test/                     Foundry tests
+script/                   Deploy scripts (Foundry/Solidity)
+scripts/                  Utility scripts (Python)
+go-server/
+  cmd/server/main.go      Entrypoint
+  internal/
+    chain/                go-ethereum client, ABI bindings
+    storage/              SQLite schema, queries, models
+    indexer/              Event polling -> DB reconciliation
+    mcpserver/            MCP server + 9 tool handlers
+    api/                  HTTP JSON API + middleware
+  abi/                    Embedded ABI artifacts (copied by make go-abi)
+docs/                     Architecture, spec, roadmap, setup
 ```
-
-If tests fail:
-1. Fix the root cause.
-2. Rerun the full suite.
-3. Report what changed and why.
 
 ## Deployment Checklist
 
@@ -69,9 +111,30 @@ Before testnet/mainnet deployment:
 4. Record deployed addresses and tx hashes in docs.
 5. Verify contract source on explorer.
 
-## Current Architecture
+## Documentation Maintenance
 
-- On-chain: `TaskEscrowFactory` + `TaskEscrow` (Solidity, Foundry)
-- Off-chain: Single Go binary with MCP server + HTTP API + event indexer
-- Storage: SQLite (pure Go, no CGO)
-- Agent interface: MCP tools are the primary integration surface
+Three docs are kept in sync with the code:
+
+- **`docs/SPEC.md`** -- prescriptive contract specification (state machine, settlement math, invariants). Update when contract behavior changes. This is what tests are written against.
+- **`docs/diagrams/*.puml`** -- PlantUML visual diagrams. Update when contract state transitions, lifecycle flows, or system architecture change. Multiple `@startuml` blocks can live in one file; prefer extending existing files over creating new ones. When editing, match the existing style, formatting conventions, and level of detail of the surrounding diagram. After any `.puml` change, regenerate the corresponding PNGs with `plantuml docs/diagrams/*.puml`.
+- **`docs/ARCHITECTURE.md`** -- high-level system design and paper grounding. Update when major structural changes occur (new components, new integration paths). Code-level documentation is handled by DeepWiki; `docs/ARCHITECTURE.md` covers the "why" and "how things connect."
+
+Do not create new documentation files unless explicitly requested. Prefer updating existing docs.
+
+## Worker Stake
+
+- `workerStake` is an optional anti-Sybil bond set at escrow creation (paper §4.8). `0` means no stake required.
+- When `workerStake > 0`, the worker must call `depositStake()` after funding and before `submit()`.
+- ETH stake: `depositStake{value: workerStake}()`.
+- ERC20 stake: worker approves token first, then `depositStake()` (contract calls `transferFrom`).
+- On approval: stake returned to worker in full.
+- On dispute resolution: stake follows the same proportional split as payment (`workerAwardBps`).
+- On timeout / arbitrator timeout: stake forfeited to buyer.
+
+## ERC20 Token Support
+
+- `token == address(0)` (or `""` / `"0x0000000000000000000000000000000000000000"` in Go) means ETH-denominated escrow; any other address is ERC20.
+- ERC20 funding flow: `ApproveERC20` -> `WaitMined` (check `receipt.Status == 1`) -> `Fund(ctx, addr, nil)`.
+- ETH funding flow: `Fund(ctx, addr, amount)` with non-nil amount.
+- Comprehensive ERC20 tests live in `test/TaskEscrowERC20.t.sol`.
+- Contracts use `Params` structs (e.g., `CreateEscrowParams`) to reduce constructor argument count -- extend these structs rather than adding bare parameters.
