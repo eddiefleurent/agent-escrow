@@ -55,6 +55,11 @@ contract TaskEscrowFactory {
         _;
     }
 
+    struct CreateMilestoneParams {
+        uint256 amount;
+        uint64 submissionDeadline;
+    }
+
     struct CreateParams {
         address buyer;
         address worker;
@@ -68,11 +73,21 @@ contract TaskEscrowFactory {
         bytes32 taskSpecHash;
         uint64 arbitratorTimeoutSeconds;
         address token;
+        CreateMilestoneParams[] milestones;
     }
 
     function createEscrow(CreateParams calldata p) external whenNotPaused returns (uint256 escrowId, address escrow) {
         if (p.amount == 0) revert InvalidAmount();
         if (p.submissionDeadline <= block.timestamp) revert InvalidDeadline();
+
+        // Convert factory milestone params to escrow milestone params
+        TaskEscrow.CreateMilestoneParams[] memory escrowMilestones =
+            new TaskEscrow.CreateMilestoneParams[](p.milestones.length);
+        for (uint256 i = 0; i < p.milestones.length; i++) {
+            escrowMilestones[i] = TaskEscrow.CreateMilestoneParams({
+                amount: p.milestones[i].amount, submissionDeadline: p.milestones[i].submissionDeadline
+            });
+        }
 
         TaskEscrow instance = new TaskEscrow(
             TaskEscrow.Params({
@@ -89,7 +104,8 @@ contract TaskEscrowFactory {
                 protocolFeeBpsSnapshot: protocolFeeBps,
                 treasurySnapshot: treasury,
                 arbitratorTimeoutSeconds: p.arbitratorTimeoutSeconds,
-                token: p.token
+                token: p.token,
+                milestones: escrowMilestones
             })
         );
 
