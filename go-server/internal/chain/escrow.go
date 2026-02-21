@@ -207,3 +207,11 @@ func (c *Client) AbortRemainingMilestones(ctx context.Context, escrow common.Add
 	}
 	return c.SendTx(ctx, escrow, data, nil)
 }
+
+func (c *Client) ActivateBackup(ctx context.Context, escrow common.Address) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("activateBackup")
+	if err != nil {
+		return nil, fmt.Errorf("pack activateBackup: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, nil)
+}

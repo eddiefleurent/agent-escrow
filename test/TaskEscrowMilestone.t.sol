@@ -60,6 +60,8 @@ contract TaskEscrowMilestoneTest is Test {
                 taskSpecHash: keccak256("spec-ms"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: _milestoneParams3()
             })
         );
@@ -369,6 +371,8 @@ contract TaskEscrowMilestoneTest is Test {
                 taskSpecHash: keccak256("spec-single"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: ms
             })
         );
@@ -481,6 +485,8 @@ contract TaskEscrowMilestoneTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: ms
             })
         );
@@ -510,6 +516,8 @@ contract TaskEscrowMilestoneTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: ms
             })
         );
@@ -540,6 +548,8 @@ contract TaskEscrowMilestoneTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: ms
             })
         );
@@ -606,6 +616,8 @@ contract TaskEscrowMilestoneTest is Test {
                 taskSpecHash: keccak256("spec-16"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: ms
             })
         );

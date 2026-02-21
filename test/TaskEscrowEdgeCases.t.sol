@@ -121,6 +121,8 @@ contract TaskEscrowEdgeCasesTest is Test {
                 taskSpecHash: keccak256("spec-2"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -189,6 +191,8 @@ contract TaskEscrowEdgeCasesTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -211,6 +215,8 @@ contract TaskEscrowEdgeCasesTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -233,6 +239,8 @@ contract TaskEscrowEdgeCasesTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -255,6 +263,8 @@ contract TaskEscrowEdgeCasesTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -277,6 +287,8 @@ contract TaskEscrowEdgeCasesTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -299,6 +311,8 @@ contract TaskEscrowEdgeCasesTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -419,6 +433,8 @@ contract TaskEscrowEdgeCasesTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: tokenAddr,
+                backupWorker: address(0),
+                backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );

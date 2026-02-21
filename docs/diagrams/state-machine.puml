@@ -38,6 +38,7 @@ Created --> Funded : fund()
 Created --> Cancelled : cancel()
 
 Funded --> Funded : depositStake()
+Funded --> Funded : activateBackup()
 Funded --> Submitted : submit()
 Funded --> Refunded : timeout refund
 
@@ -60,6 +61,8 @@ note right of Funded
   Worker must depositStake()
   before submit() when
   workerStake > 0.
+  Buyer may activateBackup()
+  to swap in the backup worker.
 end note
 
 note right of Submitted

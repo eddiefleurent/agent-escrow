@@ -32,6 +32,7 @@ Implements ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) (Toma
 | Verifiable task completion | §4.8 | Hash commitments transform provisional output into settled fact; verification gates payout |
 | Delegatee stake / Sybil resistance | §4.8 | Worker deposits anti-Sybil bond before submission; stake returned on success, forfeited proportionally on failure |
 | Partial compensation | §6.1 | Per-milestone payouts enable compensation proportional to verified completion |
+| Backup agent re-allocation | §4.4 | Pre-designated fallback worker activated by buyer on primary default; deadline extension and stake forfeiture |
 | Privilege attenuation | §4.7 | Role-gated actions enforce least privilege per escrow |
 
 ### Explicitly Deferred
@@ -52,8 +53,9 @@ Implements ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) (Toma
 | `verifier` | Checks submission quality; can approve or reject within review window |
 | `arbitrator` | Final authority in disputed cases; resolves with proportional split |
 | `treasury` | Receives protocol fee from successful payouts |
+| `backupWorker` | Optional pre-designated fallback worker; activated by buyer if primary defaults (paper §4.4) |
 
-Role assignment is immutable per escrow. This is a V1 constraint reflecting the paper's high-control fixed-role approach (§4.6) before open market matching.
+Role assignment is immutable per escrow (including `backupWorker`). This is a V1 constraint reflecting the paper's high-control fixed-role approach (§4.6) before open market matching.
 
 ## 4) State Machine
 
@@ -99,8 +101,20 @@ Terminal states (Settled, Refunded, Cancelled) are mutually exclusive and irreve
 | `resolveDispute` | arbitrator | Disputed | `workerAwardBps` in [0, 10000] |
 | `claimTimeoutRefund` | buyer | Funded | Past submission deadline |
 | `claimArbitratorTimeout` | buyer | Disputed | Past `disputedAt + arbitratorTimeoutSeconds` |
+| `activateBackup` | buyer | Funded | `backupWorker != address(0)`, not already activated |
 
 Invalid transitions revert with custom errors.
+
+### Backup Agent Clause
+
+The buyer may designate a `backupWorker` at escrow creation (paper §4.4: backup agent auto-re-allocation on failed ZK checkpoint). If the primary worker defaults, the buyer calls `activateBackup()` to:
+
+1. Replace `activeWorker` with `backupWorker`.
+2. Extend the submission deadline by `backupDeadlineExtension` seconds.
+3. Forfeit any deposited worker stake to the buyer.
+4. Emit `BackupActivated(previousWorker, newWorker, newDeadline)`.
+
+The backup worker then proceeds with the normal submit/approve/dispute lifecycle. Backup activation can only occur once per escrow, and only from the `Funded` state. If no backup worker is designated (`backupWorker == address(0)`), the function reverts.
 
 ### Milestone-Based Escrow (V2)
 
@@ -146,6 +160,16 @@ stakeForfeited = workerStaked ? workerStake - stakeReturn : 0
 Transfers: `workerNet + stakeReturn` → worker, `buyerRefund + stakeForfeited` → buyer, `fee` → treasury.
 
 `workerAwardBps` semantics: 0 = full refund to buyer, 10000 = full payout to worker, intermediate = proportional split.
+
+### Backup Activation
+
+When `activateBackup()` is called and the original worker has deposited a stake:
+
+```text
+stakeForfeited = workerStaked ? workerStake : 0
+```
+
+Transfers: `stakeForfeited` → buyer. The backup worker must deposit their own stake (if `workerStake > 0`) before submitting.
 
 ### Timeout Refund
 
@@ -197,9 +221,10 @@ These must hold for every escrow at all times:
 2. **Terminal exclusivity**: Settled, Refunded, and Cancelled are mutually exclusive. No function can transition from a terminal state to a non-terminal state.
 3. **Fund conservation**: total funds distributed never exceeds `amount + workerStake`.
 4. **Fee bound**: protocol fee never exceeds worker gross award.
-5. **Stake lifecycle**: returned fully on approval, split proportionally on dispute, forfeited on timeout.
-6. **Milestone ordering**: milestones are processed sequentially; `milestoneIndex` must equal `currentMilestone`.
-7. **Milestone fund conservation**: sum of all milestone payouts + refunds + fees + remaining stake = `amount + workerStake`.
+5. **Stake lifecycle**: returned fully on approval, split proportionally on dispute, forfeited on timeout or backup activation.
+6. **Backup exclusivity**: backup activation can occur at most once per escrow; `activeWorker` replaces the original worker for all subsequent operations.
+7. **Milestone ordering**: milestones are processed sequentially; `milestoneIndex` must equal `currentMilestone`.
+8. **Milestone fund conservation**: sum of all milestone payouts + refunds + fees + remaining stake = `amount + workerStake`.
 
 ## 7) Economic Parameters
 

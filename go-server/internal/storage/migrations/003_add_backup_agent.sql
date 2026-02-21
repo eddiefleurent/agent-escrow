@@ -1,0 +1,4 @@
+ALTER TABLE escrows ADD COLUMN backup_worker TEXT NOT NULL DEFAULT '';
+ALTER TABLE escrows ADD COLUMN backup_deadline_extension INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE escrows ADD COLUMN active_worker TEXT NOT NULL DEFAULT '';
+ALTER TABLE escrows ADD COLUMN backup_activated INTEGER NOT NULL DEFAULT 0;

@@ -29,6 +29,8 @@ type CreateEscrowParams struct {
 	ArbitratorTimeoutSeconds uint64
 	Token                    common.Address // address(0) for ETH, non-zero for ERC20
 	Milestones               []MilestoneParam
+	BackupWorker             common.Address // Optional backup agent; address(0) means none
+	BackupDeadlineExtension  uint64         // Seconds added to deadline when backup activates
 }
 
 // milestoneTuple matches the Solidity CreateMilestoneParams struct layout for ABI encoding.
@@ -53,6 +55,8 @@ type createParamsTuple struct {
 	ArbitratorTimeoutSeconds uint64
 	Token                    common.Address
 	Milestones               []milestoneTuple
+	BackupWorker             common.Address
+	BackupDeadlineExtension  uint64
 }
 
 func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p CreateEscrowParams) (*types.Transaction, error) {
@@ -81,6 +85,8 @@ func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p Cre
 		ArbitratorTimeoutSeconds: p.ArbitratorTimeoutSeconds,
 		Token:                    p.Token,
 		Milestones:               milestones,
+		BackupWorker:             p.BackupWorker,
+		BackupDeadlineExtension:  p.BackupDeadlineExtension,
 	}
 	data, err := FactoryABI.Pack("createEscrow", tuple)
 	if err != nil {

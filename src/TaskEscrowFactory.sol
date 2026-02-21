@@ -2,6 +2,7 @@
 pragma solidity ^0.8.34;
 
 import {TaskEscrow} from "./TaskEscrow.sol";
+import {EscrowDeployer} from "./EscrowDeployer.sol";
 
 contract TaskEscrowFactory {
     error Unauthorized();
@@ -26,6 +27,7 @@ contract TaskEscrowFactory {
     event TreasuryUpdated(address oldTreasury, address newTreasury);
     event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event BackupDesignated(uint256 indexed escrowId, address indexed backupWorker, uint64 backupDeadlineExtension);
     event FactoryPaused();
     event FactoryUnpaused();
 
@@ -36,6 +38,7 @@ contract TaskEscrowFactory {
     address public owner;
     address public pendingOwner;
     bool public paused;
+    EscrowDeployer public immutable deployer;
 
     constructor(uint16 _protocolFeeBps, address _treasury, address _owner) {
         if (_protocolFeeBps > 10_000) revert InvalidFeeBps();
@@ -43,6 +46,7 @@ contract TaskEscrowFactory {
         protocolFeeBps = _protocolFeeBps;
         treasury = _treasury;
         owner = _owner;
+        deployer = new EscrowDeployer();
     }
 
     modifier onlyOwner() {
@@ -73,6 +77,8 @@ contract TaskEscrowFactory {
         bytes32 taskSpecHash;
         uint64 arbitratorTimeoutSeconds;
         address token;
+        address backupWorker;
+        uint64 backupDeadlineExtension;
         CreateMilestoneParams[] milestones;
     }
 
@@ -80,7 +86,6 @@ contract TaskEscrowFactory {
         if (p.amount == 0) revert InvalidAmount();
         if (p.submissionDeadline <= block.timestamp) revert InvalidDeadline();
 
-        // Convert factory milestone params to escrow milestone params
         TaskEscrow.CreateMilestoneParams[] memory escrowMilestones =
             new TaskEscrow.CreateMilestoneParams[](p.milestones.length);
         for (uint256 i = 0; i < p.milestones.length; i++) {
@@ -89,7 +94,7 @@ contract TaskEscrowFactory {
             });
         }
 
-        TaskEscrow instance = new TaskEscrow(
+        escrow = deployer.deploy(
             TaskEscrow.Params({
                 buyer: p.buyer,
                 worker: p.worker,
@@ -105,15 +110,20 @@ contract TaskEscrowFactory {
                 treasurySnapshot: treasury,
                 arbitratorTimeoutSeconds: p.arbitratorTimeoutSeconds,
                 token: p.token,
+                backupWorker: p.backupWorker,
+                backupDeadlineExtension: p.backupDeadlineExtension,
                 milestones: escrowMilestones
             })
         );
 
         escrowId = nextEscrowId++;
-        escrow = address(instance);
         escrowById[escrowId] = escrow;
 
         emit EscrowCreated(escrowId, escrow, p.buyer, p.worker, p.verifier, p.arbitrator, p.taskSpecHash, p.token);
+
+        if (p.backupWorker != address(0)) {
+            emit BackupDesignated(escrowId, p.backupWorker, p.backupDeadlineExtension);
+        }
     }
 
     function setProtocolFeeBps(uint16 newFeeBps) external onlyOwner {

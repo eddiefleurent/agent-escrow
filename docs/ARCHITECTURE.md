@@ -86,6 +86,7 @@ Milestone-based escrow extends V1's coverage of the paper's framework:
 | Verifiable task completion (§4.8) | Each milestone is independently verified before payout, enabling fine-grained verification aligned with task decomposition |
 | Contract-first decomposition (§4.1) | Milestones enforce that task decomposition is reflected in the settlement structure -- each sub-task maps to a verifiable, payable milestone |
 | Abort and re-delegation (§4.4) | `abortRemainingMilestones()` enables the buyer to exit after a failed milestone, recovering funds for uncompleted work and enabling re-delegation to another agent |
+| Backup agent re-allocation (§4.4) | `activateBackup()` replaces the primary worker with a pre-designated backup, extending the deadline and forfeiting the original worker's stake |
 
 ### Protocol Integration Strategy
 
@@ -257,15 +258,17 @@ The riskiest V4+ item is **cross-chain settlement**, which introduces bridge tru
 
 ### Contracts
 
-- **`TaskEscrowFactory`** (`src/TaskEscrowFactory.sol`) -- creates escrow instances, stores protocol-level configuration (fee basis points, treasury, pause state).
+- **`TaskEscrowFactory`** (`src/TaskEscrowFactory.sol`) -- creates escrow instances, stores protocol-level configuration (fee basis points, treasury, pause state). Delegates `TaskEscrow` deployment to `EscrowDeployer` to stay under the EIP-170 size limit.
+- **`EscrowDeployer`** (`src/EscrowDeployer.sol`) -- minimal deployer contract that creates `TaskEscrow` instances on behalf of the factory.
 - **`TaskEscrow`** (`src/TaskEscrow.sol`) -- holds escrowed ETH or ERC20, enforces the lifecycle state machine with role-gated transitions.
 
 ### State Machine (Single-Shot Escrow)
 
 ```text
 Created ──fund()──> Funded ──submit()──> Submitted
-  │                   │  │                 │  │  │
-  │cancelBeforeFunding│  └depositStake()   │  │  │
+  │                   │  │  │              │  │  │
+  │cancelBeforeFunding│  │  └depositStake()│  │  │
+  │                   │  └activateBackup() │  │  │
   v                   │                    │  │  │
 Cancelled            claimTimeoutRefund    │  │  │
                       │                    │  │  │
@@ -348,14 +351,16 @@ See [`SPEC.md`](SPEC.md) for the state machine, settlement math, and invariants.
 | `verifier` | Checks submission quality, can approve or reject |
 | `arbitrator` | Final authority in disputed cases |
 | `treasury` | Receives protocol fee from successful payouts |
+| `backupWorker` | Optional pre-designated fallback worker; activated by buyer if primary defaults |
 
-Roles are immutable per escrow in V1.
+Roles are immutable per escrow in V1 (including `backupWorker`).
 
 ### Economics
 
 - Protocol fee: basis points on successful payout (snapshotted at escrow creation to prevent governance races). In milestone mode, the fee is applied per-milestone payout.
 - ETH and ERC20 (originally planned for V2, now part of the current baseline).
-- `workerStake`: optional anti-Sybil bond the worker deposits before submission (paper §4.8). Set at escrow creation; 0 means no stake required. If approved, the stake is returned to the worker in full; disputed stakes follow the same proportional split as payment; on timeout or arbitrator timeout, the stake is forfeited to the buyer. In milestone mode, stake is held for the full escrow duration and settled once at the end.
+- `workerStake`: optional anti-Sybil bond the worker deposits before submission (paper §4.8). Set at escrow creation; 0 means no stake required. If approved, the stake is returned to the worker in full; disputed stakes follow the same proportional split as payment; on timeout, arbitrator timeout, or backup activation, the stake is forfeited to the buyer. In milestone mode, stake is held for the full escrow duration and settled once at the end.
+- `backupWorker`: optional pre-designated fallback worker (paper §4.4). If the primary worker defaults, the buyer calls `activateBackup()` to replace the active worker, extend the deadline by `backupDeadlineExtension` seconds, and forfeit any deposited stake.
 - Milestone payouts: each milestone pays out independently on approval. The buyer funds the full `totalAmount` upfront; partial payouts are released as milestones complete. This reduces capital lock-up risk for the worker while maintaining buyer protection for uncompleted work.
 
 ### Trust Model
@@ -393,7 +398,7 @@ go-server/
     indexer/indexer.go             Event polling -> DB reconciliation
     mcpserver/
       server.go                    MCP server setup
-      tools.go                     9 tool handlers
+      tools.go                     11 tool handlers
     api/
       router.go                    HTTP mux with middleware
       handlers.go                  JSON request/response handlers
@@ -448,7 +453,7 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 
 | Tool | Inputs | Chain Method |
 |---|---|---|
-| `create_escrow` | title, roles, amount, worker_stake, token, deadlines, milestones (optional) | `Factory.createEscrow` |
+| `create_escrow` | title, roles, amount, worker_stake, token, deadlines, milestones, backup_worker, backup_deadline_extension (optional) | `Factory.createEscrow` |
 | `fund_escrow` | escrow_id | `Escrow.fund` |
 | `deposit_stake` | escrow_id | `Escrow.depositStake` |
 | `submit_work` | escrow_id, submission_uri, milestone_index (optional) | `Escrow.submit` / `Escrow.submitMilestone` |
@@ -456,6 +461,7 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 | `dispute_work` | escrow_id, role, reason_uri, milestone_index (optional) | `Escrow.dispute/rejectByVerifier/escalateSilence` / milestone variants |
 | `resolve_dispute` | escrow_id, worker_award_bps, resolution_uri, milestone_index (optional) | `Escrow.resolveDispute` / milestone variant |
 | `abort_milestones` | escrow_id | `Escrow.abortRemainingMilestones` |
+| `activate_backup` | escrow_id | `Escrow.activateBackup` |
 | `get_escrow` | escrow_id | DB read (includes milestone details) |
 | `list_escrows` | role, address, status | DB query |
 
@@ -474,6 +480,7 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 | POST | `/api/v1/escrows/{id}/dispute` | Dispute (body: role, reason_uri, optional milestone_index) |
 | POST | `/api/v1/escrows/{id}/resolve` | Resolve (body: worker_award_bps, resolution_uri, optional milestone_index) |
 | POST | `/api/v1/escrows/{id}/abort-milestones` | Abort remaining milestones (buyer only) |
+| POST | `/api/v1/escrows/{id}/activate-backup` | Activate backup worker (buyer only) |
 
 ### Configuration
 

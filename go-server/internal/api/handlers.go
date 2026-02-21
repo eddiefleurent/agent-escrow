@@ -68,6 +68,8 @@ type createEscrowRequest struct {
 	ArbitratorTimeoutSeconds string             `json:"arbitrator_timeout_seconds"`
 	Token                    string             `json:"token,omitempty"`
 	Milestones               []milestoneRequest `json:"milestones,omitempty"`
+	BackupWorker             string             `json:"backup_worker,omitempty"`
+	BackupDeadlineExtension  string             `json:"backup_deadline_extension,omitempty"`
 }
 
 func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
@@ -156,6 +158,24 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	var backupWorkerAddr common.Address
+	if req.BackupWorker != "" {
+		if !common.IsHexAddress(req.BackupWorker) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid backup_worker address"})
+			return
+		}
+		backupWorkerAddr = common.HexToAddress(req.BackupWorker)
+	}
+	var backupDeadlineExt uint64
+	if req.BackupDeadlineExtension != "" {
+		bde, err := strconv.ParseUint(req.BackupDeadlineExtension, 10, 64)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid backup_deadline_extension"})
+			return
+		}
+		backupDeadlineExt = bde
+	}
+
 	factory := common.HexToAddress(h.cfg.FactoryAddress)
 	params := chain.CreateEscrowParams{
 		Buyer:                    common.HexToAddress(req.Buyer),
@@ -171,6 +191,8 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		ArbitratorTimeoutSeconds: arbTimeout,
 		Token:                    tokenAddr,
 		Milestones:               milestones,
+		BackupWorker:             backupWorkerAddr,
+		BackupDeadlineExtension:  backupDeadlineExt,
 	}
 
 	tx, err := h.chain.CreateEscrow(r.Context(), factory, params)
@@ -216,6 +238,9 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		ArbitratorTimeoutSeconds: int64(arbTimeout),
 		MilestoneCount:           milestoneCount,
 		CurrentMilestone:         0,
+		BackupWorker:             backupWorkerAddr.Hex(),
+		BackupDeadlineExtension:  int64(backupDeadlineExt),
+		ActiveWorker:             req.Worker,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("db: %v", err)})
@@ -737,6 +762,34 @@ func (h *Handlers) AbortRemainingMilestones(w http.ResponseWriter, r *http.Reque
 	}
 
 	tx, err := h.chain.AbortRemainingMilestones(r.Context(), common.HexToAddress(escrow.EscrowAddress))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
+		return
+	}
+
+	_ = h.idx.RunOnce(r.Context())
+	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+}
+
+func (h *Handlers) ActivateBackup(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+
+	escrow, err := h.db.GetEscrow(id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+
+	if escrow.BackupWorker == "" || escrow.BackupWorker == "0x0000000000000000000000000000000000000000" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "this escrow has no backup worker designated"})
+		return
+	}
+
+	tx, err := h.chain.ActivateBackup(r.Context(), common.HexToAddress(escrow.EscrowAddress))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 		return

@@ -46,13 +46,18 @@ func (d *DB) CreateEscrow(e *Escrow) (*Escrow, error) {
 	if msCount == 0 {
 		msCount = 1
 	}
+	activeWorker := e.ActiveWorker
+	if activeWorker == "" {
+		activeWorker = e.Worker
+	}
 	res, err := d.db.Exec(
-		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.TaskID, e.ChainID, e.FactoryAddress, e.EscrowAddress, e.EscrowID,
 		e.Buyer, e.Worker, e.Verifier, e.Arbitrator, e.Amount, e.WorkerStake, e.Token, e.Status,
 		e.SubmissionDeadline, e.ReviewPeriodSeconds, e.DisputePeriodSeconds, e.ArbitratorTimeoutSeconds,
 		msCount, e.CurrentMilestone,
+		e.BackupWorker, e.BackupDeadlineExtension, activeWorker, boolToInt(e.BackupActivated),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert escrow: %w", err)
@@ -64,19 +69,22 @@ func (d *DB) CreateEscrow(e *Escrow) (*Escrow, error) {
 	return d.GetEscrow(id)
 }
 
-const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, created_at, updated_at`
+const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, created_at, updated_at`
 
 func scanEscrow(scanner interface{ Scan(...any) error }) (*Escrow, error) {
 	e := &Escrow{}
 	var createdAt, updatedAt string
+	var backupActivatedInt int
 	err := scanner.Scan(&e.ID, &e.TaskID, &e.ChainID, &e.FactoryAddress, &e.EscrowAddress, &e.EscrowID,
 		&e.Buyer, &e.Worker, &e.Verifier, &e.Arbitrator, &e.Amount, &e.WorkerStake, &e.Token, &e.Status,
 		&e.SubmissionDeadline, &e.ReviewPeriodSeconds, &e.DisputePeriodSeconds, &e.ArbitratorTimeoutSeconds,
 		&e.MilestoneCount, &e.CurrentMilestone,
+		&e.BackupWorker, &e.BackupDeadlineExtension, &e.ActiveWorker, &backupActivatedInt,
 		&createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
+	e.BackupActivated = backupActivatedInt != 0
 	e.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("parse created_at: %w", err)
@@ -493,6 +501,24 @@ func (d *DB) UpdateMilestoneSubmission(escrowID int64, milestoneIndex int, hash,
 		return fmt.Errorf("UpdateMilestoneSubmission escrow_id=%d milestone_index=%d: %w", escrowID, milestoneIndex, sql.ErrNoRows)
 	}
 	return nil
+}
+
+func (d *DB) UpdateEscrowBackupActivated(id int64, activeWorker string) error {
+	_, err := d.db.Exec(
+		`UPDATE escrows SET active_worker = ?, backup_activated = 1, updated_at = datetime('now') WHERE id = ?`,
+		activeWorker, id,
+	)
+	if err != nil {
+		return fmt.Errorf("UpdateEscrowBackupActivated: %w", err)
+	}
+	return nil
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func parseNullTime(ns sql.NullString) (*time.Time, error) {
