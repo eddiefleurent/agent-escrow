@@ -55,7 +55,7 @@ The foundation: specification, contracts, off-chain server, and production harde
 Marketplace layer built on top of the settlement kernel.
 
 1. **ERC20/USDC payment support** ✓ -- escrow accepts ERC20 tokens alongside ETH; token field propagated through contracts, storage, indexer, API, and MCP tools
-2. **Worker stake activation** -- enable the reserved `workerStake` field as anti-Sybil bond (paper §4.8: delegatee posts financial stake into escrow prior to execution)
+2. **Worker stake activation** ✓ -- `workerStake` field activated as anti-Sybil bond; worker deposits stake via `depositStake()` after buyer funding and before submission; stake returned on approval, forfeited proportionally on dispute, forfeited fully on timeout/arbitrator timeout (paper §4.8: delegatee posts financial stake into escrow prior to execution)
 3. **Milestone-based escrow** -- multiple submission/approval checkpoints within a single escrow with partial payouts (paper §4.4: smart contracts with pre-agreed executable clauses for adaptive coordination)
 4. **Backup agent clause** -- pre-designated fallback worker if primary defaults, with penalty coverage (paper §4.4: backup agent auto-re-allocation on failed ZK checkpoint)
 5. **On-chain reputation seed** -- factory-level outcome recording per address: tasks completed, disputed, failed (paper §4.6 Table 3: immutable ledger approach)

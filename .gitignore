@@ -16,3 +16,4 @@ node_modules/
 .dmux-hooks/
 .venv/
 .python-version
+.claude/settings.local.json

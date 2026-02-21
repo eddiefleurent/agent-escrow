@@ -117,6 +117,7 @@ contract TaskEscrowInvariantsTest is StdInvariant, Test {
                 verifier: verifier,
                 arbitrator: arbitrator,
                 amount: AMOUNT,
+                workerStake: 0,
                 submissionDeadline: uint64(block.timestamp + 30 days),
                 reviewPeriodSeconds: REVIEW,
                 disputePeriodSeconds: DISPUTE,

@@ -42,6 +42,7 @@ type MockClient struct {
 
 	CreateEscrowErr        error
 	FundErr                error
+	DepositStakeErr        error
 	ApproveERC20Err        error
 	SubmitErr              error
 	ApproveByBuyerErr      error
@@ -163,6 +164,19 @@ func (m *MockClient) Fund(ctx context.Context, addr common.Address, amount *big.
 		return nil, m.FundErr
 	}
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "fund", To: addr, Value: amount})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) DepositStake(ctx context.Context, addr common.Address, stakeAmount *big.Int) (*types.Transaction, error) {
+	if err := m.applyDelay(ctx); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.DepositStakeErr != nil {
+		return nil, m.DepositStakeErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "depositStake", To: addr, Value: stakeAmount})
 	return makeFakeTx(), nil
 }
 

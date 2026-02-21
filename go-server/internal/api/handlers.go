@@ -56,6 +56,7 @@ type createEscrowRequest struct {
 	Verifier                 string `json:"verifier"`
 	Arbitrator               string `json:"arbitrator"`
 	Amount                   string `json:"amount"`
+	WorkerStake              string `json:"worker_stake,omitempty"`
 	SubmissionDeadline       string `json:"submission_deadline"`
 	ReviewPeriodSeconds      string `json:"review_period_seconds"`
 	DisputePeriodSeconds     string `json:"dispute_period_seconds"`
@@ -112,6 +113,16 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	workerStakeVal := big.NewInt(0)
+	if req.WorkerStake != "" {
+		ws, ok := new(big.Int).SetString(req.WorkerStake, 10)
+		if !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid worker_stake"})
+			return
+		}
+		workerStakeVal = ws
+	}
+
 	var tokenAddr common.Address
 	if req.Token != "" {
 		if !common.IsHexAddress(req.Token) {
@@ -128,6 +139,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		Verifier:                 common.HexToAddress(req.Verifier),
 		Arbitrator:               common.HexToAddress(req.Arbitrator),
 		Amount:                   amount,
+		WorkerStake:              workerStakeVal,
 		SubmissionDeadline:       deadline,
 		ReviewPeriodSeconds:      review,
 		DisputePeriodSeconds:     dispute,
@@ -165,6 +177,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		Verifier:                 req.Verifier,
 		Arbitrator:               req.Arbitrator,
 		Amount:                   req.Amount,
+		WorkerStake:              workerStakeVal.String(),
 		Token:                    tokenAddr.Hex(),
 		Status:                   "created",
 		SubmissionDeadline:       int64(deadline),
@@ -267,6 +280,64 @@ func (h *Handlers) FundEscrow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tx, err := h.chain.Fund(r.Context(), escrowAddr, amount)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
+		return
+	}
+
+	_ = h.idx.RunOnce(r.Context())
+	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+}
+
+func (h *Handlers) DepositStake(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+
+	escrow, err := h.db.GetEscrow(id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+
+	stakeAmount, ok := new(big.Int).SetString(escrow.WorkerStake, 10)
+	if !ok || stakeAmount.Sign() <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "this escrow does not require a worker stake"})
+		return
+	}
+
+	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
+	isERC20 := escrow.Token != "" && escrow.Token != "0x0000000000000000000000000000000000000000"
+
+	if isERC20 {
+		tokenAddr := common.HexToAddress(escrow.Token)
+		approveTx, err := h.chain.ApproveERC20(r.Context(), tokenAddr, escrowAddr, stakeAmount)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("approve: %v", err)})
+			return
+		}
+		approveReceipt, err := chain.WaitMined(r.Context(), h.chain, approveTx.Hash())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("approve receipt: %v", err)})
+			return
+		}
+		if approveReceipt.Status != 1 {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "approve transaction reverted"})
+			return
+		}
+		tx, err := h.chain.DepositStake(r.Context(), escrowAddr, nil)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
+			return
+		}
+		_ = h.idx.RunOnce(r.Context())
+		writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+		return
+	}
+
+	tx, err := h.chain.DepositStake(r.Context(), escrowAddr, stakeAmount)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 		return

@@ -19,6 +19,16 @@ func (c *Client) Fund(ctx context.Context, escrow common.Address, amount *big.In
 	return c.SendTx(ctx, escrow, data, amount)
 }
 
+// DepositStake sends the depositStake() transaction. For ETH escrows, stakeAmount is sent as msg.value.
+// For ERC20 escrows, pass stakeAmount as nil/zero (the worker must approve the token first via ApproveERC20).
+func (c *Client) DepositStake(ctx context.Context, escrow common.Address, stakeAmount *big.Int) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("depositStake")
+	if err != nil {
+		return nil, fmt.Errorf("pack depositStake: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, stakeAmount)
+}
+
 // ApproveERC20 calls the ERC20 approve(spender, amount) method on the given token contract.
 func (c *Client) ApproveERC20(ctx context.Context, token common.Address, spender common.Address, amount *big.Int) (*types.Transaction, error) {
 	data, err := ERC20ABI.Pack("approve", spender, amount)

@@ -37,6 +37,7 @@ state Cancelled #E0E0E0 ##9E9E9E
 Created --> Funded : fund()
 Created --> Cancelled : cancel()
 
+Funded --> Funded : depositStake()
 Funded --> Submitted : submit()
 Funded --> Refunded : timeout refund
 
@@ -55,6 +56,12 @@ Cancelled --> [*]
 Refunded --> [*]
 Settled --> [*]
 
+note right of Funded
+  Worker must depositStake()
+  before submit() when
+  workerStake > 0.
+end note
+
 note right of Submitted
   Review window opens.
   Three paths to Disputed:
@@ -63,8 +70,9 @@ end note
 
 note right of Resolved
   Arbitrator sets split (0-100%).
-  0% = full buyer refund.
-  100% = full worker payout.
+  Stake follows same split ratio.
+  0% = full refund + stake to buyer.
+  100% = full payout + stake returned.
 end note
 
 @enduml

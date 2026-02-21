@@ -61,6 +61,7 @@ contract TaskEscrowFactory {
         address verifier;
         address arbitrator;
         uint256 amount;
+        uint256 workerStake;
         uint64 submissionDeadline;
         uint64 reviewPeriodSeconds;
         uint64 disputePeriodSeconds;
@@ -80,6 +81,7 @@ contract TaskEscrowFactory {
                 verifier: p.verifier,
                 arbitrator: p.arbitrator,
                 amount: p.amount,
+                workerStake: p.workerStake,
                 submissionDeadline: p.submissionDeadline,
                 reviewPeriodSeconds: p.reviewPeriodSeconds,
                 disputePeriodSeconds: p.disputePeriodSeconds,
