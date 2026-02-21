@@ -550,3 +550,16 @@ func TestLoad_ComplexityFloor_Invalid(t *testing.T) {
 		t.Errorf("expected error mentioning COMPLEXITY_FLOOR, got: %v", err)
 	}
 }
+
+func TestLoad_ComplexityFloor_Negative(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("COMPLEXITY_FLOOR", "-1")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for negative COMPLEXITY_FLOOR")
+	}
+	if !strings.Contains(err.Error(), "COMPLEXITY_FLOOR") {
+		t.Errorf("expected error mentioning COMPLEXITY_FLOOR, got: %v", err)
+	}
+}

@@ -113,7 +113,11 @@ func Load() (*Config, error) {
 
 	complexityFloor := os.Getenv("COMPLEXITY_FLOOR")
 	if complexityFloor != "" {
-		if _, ok := new(big.Int).SetString(complexityFloor, 10); !ok {
+		bi := new(big.Int)
+		if _, ok := bi.SetString(complexityFloor, 10); !ok {
+			return nil, fmt.Errorf("invalid COMPLEXITY_FLOOR: must be a non-negative integer")
+		}
+		if bi.Sign() < 0 {
 			return nil, fmt.Errorf("invalid COMPLEXITY_FLOOR: must be a non-negative integer")
 		}
 	}

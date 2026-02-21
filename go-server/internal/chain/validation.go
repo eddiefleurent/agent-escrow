@@ -15,6 +15,9 @@ func ValidateComplexityFloor(amount *big.Int, floorStr string) error {
 	if !ok || floor.Sign() <= 0 {
 		return nil
 	}
+	if amount == nil {
+		return fmt.Errorf("amount is nil")
+	}
 	if amount.Cmp(floor) < 0 {
 		return fmt.Errorf("amount %s is below complexity floor %s", amount, floor)
 	}

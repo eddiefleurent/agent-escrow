@@ -19,6 +19,8 @@ func TestValidateComplexityFloor(t *testing.T) {
 		{"amount below floor", big.NewInt(499), "500", true},
 		{"invalid floor string ignored", big.NewInt(1), "not-a-number", false},
 		{"negative floor ignored", big.NewInt(1), "-1", false},
+		{"nil amount with active floor", nil, "500", true},
+		{"nil amount with empty floor", nil, "", false},
 		{"large amount above large floor", new(big.Int).Mul(big.NewInt(1e18), big.NewInt(2)), "1000000000000000000", false},
 		{"large amount below large floor", big.NewInt(999999999999999999), "1000000000000000000", true},
 	}
