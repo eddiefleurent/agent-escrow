@@ -135,6 +135,10 @@ func (wh *WebhookHandler) processWebhookEvent(payload cdpWebhookPayload) error {
 	if !common.IsHexAddress(data.ContractAddress) {
 		return fmt.Errorf("invalid contract address: %q", data.ContractAddress)
 	}
+	expectedFactory := wh.idx.FactoryAddress()
+	if common.HexToAddress(data.ContractAddress) != expectedFactory {
+		return fmt.Errorf("contract address %s does not match factory %s", data.ContractAddress, expectedFactory.Hex())
+	}
 
 	logIdx, err := strconv.Atoi(data.LogIndex.String())
 	if err != nil {
@@ -189,6 +193,17 @@ func (wh *WebhookHandler) handleEscrowCreated(data cdpWebhookEventData) error {
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("check existing escrow %s: %w", escrowAddr, err)
+	}
+
+	for _, pair := range []struct{ name, val string }{
+		{"buyer", data.Buyer},
+		{"worker", data.Worker},
+		{"verifier", data.Verifier},
+		{"arbitrator", data.Arbitrator},
+	} {
+		if pair.val == "" {
+			return fmt.Errorf("EscrowCreated: missing %s address", pair.name)
+		}
 	}
 
 	var escrowID int64
@@ -301,10 +316,11 @@ func verifyCDPSignature(body []byte, sigHeader, secret string, headers http.Head
 		return false
 	}
 	webhookTime := time.Unix(ts, 0)
-	if time.Since(webhookTime) > maxTimestampAge {
-		slog.Warn("webhook: timestamp too old",
+	drift := time.Since(webhookTime)
+	if drift > maxTimestampAge || drift < -maxTimestampAge {
+		slog.Warn("webhook: timestamp out of range",
 			"webhook_time", webhookTime,
-			"age", time.Since(webhookTime),
+			"drift", drift,
 		)
 		return false
 	}
