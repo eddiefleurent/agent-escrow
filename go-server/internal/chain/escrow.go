@@ -9,12 +9,23 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
+// Fund sends the fund() transaction. For ETH escrows, amount is sent as msg.value.
+// For ERC20 escrows, pass amount as nil/zero (the buyer must approve the token first via ApproveERC20).
 func (c *Client) Fund(ctx context.Context, escrow common.Address, amount *big.Int) (*types.Transaction, error) {
 	data, err := EscrowABI.Pack("fund")
 	if err != nil {
 		return nil, fmt.Errorf("pack fund: %w", err)
 	}
 	return c.SendTx(ctx, escrow, data, amount)
+}
+
+// ApproveERC20 calls the ERC20 approve(spender, amount) method on the given token contract.
+func (c *Client) ApproveERC20(ctx context.Context, token common.Address, spender common.Address, amount *big.Int) (*types.Transaction, error) {
+	data, err := ERC20ABI.Pack("approve", spender, amount)
+	if err != nil {
+		return nil, fmt.Errorf("pack approve: %w", err)
+	}
+	return c.SendTx(ctx, token, data, nil)
 }
 
 func (c *Client) Submit(ctx context.Context, escrow common.Address, submissionHash [32]byte, submissionURI string) (*types.Transaction, error) {

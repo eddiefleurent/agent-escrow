@@ -1,0 +1,70 @@
+@startuml state-machine
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam ArrowColor #555555
+skinparam ArrowFontSize 11
+skinparam ArrowFontColor #666666
+
+skinparam state {
+  FontSize 14
+  FontStyle bold
+  AttributeFontSize 11
+}
+
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #E0D68A
+  FontSize 11
+}
+
+title Escrow State Machine
+
+state Created #E3F2FD ##42A5F5
+state Funded #E3F2FD ##42A5F5
+state Submitted #E3F2FD ##42A5F5
+state Approved #E8F5E9 ##66BB6A
+state Disputed #FFF3E0 ##FFA726
+state Resolved #FFF3E0 ##FFA726
+
+state Settled #C8E6C9 ##388E3C
+state Refunded #FFE0B2 ##F57C00
+state Cancelled #E0E0E0 ##9E9E9E
+
+[*] --> Created
+
+Created --> Funded : fund()
+Created --> Cancelled : cancel()
+
+Funded --> Submitted : submit()
+Funded --> Refunded : timeout refund
+
+Submitted --> Approved : buyer or verifier approves
+Submitted --> Disputed : buyer disputes
+Submitted -[#FF8F00]-> Disputed : verifier rejects
+Submitted -[#FF8F00]-> Disputed : worker escalates silence
+
+Disputed --> Resolved : arbitrator resolves
+Disputed --> Refunded : arbitrator timeout
+
+Approved -[#388E3C]-> Settled : auto-settle
+Resolved -[#388E3C]-> Settled : auto-settle
+
+Cancelled --> [*]
+Refunded --> [*]
+Settled --> [*]
+
+note right of Submitted
+  Review window opens.
+  Three paths to Disputed:
+  buyer, verifier, or worker.
+end note
+
+note right of Resolved
+  Arbitrator sets split (0-100%).
+  0% = full buyer refund.
+  100% = full worker payout.
+end note
+
+@enduml

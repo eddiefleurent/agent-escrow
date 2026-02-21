@@ -1,0 +1,83 @@
+@startuml lifecycle-sequence
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam sequenceArrowThickness 1.5
+skinparam sequenceLifeLineBorderColor #CCCCCC
+skinparam sequenceDividerBackgroundColor #F5F5F5
+skinparam sequenceDividerFontStyle bold
+skinparam sequenceGroupBackgroundColor #FAFAFA
+skinparam sequenceGroupBorderColor #CCCCCC
+
+skinparam participant {
+  BorderColor #42A5F5
+  BackgroundColor #E3F2FD
+  FontStyle bold
+}
+
+skinparam actor {
+  BorderColor #7E57C2
+  BackgroundColor #EDE7F6
+}
+
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #E0D68A
+  FontSize 11
+}
+
+title Escrow Lifecycle
+
+actor "Buyer" as buyer
+actor "Worker" as worker
+participant "Factory" as factory
+
+== Task Creation ==
+
+buyer -> factory : create escrow
+factory -> "Escrow" as escrow ** : deploy
+factory --> buyer : escrow id + address
+
+== Funding ==
+
+buyer -> escrow : fund
+note over escrow #E3F2FD : **Funded** — ETH/ERC20 held
+
+== Work Submission ==
+
+worker -> escrow : submit (hash + URI)
+note over escrow #E3F2FD : **Submitted** — review window opens
+
+== Path A: Approval ==
+
+alt #E8F5E9 Buyer approves
+  buyer -> escrow : approve
+else #E8F5E9 Verifier approves
+  "Verifier" as verifier -> escrow : approve
+end
+
+escrow -[#388E3C]> worker : payout (amount - fee)
+escrow -[#388E3C]> "Treasury" as treasury ** #E8F5E9 : protocol fee
+note over escrow #C8E6C9 : **Settled**
+
+== Path B: Dispute Resolution ==
+
+alt #FFF3E0 Buyer disputes
+  buyer -> escrow : dispute
+else #FFF3E0 Verifier rejects
+  verifier -> escrow : reject
+else #FFF3E0 Worker escalates silence
+  worker -> escrow : escalate
+end
+
+note over escrow #FFF3E0 : **Disputed**
+
+"Arbitrator" as arbitrator -> escrow : resolve (split %)
+
+escrow -[#F57C00]> worker : worker share
+escrow -[#F57C00]> buyer : buyer refund
+escrow -[#F57C00]> treasury : protocol fee
+note over escrow #C8E6C9 : **Settled**
+
+@enduml

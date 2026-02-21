@@ -12,3 +12,7 @@ node_modules/
 .env
 *.env
 !.env.example
+.dmux/
+.dmux-hooks/
+.venv/
+.python-version

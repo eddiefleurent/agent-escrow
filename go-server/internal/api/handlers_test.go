@@ -17,11 +17,11 @@ import (
 )
 
 type testEnv struct {
-	db    *storage.DB
-	mock  *chain.MockClient
-	idx   *indexer.Indexer
-	cfg   *config.Config
-	mux   http.Handler
+	db   *storage.DB
+	mock *chain.MockClient
+	idx  *indexer.Indexer
+	cfg  *config.Config
+	mux  http.Handler
 }
 
 func setup(t *testing.T) *testEnv {
@@ -320,7 +320,7 @@ func TestFundEscrow_Success(t *testing.T) {
 	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
-		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "1000000000000000000", Status: "created",
 	})
 	if err != nil {
@@ -357,7 +357,7 @@ func TestSubmitWork_Success(t *testing.T) {
 	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
-		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "funded",
 	})
 	if err != nil {
@@ -380,7 +380,7 @@ func TestApproveWork_Buyer(t *testing.T) {
 	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
-		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
 	if err != nil {
@@ -403,7 +403,7 @@ func TestApproveWork_Verifier(t *testing.T) {
 	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
-		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
 	if err != nil {
@@ -426,7 +426,7 @@ func TestApproveWork_InvalidRole(t *testing.T) {
 	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
-		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
 	if err != nil {
@@ -449,7 +449,7 @@ func TestDisputeWork_Buyer(t *testing.T) {
 	escrow, err := env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr1",
-		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
 	if err != nil {
@@ -473,7 +473,7 @@ func TestDisputeWork_Verifier(t *testing.T) {
 	escrow, err := env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr2",
-		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
 	if err != nil {
@@ -497,7 +497,7 @@ func TestDisputeWork_Worker(t *testing.T) {
 	escrow, err := env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr3",
-		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
 	if err != nil {
@@ -521,7 +521,7 @@ func TestDisputeWork_InvalidRole(t *testing.T) {
 	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
-		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
 	if err != nil {
@@ -544,7 +544,7 @@ func TestResolveDispute_Success(t *testing.T) {
 	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
-		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "disputed",
 	})
 	if err != nil {
@@ -670,7 +670,7 @@ func TestTimeout_POST_UsesLongerTxTimeout(t *testing.T) {
 	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
-		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "1000000000000000000", Status: "created",
 	})
 	if err != nil {
@@ -700,7 +700,7 @@ func TestTimeout_POST_TxTimeoutExceeded(t *testing.T) {
 	_, err = env.db.CreateEscrow(&storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
-		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "1000000000000000000", Status: "created",
 	})
 	if err != nil {

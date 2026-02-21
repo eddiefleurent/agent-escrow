@@ -81,21 +81,30 @@ The paper's insight (Section 6): extend existing agent protocols rather than com
 | Protocol | Gap Identified by Paper | Settlement Layer Integration | Phase |
 |---|---|---|---|
 | **MCP** (Anthropic) | Liability, reputation, trust, conditional settlement | MCP server with escrow tools; future: monitoring stream, DCT-scoped permissions | V1 (complete) |
-| **A2A** (Google) | Verification, escrow, conditional settlement | Settlement adapter agent card with `verification_policy` + `escrow_trigger` | V2 |
-| **AP2** (Google) | Conditional settlement, milestone releases, clawback | AP2 mandate-to-escrow funding bridge with dispute resolution | V2 |
+| **[x402](https://docs.cdp.coinbase.com/x402/welcome)** (Coinbase) | Stateless payment; no conditionality, dispute resolution, or verification | Gasless escrow funding rail (EIP-3009 via facilitator); AP2 mandate funding mechanism; complexity floor calibration | V2 |
+| **[x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar)** (Coinbase) | Discovery only; no bidding, negotiation, or capability matching | Service discovery substrate for Task_RFQ; credential metadata via Bazaar extensions | V2-V3 |
+| **A2A** (Google) | Verification, escrow, conditional settlement | Settlement adapter agent card with `verification_policy` + `escrow_trigger`; Bazaar-discoverable | V2 |
+| **AP2** (Google) | Conditional settlement, milestone releases, clawback | Mandate-to-escrow funding bridge via x402 payment rail; stake-on-bid Sybil resistance | V2 |
 | **UCP** | Delegation-specific settlement for computational tasks | UCP fulfillment provider exposing escrow lifecycle | V3 |
+| **[AgentKit](https://docs.cdp.coinbase.com/agent-kit/welcome)** (Coinbase) | Wallet management and on-chain actions for agents; no delegation lifecycle | Agent wallet provider for multi-tenant signing; escrow actions as custom action provider | V2-V3 |
+
+x402 is an open payment protocol that enables instant stablecoin payments over HTTP by reviving the HTTP 402 status code. Its Bazaar layer provides machine-readable service discovery for payable API endpoints. Both operate on Base in the same ecosystem as this project. x402 provides a stateless, single-interaction payment flow; this project provides a stateful, multi-party delegation lifecycle with conditional settlement. The two are complementary: x402 serves as a payment rail and discovery layer, while the escrow contract governs conditional custody, verification, dispute resolution, and settlement. See the [Roadmap](ROADMAP.md#relationship-to-x402) for a detailed analysis.
+
+[AgentKit](https://docs.cdp.coinbase.com/agent-kit/welcome) is a toolkit that gives AI agents secure wallet management and on-chain capabilities (transfers, swaps, contract interactions) across any AI framework (LangChain, Vercel AI SDK, MCP). It addresses the paper's permission handling requirements (§4.7): agents need their own cryptographic identity to sign transactions, and permissions must be scoped to the immediate task rather than shared via a single server-held key. In V1, the Go server holds one private key and signs all transactions on behalf of every participant. AgentKit provides the migration path: each agent manages its own wallet, signs its own escrow transactions (fund, submit, approve, dispute), and the server shifts to an indexing-only role. The escrow lifecycle could also be packaged as a custom AgentKit action provider, making delegation tools available alongside an agent's existing on-chain capabilities. [Payments MCP](https://docs.cdp.coinbase.com/payments-mcp/welcome) -- Coinbase's MCP server combining AgentKit wallets with x402 payments -- represents the natural client-side complement: agents already running Payments MCP have a wallet and USDC balance ready to fund escrows.
 
 The paper proposes specific protocol extensions (§6.1) that map to the roadmap: `verification_policy` fields on A2A Task objects, monitoring stream extensions for MCP (L0-L3 granularity), Task_RFQ + Bid_Object schemas, Delegation Capability Tokens (DCTs) based on Macaroons/Biscuits, and checkpoint artifact schemas for adaptive re-delegation.
 
 ### Integration Paths
 
-Three integration paths, in priority order:
+Four integration paths, in priority order:
 
 **Path A: MCP settlement server (V1, complete).** Any MCP-compatible agent can use escrow by connecting to the server. The agent does not need Solidity or wallet libraries -- the MCP server handles chain interaction.
 
-**Path B: A2A settlement adapter (V2).** An A2A-compatible agent whose capability is on-chain settlement of delegated work. Other agents discover it via agent cards; it holds funds in escrow and releases them when work is verified.
+**Path B: x402 funding and discovery (V2).** Agents with existing x402 wallets (including [Payments MCP](https://docs.cdp.coinbase.com/payments-mcp/welcome) users) can fund escrows via EIP-3009 gasless transfers through the x402 facilitator. Escrow-backed delegation services are discoverable via Bazaar alongside simple paid APIs, providing a natural on-ramp for agents already in the x402 ecosystem.
 
-**Path C: Reference implementation (ongoing).** The paper proposes protocol extensions as "illustrative examples of the kinds of functionalities that would be possible to include in agentic protocols" (§6.1). A working implementation that demonstrates these ideas in practice can serve as a reference for the ecosystem.
+**Path C: A2A settlement adapter (V2).** An A2A-compatible agent whose capability is on-chain settlement of delegated work. Other agents discover it via agent cards and Bazaar; it holds funds in escrow and releases them when work is verified.
+
+**Path D: Reference implementation (ongoing).** The paper proposes protocol extensions as "illustrative examples of the kinds of functionalities that would be possible to include in agentic protocols" (§6.1). A working implementation that demonstrates these ideas in practice can serve as a reference for the ecosystem.
 
 ---
 
@@ -188,7 +197,7 @@ The current architecture -- single Go binary, SQLite, one factory contract -- is
 | **Single process** | MCP + API + indexer in one binary | Indexer CPU/memory spikes affecting API latency; MCP stdio transport limits to one connected agent per process | Separate the indexer into its own process. Run multiple MCP server instances behind streamable-HTTP transport. API remains stateless and horizontally scalable. | V2-V3 |
 | **Contract deployment** | One `TaskEscrow` per escrow via `CREATE` | Contract deployment gas overhead at high volume; bytecode duplication | Minimal proxy pattern (EIP-1167 clones). The factory deploys proxy contracts pointing to a single `TaskEscrow` implementation. Reduces per-escrow deploy cost by ~90%. | V2 |
 | **Nonce management** | Sequential nonce tracking | Concurrent transaction submission causes nonce collisions | Nonce manager with mutex or pending-pool awareness; or separate signing service | V2 |
-| **Authentication** | None (server holds a single private key) | Multi-tenant marketplace where different participants sign their own transactions | Relayer/meta-transaction model, or users submit directly with the server indexing only. ERC-4337 account abstraction is another path. | V2-V3 |
+| **Authentication** | None (server holds a single private key) | Multi-tenant marketplace where different participants sign their own transactions | Agents manage their own wallets via [AgentKit](https://docs.cdp.coinbase.com/agent-kit/welcome) or equivalent and sign escrow transactions directly; server shifts to indexing-only. Alternatively: relayer/meta-transaction model, or ERC-4337 account abstraction. The paper's §4.7 requires each agent to hold scoped credentials and sign its own messages (§4.9). | V2-V3 |
 | **Reputation storage** | Not yet implemented | On-chain reputation seed (V2) generates read-heavy query load; behavioral metrics (V3) produce high-write analytical workload | Reputation reads from a materialized view or dedicated read replica. Behavioral metrics use a time-series store or append-only analytics table. | V2-V3 |
 | **ZK verification** | Not yet implemented | ZK proof verification on-chain is expensive even on L2 (~300k-500k gas for groth16) | Verify proofs off-chain by default; post only the proof hash on-chain. Optional on-chain verification for high-assurance tasks via a dedicated verifier contract. Consider recursive proofs to amortize cost. | V3 |
 | **Cross-chain** | Single-chain (Base) | Agents and liquidity on different L2s | Bridge adapter contracts or cross-chain messaging (LayerZero, Hyperlane). The Go server already parameterizes `CHAIN_ID` and `RPC_URL`, so multi-chain indexing is configuration, not architecture. Settlement contracts deploy per-chain. | V4+ |

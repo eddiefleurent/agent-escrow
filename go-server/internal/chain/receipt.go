@@ -20,7 +20,7 @@ type CreateEscrowResult struct {
 // to extract the on-chain escrow address and ID. The caller provides any ChainClient
 // so this works with both the real client and test mocks.
 func WaitMinedAndParseEscrow(ctx context.Context, cc ChainClient, txHash common.Hash) (*CreateEscrowResult, error) {
-	receipt, err := waitMined(ctx, cc, txHash)
+	receipt, err := WaitMined(ctx, cc, txHash)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +30,8 @@ func WaitMinedAndParseEscrow(ctx context.Context, cc ChainClient, txHash common.
 	return parseEscrowCreated(receipt)
 }
 
-func waitMined(ctx context.Context, cc ChainClient, txHash common.Hash) (*types.Receipt, error) {
+// WaitMined polls for a transaction receipt until it is available or the context expires.
+func WaitMined(ctx context.Context, cc ChainClient, txHash common.Hash) (*types.Receipt, error) {
 	const maxAttempts = 60
 	delay := 500 * time.Millisecond
 

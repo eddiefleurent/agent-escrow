@@ -29,17 +29,17 @@ const (
 
 // Status mappings from event names to escrow status strings
 var eventStatusMap = map[string]string{
-	"EscrowFunded":              "funded",
-	"SubmissionMade":            "submitted",
-	"Approved":                  "approved",
-	"Rejected":                  "disputed",
-	"Disputed":                  "disputed",
-	"SilenceEscalated":          "disputed",
-	"DisputeResolved":           "resolved",
-	"Settled":                   "settled",
-	"Refunded":                  "refunded",
-	"Cancelled":                 "cancelled",
-	"ArbitratorTimeoutClaimed":  "refunded",
+	"EscrowFunded":             "funded",
+	"SubmissionMade":           "submitted",
+	"Approved":                 "approved",
+	"Rejected":                 "disputed",
+	"Disputed":                 "disputed",
+	"SilenceEscalated":         "disputed",
+	"DisputeResolved":          "resolved",
+	"Settled":                  "settled",
+	"Refunded":                 "refunded",
+	"Cancelled":                "cancelled",
+	"ArbitratorTimeoutClaimed": "refunded",
 }
 
 type Indexer struct {
@@ -242,7 +242,7 @@ func (idx *Indexer) processFactoryLog(lg types.Log) error {
 }
 
 func (idx *Indexer) handleEscrowCreated(lg types.Log) error {
-	// EscrowCreated(uint256 indexed escrowId, address indexed escrow, address indexed buyer, address worker, address verifier, address arbitrator, bytes32 taskSpecHash)
+	// EscrowCreated(uint256 indexed escrowId, address indexed escrow, address indexed buyer, address worker, address verifier, address arbitrator, bytes32 taskSpecHash, address token)
 	if len(lg.Topics) < 4 {
 		return fmt.Errorf("insufficient topics")
 	}
@@ -277,6 +277,13 @@ func (idx *Indexer) handleEscrowCreated(lg types.Log) error {
 		return fmt.Errorf("unexpected type for taskSpecHash: %T", values[3])
 	}
 
+	tokenAddr := common.Address{}
+	if len(values) > 4 {
+		if ta, ok := values[4].(common.Address); ok {
+			tokenAddr = ta
+		}
+	}
+
 	buyer := common.BytesToAddress(lg.Topics[3].Bytes())
 
 	// Check if escrow already exists (e.g. created via API/MCP handler with on-chain fields already set)
@@ -288,10 +295,6 @@ func (idx *Indexer) handleEscrowCreated(lg types.Log) error {
 		return fmt.Errorf("check existing escrow %s: %w", escrowAddr.Hex(), err)
 	}
 
-	// Escrow was created externally (not via our handlers) -- index it from the event.
-	// Amount is stored as "0" because the EscrowCreated event does not include the funded
-	// amount and the ChainClient interface does not expose BalanceAt. The correct amount
-	// will be set when the indexer later processes the EscrowFunded event for this escrow.
 	task, err := idx.db.CreateTask("Indexed task", "", fmt.Sprintf("0x%x", taskSpecHash))
 	if err != nil {
 		return fmt.Errorf("create task: %w", err)
@@ -308,6 +311,7 @@ func (idx *Indexer) handleEscrowCreated(lg types.Log) error {
 		Verifier:           verifierAddr.Hex(),
 		Arbitrator:         arbitratorAddr.Hex(),
 		Amount:             "0",
+		Token:              tokenAddr.Hex(),
 		Status:             "created",
 		SubmissionDeadline: 0,
 	})

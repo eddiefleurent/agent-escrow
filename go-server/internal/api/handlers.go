@@ -60,6 +60,7 @@ type createEscrowRequest struct {
 	ReviewPeriodSeconds      string `json:"review_period_seconds"`
 	DisputePeriodSeconds     string `json:"dispute_period_seconds"`
 	ArbitratorTimeoutSeconds string `json:"arbitrator_timeout_seconds"`
+	Token                    string `json:"token,omitempty"`
 }
 
 func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +112,15 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var tokenAddr common.Address
+	if req.Token != "" {
+		if !common.IsHexAddress(req.Token) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid token address"})
+			return
+		}
+		tokenAddr = common.HexToAddress(req.Token)
+	}
+
 	factory := common.HexToAddress(h.cfg.FactoryAddress)
 	params := chain.CreateEscrowParams{
 		Buyer:                    common.HexToAddress(req.Buyer),
@@ -123,6 +133,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		DisputePeriodSeconds:     dispute,
 		TaskSpecHash:             specHash,
 		ArbitratorTimeoutSeconds: arbTimeout,
+		Token:                    tokenAddr,
 	}
 
 	tx, err := h.chain.CreateEscrow(r.Context(), factory, params)
@@ -154,6 +165,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		Verifier:                 req.Verifier,
 		Arbitrator:               req.Arbitrator,
 		Amount:                   req.Amount,
+		Token:                    tokenAddr.Hex(),
 		Status:                   "created",
 		SubmissionDeadline:       int64(deadline),
 		ReviewPeriodSeconds:      int64(review),
@@ -168,10 +180,10 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 	_ = h.idx.RunOnce(r.Context())
 
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"escrow_id":      escrow.ID,
-		"task_id":        task.ID,
-		"tx_hash":        tx.Hash().Hex(),
-		"escrow_address": result.EscrowAddress.Hex(),
+		"escrow_id":       escrow.ID,
+		"task_id":         task.ID,
+		"tx_hash":         tx.Hash().Hex(),
+		"escrow_address":  result.EscrowAddress.Hex(),
 		"chain_escrow_id": result.EscrowID,
 	})
 }
@@ -224,7 +236,37 @@ func (h *Handlers) FundEscrow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "malformed escrow amount in database"})
 		return
 	}
-	tx, err := h.chain.Fund(r.Context(), common.HexToAddress(escrow.EscrowAddress), amount)
+
+	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
+	isERC20 := escrow.Token != "" && escrow.Token != "0x0000000000000000000000000000000000000000"
+
+	if isERC20 {
+		tokenAddr := common.HexToAddress(escrow.Token)
+		approveTx, err := h.chain.ApproveERC20(r.Context(), tokenAddr, escrowAddr, amount)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("approve: %v", err)})
+			return
+		}
+		approveReceipt, err := chain.WaitMined(r.Context(), h.chain, approveTx.Hash())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("approve receipt: %v", err)})
+			return
+		}
+		if approveReceipt.Status != 1 {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "approve transaction reverted"})
+			return
+		}
+		tx, err := h.chain.Fund(r.Context(), escrowAddr, nil)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
+			return
+		}
+		_ = h.idx.RunOnce(r.Context())
+		writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+		return
+	}
+
+	tx, err := h.chain.Fund(r.Context(), escrowAddr, amount)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 		return

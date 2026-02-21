@@ -42,6 +42,7 @@ type MockClient struct {
 
 	CreateEscrowErr        error
 	FundErr                error
+	ApproveERC20Err        error
 	SubmitErr              error
 	ApproveByBuyerErr      error
 	ApproveByVerifierErr   error
@@ -165,6 +166,16 @@ func (m *MockClient) Fund(ctx context.Context, addr common.Address, amount *big.
 	return makeFakeTx(), nil
 }
 
+func (m *MockClient) ApproveERC20(_ context.Context, tokenAddr common.Address, spender common.Address, amount *big.Int) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ApproveERC20Err != nil {
+		return nil, m.ApproveERC20Err
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "approveERC20", To: tokenAddr, Value: amount})
+	return makeFakeTx(), nil
+}
+
 func (m *MockClient) Submit(_ context.Context, addr common.Address, _ [32]byte, _ string) (*types.Transaction, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -271,12 +282,13 @@ func MakeEscrowCreatedReceipt(escrowID int64, escrowAddr, buyer common.Address) 
 	addrBytes := common.BytesToHash(escrowAddr.Bytes())
 	buyerBytes := common.BytesToHash(buyer.Bytes())
 
-	// Non-indexed: worker, verifier, arbitrator, taskSpecHash
+	// Non-indexed: worker, verifier, arbitrator, taskSpecHash, token
 	nonIndexed, _ := FactoryABI.Events["EscrowCreated"].Inputs.NonIndexed().Pack(
 		common.HexToAddress("0x2222222222222222222222222222222222222222"),
 		common.HexToAddress("0x3333333333333333333333333333333333333333"),
 		common.HexToAddress("0x4444444444444444444444444444444444444444"),
 		[32]byte{0x01},
+		common.Address{},
 	)
 
 	return &types.Receipt{

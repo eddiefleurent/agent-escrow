@@ -21,11 +21,12 @@ type createEscrowArgs struct {
 	Worker                   string `json:"worker" jsonschema:"Worker address"`
 	Verifier                 string `json:"verifier" jsonschema:"Verifier address"`
 	Arbitrator               string `json:"arbitrator" jsonschema:"Arbitrator address"`
-	Amount                   string `json:"amount" jsonschema:"Amount in wei"`
+	Amount                   string `json:"amount" jsonschema:"Amount in wei (ETH) or smallest unit (ERC20)"`
 	SubmissionDeadline       string `json:"submission_deadline" jsonschema:"Unix timestamp for submission deadline"`
 	ReviewPeriodSeconds      string `json:"review_period_seconds" jsonschema:"Review period in seconds"`
 	DisputePeriodSeconds     string `json:"dispute_period_seconds" jsonschema:"Dispute period in seconds"`
 	ArbitratorTimeoutSeconds string `json:"arbitrator_timeout_seconds" jsonschema:"Arbitrator timeout in seconds"`
+	Token                    string `json:"token,omitempty" jsonschema:"ERC20 token address; omit or use 0x0000000000000000000000000000000000000000 for ETH"`
 }
 
 type escrowIDArgs struct {
@@ -126,6 +127,14 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 
 	specHash := crypto.Keccak256Hash([]byte(args.Title + args.Description))
 
+	var tokenAddr common.Address
+	if args.Token != "" {
+		if !common.IsHexAddress(args.Token) {
+			return textResult("invalid token address"), nil, nil
+		}
+		tokenAddr = common.HexToAddress(args.Token)
+	}
+
 	factory := common.HexToAddress(s.cfg.FactoryAddress)
 	params := chain.CreateEscrowParams{
 		Buyer:                    common.HexToAddress(args.Buyer),
@@ -138,6 +147,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		DisputePeriodSeconds:     dispute,
 		TaskSpecHash:             specHash,
 		ArbitratorTimeoutSeconds: arbTimeout,
+		Token:                    tokenAddr,
 	}
 
 	tx, err := s.chain.CreateEscrow(ctx, factory, params)
@@ -166,6 +176,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		Verifier:                 args.Verifier,
 		Arbitrator:               args.Arbitrator,
 		Amount:                   args.Amount,
+		Token:                    tokenAddr.Hex(),
 		Status:                   "created",
 		SubmissionDeadline:       int64(deadline),
 		ReviewPeriodSeconds:      int64(review),
@@ -188,7 +199,10 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 }
 
 func (s *Server) handleFundEscrow(ctx context.Context, req *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, _ := strconv.ParseInt(args.EscrowID, 10, 64)
+	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+	}
 	escrow, err := s.db.GetEscrow(escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
@@ -198,7 +212,32 @@ func (s *Server) handleFundEscrow(ctx context.Context, req *mcp.CallToolRequest,
 	if !ok {
 		return textResult(fmt.Sprintf("malformed escrow amount in database: %q", escrow.Amount)), nil, nil
 	}
-	tx, err := s.chain.Fund(ctx, common.HexToAddress(escrow.EscrowAddress), amount)
+
+	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
+	isERC20 := escrow.Token != "" && escrow.Token != "0x0000000000000000000000000000000000000000"
+
+	if isERC20 {
+		tokenAddr := common.HexToAddress(escrow.Token)
+		approveTx, err := s.chain.ApproveERC20(ctx, tokenAddr, escrowAddr, amount)
+		if err != nil {
+			return textResult(fmt.Sprintf("approve error: %v", err)), nil, nil
+		}
+		approveReceipt, err := chain.WaitMined(ctx, s.chain, approveTx.Hash())
+		if err != nil {
+			return textResult(fmt.Sprintf("approve receipt error: %v", err)), nil, nil
+		}
+		if approveReceipt.Status != 1 {
+			return textResult("approve transaction reverted"), nil, nil
+		}
+		tx, err := s.chain.Fund(ctx, escrowAddr, nil)
+		if err != nil {
+			return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+		}
+		_ = s.idx.RunOnce(ctx)
+		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+	}
+
+	tx, err := s.chain.Fund(ctx, escrowAddr, amount)
 	if err != nil {
 		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
 	}
@@ -208,7 +247,10 @@ func (s *Server) handleFundEscrow(ctx context.Context, req *mcp.CallToolRequest,
 }
 
 func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest, args submitArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, _ := strconv.ParseInt(args.EscrowID, 10, 64)
+	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+	}
 	escrow, err := s.db.GetEscrow(escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
@@ -228,7 +270,10 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 }
 
 func (s *Server) handleApproveWork(ctx context.Context, req *mcp.CallToolRequest, args approveArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, _ := strconv.ParseInt(args.EscrowID, 10, 64)
+	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+	}
 	escrow, err := s.db.GetEscrow(escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
@@ -256,7 +301,10 @@ func (s *Server) handleApproveWork(ctx context.Context, req *mcp.CallToolRequest
 }
 
 func (s *Server) handleDisputeWork(ctx context.Context, req *mcp.CallToolRequest, args disputeArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, _ := strconv.ParseInt(args.EscrowID, 10, 64)
+	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+	}
 	escrow, err := s.db.GetEscrow(escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
@@ -291,8 +339,17 @@ func (s *Server) handleDisputeWork(ctx context.Context, req *mcp.CallToolRequest
 }
 
 func (s *Server) handleResolveDispute(ctx context.Context, req *mcp.CallToolRequest, args resolveArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, _ := strconv.ParseInt(args.EscrowID, 10, 64)
-	bps, _ := strconv.ParseUint(args.WorkerAwardBps, 10, 16)
+	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+	}
+	bps, err := strconv.ParseUint(args.WorkerAwardBps, 10, 16)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid worker_award_bps: %v", err)), nil, nil
+	}
+	if bps > 10_000 {
+		return textResult("worker_award_bps must be between 0 and 10000"), nil, nil
+	}
 
 	escrow, err := s.db.GetEscrow(escrowID)
 	if err != nil {
@@ -309,7 +366,10 @@ func (s *Server) handleResolveDispute(ctx context.Context, req *mcp.CallToolRequ
 }
 
 func (s *Server) handleGetEscrow(ctx context.Context, req *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, _ := strconv.ParseInt(args.EscrowID, 10, 64)
+	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+	}
 	escrow, err := s.db.GetEscrow(escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil

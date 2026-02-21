@@ -1,0 +1,73 @@
+@startuml architecture
+skinparam backgroundColor #FFFFFF
+skinparam componentStyle rectangle
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam roundCorner 8
+skinparam ArrowColor #555555
+skinparam ArrowFontSize 11
+
+skinparam package {
+  BorderColor #BBBBBB
+  FontStyle bold
+}
+
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #E0D68A
+  FontSize 11
+}
+
+title System Architecture
+
+package "AI Agents" as agents #E8EAF6 {
+  [MCP Client\n(Claude, GPT, etc.)] as mcp_client #C5CAE9
+  [HTTP Client\n(Dashboard, Scripts)] as http_client #C5CAE9
+}
+
+package "Go Server" as server #E3F2FD {
+  [MCP Server\n(stdio / streamable-HTTP)] as mcp_server #BBDEFB
+  [HTTP API\n(JSON REST)] as http_api #BBDEFB
+  [Event Indexer\n(background poller)] as indexer #BBDEFB
+
+  package "Shared Logic" as shared #E1F5FE {
+    [Chain Client\n(go-ethereum)] as chain_client #B3E5FC
+    [Storage\n(SQLite)] as storage #B3E5FC
+  }
+
+  mcp_server -down-> chain_client
+  mcp_server -down-> storage
+  http_api -down-> chain_client
+  http_api -down-> storage
+  indexer -down-> chain_client
+  indexer -down-> storage
+}
+
+package "Base (Ethereum L2)" as chain #E8F5E9 {
+  [TaskEscrowFactory] as factory #A5D6A7
+  [TaskEscrow\ninstances] as escrow #A5D6A7
+  factory -right-> escrow : deploys
+}
+
+mcp_client -down-> mcp_server : stdio / HTTP
+http_client -down-> http_api : JSON
+
+chain_client -down-> factory : JSON-RPC
+chain_client -down-> escrow : JSON-RPC
+indexer ..down..> factory : poll events
+indexer ..down..> escrow : poll events
+
+note right of mcp_server
+  Primary agent interface.
+  8 tools covering the full
+  escrow lifecycle.
+end note
+
+note right of storage
+  Off-chain index of on-chain
+  state. Chain is source of
+  truth for funds.
+end note
+
+@enduml
