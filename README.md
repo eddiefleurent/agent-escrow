@@ -132,7 +132,7 @@ The MCP server is the primary interface for AI agents. Any MCP-compatible client
 
 ### HTTP API
 
-```
+```text
 GET  /api/v1/health               Health check
 POST /api/v1/escrows              Create escrow
 GET  /api/v1/escrows              List (query: role, address, status)
@@ -158,7 +158,7 @@ Full roadmap with paper traceability: [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Project Structure
 
-```
+```text
 src/                    Solidity contracts (TaskEscrowFactory, TaskEscrow)
 test/                   Foundry tests (unit, fuzz, invariant)
 script/                 Deployment scripts

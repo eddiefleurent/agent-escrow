@@ -347,6 +347,9 @@ func (s *Server) handleResolveDispute(ctx context.Context, req *mcp.CallToolRequ
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid worker_award_bps: %v", err)), nil, nil
 	}
+	if bps > 10_000 {
+		return textResult("worker_award_bps must be between 0 and 10000"), nil, nil
+	}
 
 	escrow, err := s.db.GetEscrow(escrowID)
 	if err != nil {
