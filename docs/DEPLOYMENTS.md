@@ -12,4 +12,4 @@
 | Explorer | [sepolia.basescan.org](https://sepolia.basescan.org/address/0xf10a696e7dfC8B923ddeA2E01B07D0B01a75cf34) |
 
 > Deployer, owner, and treasury addresses are in a local `.env` file (not committed).
-> See [DEPLOY_PHASE3.md](DEPLOY_PHASE3.md) for the full deployment guide.
+> See [DEPLOY.md](DEPLOY.md) for the full deployment guide.

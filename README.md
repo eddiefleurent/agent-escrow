@@ -179,7 +179,7 @@ docs/
   SETUP.md              Environment setup, configuration reference
   DEMO_RUN.md           Live demo — transactions on Base Sepolia
   DEPLOYMENTS.md        Deployed contract addresses
-  DEPLOY_PHASE3.md      Deployment guide and lifecycle walkthrough
+  DEPLOY.md             Deployment guide and lifecycle walkthrough
 ```
 
 ## Documentation
