@@ -69,12 +69,27 @@ Always run `make test-all` before finishing changes. If tests fail, fix the root
 - Logging: use `log/slog` (stdlib structured logger). Never use `log.Printf` or `fmt.Printf` for operational logging. Use JSON handler with leveled output (`slog.Info`, `slog.Warn`, `slog.Error`). Include relevant context as key-value pairs.
 - Chain operations: depend on `chain.ChainClient` interface, not `*chain.Client` directly. Use `chain.MockClient` in tests.
 
+## Python Scripts
+
+Python scripts live in `scripts/` and use `uv` for environment management. Do not use `pip install --break-system-packages`.
+
+```bash
+uv venv .venv                              # create venv (one-time)
+uv pip install cdp-sdk python-dotenv       # install deps (one-time)
+uv run scripts/faucet.py                   # request testnet ETH from CDP faucet
+uv run scripts/faucet.py --token usdc      # request testnet USDC
+uv run scripts/faucet.py --claims 10       # batch claims (rate-limited ~10/burst)
+```
+
+CDP faucet credentials (`CDP_API_KEY_ID`, `CDP_API_KEY_SECRET`, `CDP_WALLET_SECRET`) must be in `.env`. See `.env.example`.
+
 ## Key Directories
 
 ```text
 src/                      Solidity contracts
 test/                     Foundry tests
-script/                   Deploy scripts
+script/                   Deploy scripts (Foundry/Solidity)
+scripts/                  Utility scripts (Python)
 go-server/
   cmd/server/main.go      Entrypoint
   internal/

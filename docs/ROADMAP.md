@@ -6,6 +6,27 @@ The paper defines five framework pillars, nine technical protocols, ethical cons
 
 ---
 
+## Relationship to x402
+
+[x402](https://docs.cdp.coinbase.com/x402/welcome) is an open payment protocol developed by Coinbase that enables instant stablecoin payments over HTTP by reviving the HTTP 402 status code. Its companion [Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) layer provides machine-readable service discovery for payable API endpoints. Both target Base and operate in the same ecosystem as this project.
+
+x402 and this project address adjacent but distinct problems. x402 provides a stateless, single-interaction payment flow: a client requests a resource, pays, and receives it. This project implements the paper's delegation framework: a stateful, multi-party lifecycle where funds are held in conditional escrow across task assignment, execution, submission, verification, dispute resolution, and settlement. The paper identifies this gap explicitly -- existing payment protocols lack conditionality, milestone releases, clawback, and verification slots (§6).
+
+The two are complementary. The paper calls for extending existing protocols rather than competing with them (§6), and x402 addresses one of the infrastructure gaps the framework depends on: a standardized, low-friction payment rail for the agentic web.
+
+### Where x402 serves as infrastructure
+
+- **Escrow funding**: x402's [EIP-3009](https://eips.ethereum.org/EIPS/eip-3009) gasless transfers via its facilitator can streamline the escrow funding step, replacing the manual `approve + fund` two-step. The facilitator sponsors gas and handles on-chain settlement; the escrow contract remains the custodial destination. This reduces wallet UX friction for participants who are not crypto-native.
+- **Service discovery**: rather than building a standalone discovery index for Task_RFQ, escrow-backed delegation services can be registered on Bazaar alongside simple paid APIs. Bazaar provides the discoverability layer; the bidding protocol (Task_RFQ + Bid_Object) handles negotiation and escrow formalization on top.
+- **AP2 mandate funding**: x402 serves as the payment mechanism within the AP2 mandate-to-escrow bridge -- it handles fund movement from mandate authorization into the escrow contract, which then governs conditional custody and release.
+- **Complexity floor calibration**: the x402 facilitator fee ($0.001/tx beyond the free tier) plus on-chain gas provides a concrete lower bound for the paper's complexity floor parameter (§4.3) -- delegation overhead must exceed this threshold to justify escrow.
+
+### What x402 does not cover
+
+Everything that distinguishes delegation from payment remains this project's scope: the 9-state escrow machine with conditional release and timeout recovery; dispute resolution through verifier rejection, arbitrator escalation, and silence escalation; worker stake and Sybil resistance; milestones with partial payouts; backup agent re-allocation; on-chain reputation; Delegation Capability Tokens; attestation chains and recursive verification; ZK verification slots; checkpoint/resume for mid-task agent swaps; multi-verifier quorum; and the ethical safeguards the paper defines in Section 5.
+
+---
+
 ## Delivery Phases
 
 ### V1 -- Settlement Kernel ✓
@@ -26,10 +47,10 @@ Marketplace layer built on top of the settlement kernel.
 3. **Milestone-based escrow** -- multiple submission/approval checkpoints within a single escrow with partial payouts (paper §4.4: smart contracts with pre-agreed executable clauses for adaptive coordination)
 4. **Backup agent clause** -- pre-designated fallback worker if primary defaults, with penalty coverage (paper §4.4: backup agent auto-re-allocation on failed ZK checkpoint)
 5. **On-chain reputation seed** -- factory-level outcome recording per address: tasks completed, disputed, failed (paper §4.6 Table 3: immutable ledger approach)
-6. **Complexity floor parameter** -- minimum escrow amount to justify delegation overhead, gas + protocol fee (paper §4.3: complexity floor below which delegation overhead exceeds task value)
-7. **Task_RFQ + Bid_Object bidding protocol** -- off-chain bidding with on-chain escrow formalization on bid acceptance (paper §6.1: Task_RFQ broadcast + signed Bid_Objects)
-8. **A2A settlement adapter** -- agent card advertising escrow capability; `verification_policy` + `escrow_trigger` fields (paper §6: A2A Task object extension)
-9. **AP2 mandate-to-escrow bridge** -- AP2 mandate authorization triggers escrow funding (paper §6: AP2 stake-on-bid + conditional settlement)
+6. **Complexity floor parameter** -- minimum escrow amount to justify delegation overhead, gas + protocol fee; lower bound calibrated against x402 facilitator fee + on-chain gas (paper §4.3: complexity floor below which delegation overhead exceeds task value)
+7. **Task_RFQ + Bid_Object bidding protocol** -- off-chain bidding with on-chain escrow formalization on bid acceptance; service discovery via [x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) (paper §6.1: Task_RFQ broadcast + signed Bid_Objects)
+8. **A2A settlement adapter** -- agent card advertising escrow capability; `verification_policy` + `escrow_trigger` fields; discoverable via x402 Bazaar (paper §6: A2A Task object extension)
+9. **AP2 mandate-to-escrow bridge** -- AP2 mandate authorization triggers escrow funding via [x402](https://docs.cdp.coinbase.com/x402/welcome) payment rail (EIP-3009 gasless transfer through facilitator into escrow contract) (paper §6: AP2 stake-on-bid + conditional settlement)
 10. **Real-time event subscriptions** -- WebSocket/SSE stream for escrow lifecycle events (paper §4.5: configurable granularity L0-L3)
 11. **Emergency response protocol** -- credential revocation propagation, contract freeze with fund recovery path (paper §4.9: rapid incident response, recursive credential revocation across chains)
 
@@ -38,7 +59,7 @@ Marketplace layer built on top of the settlement kernel.
 Full marketplace intelligence and the paper's advanced coordination mechanisms.
 
 12. **Delegation Capability Tokens (DCTs)** -- attenuated permission tokens based on Macaroons/Biscuits, scoped to escrow lifecycle; invalidated on settlement/refund (paper §6.1: restriction chaining across delegation chains)
-13. **Verifiable credentials for bidding** -- agents present signed capability attestations during Task_RFQ; delegator filters by domain-specific credentials (paper §4.6 Table 3: Web of Trust with DIDs)
+13. **Verifiable credentials for bidding** -- agents present signed capability attestations during Task_RFQ; delegator filters by domain-specific credentials; credential metadata surfaced via Bazaar discovery extensions (paper §4.6 Table 3: Web of Trust with DIDs)
 14. **Attestation chains** -- recursive verification across delegation chains (A -> B -> C); each link produces signed attestation of sub-task completion (paper §4.8: transitive liability, chain of custody)
 15. **ZK verification slot** -- optional `proofHash` field on submission for formally verifiable tasks; supports zk-SNARKs/groth16 (paper §4.8: cryptographic verification for trustless automated verification)
 16. **Checkpoint/resume** -- standardized state snapshots for mid-task agent swaps; periodic `state_snapshot` commits to shared storage (paper §6.1: checkpoint artifacts + partial compensation clauses)
@@ -134,8 +155,10 @@ How each version maps to the five pillars from ["Intelligent AI Delegation"](htt
 | Protocol | Gap (per paper) | Integration | Version |
 |---|---|---|---|
 | **MCP** | No liability, reputation, trust, or conditional settlement | MCP server with 8 escrow tools; future: monitoring stream (L0-L3), DCT-scoped tool permissions | V1 (complete), V2-V3 |
-| **A2A** | No verification slots, no escrow, assumes trust | Settlement adapter agent card; `verification_policy` + `escrow_trigger` on A2A Task objects | V2 |
-| **AP2** | No conditional settlement, no milestone releases, no clawback | AP2 mandate-to-escrow funding bridge; stake-on-bid Sybil resistance | V2 |
+| **x402** | Stateless payment; no conditionality, dispute resolution, or verification | Gasless escrow funding rail (EIP-3009 via facilitator); AP2 mandate funding mechanism; complexity floor calibration | V2 |
+| **x402 Bazaar** | Discovery only; no bidding, negotiation, or capability matching | Service discovery substrate for Task_RFQ; credential metadata via Bazaar extensions | V2-V3 |
+| **A2A** | No verification slots, no escrow, assumes trust | Settlement adapter agent card; `verification_policy` + `escrow_trigger` on A2A Task objects; Bazaar-discoverable | V2 |
+| **AP2** | No conditional settlement, no milestone releases, no clawback | Mandate-to-escrow funding bridge via x402 payment rail; stake-on-bid Sybil resistance | V2 |
 | **UCP** | Optimized for commercial intent, not abstract computational delegation | UCP fulfillment provider exposing escrow lifecycle | V3 |
 
 ---
@@ -165,7 +188,7 @@ Long-horizon items the paper acknowledges as open research:
 
 - Verifier/arbitrator centralization in V1 (mitigated by multi-verifier quorum in V3)
 - Poor task specification causing avoidable disputes (mitigated by contract-first decomposition tooling in V3)
-- Wallet UX friction for non-crypto-native participants
+- Wallet UX friction for non-crypto-native participants (partially mitigated by x402 gasless funding via facilitator in V2)
 - Off-chain/on-chain state drift if indexing is unreliable
 - Safety becoming a luxury good if high-assurance delegation is too expensive (mitigated by tiered service levels + governance safety floors)
 - De-skilling risk for human participants who lose proficiency through reduced engagement (mitigated by curriculum-aware routing in V4)
