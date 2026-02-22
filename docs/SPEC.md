@@ -246,7 +246,7 @@ The factory owner can freeze or unfreeze individual addresses via `freezeAddress
 
 ### Contract Freeze
 
-The factory owner can freeze or unfreeze individual escrows via `freezeEscrow(escrowId)` / `unfreezeEscrow(escrowId)`. A frozen escrow blocks participant-callable state-changing functions protected by `whenNotFrozen` (fund, submit, approve, dispute, resolve, deposit stake, backup activation, and milestone state transitions). Timeout claim paths (`claimTimeoutRefund`, `claimArbitratorTimeout`) remain callable while frozen to preserve fund-recovery liveness.
+The factory owner can freeze or unfreeze individual escrows via `freezeEscrow(escrowId)` / `unfreezeEscrow(escrowId)`. A frozen escrow blocks participant-callable state-changing functions protected by `whenNotFrozen`: `fund`, `fundWithAuthorization`, `depositStake`, `submit`, `approveByBuyer`, `approveByVerifier`, `rejectByVerifier`, `dispute`, `escalateSilence`, `resolveDispute`, `activateBackup`, `submitMilestone`, `approveMilestoneByBuyer`, `approveMilestoneByVerifier`, `rejectMilestoneByVerifier`, `disputeMilestone`, `escalateMilestoneSilence`, `resolveMilestoneDispute`, and `abortRemainingMilestones`. Timeout claim paths (`claimTimeoutRefund`, `claimArbitratorTimeout`) remain callable while frozen to preserve fund-recovery liveness. `emergencyResolve` is intentionally excluded from this participant-callable list because it is owner/factory-callable emergency control.
 
 ### Emergency Resolution
 
