@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"testing"
 )
 
@@ -664,5 +665,241 @@ func TestCursor(t *testing.T) {
 	}
 	if block != 200 {
 		t.Fatalf("expected 200, got %d", block)
+	}
+}
+
+// Emergency response protocol tests
+
+func TestFrozenAddresses(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Upsert and list
+	if err := db.UpsertFrozenAddress(ctx, "0xBadActor", "suspicious activity", "0xAdmin"); err != nil {
+		t.Fatalf("upsert frozen address: %v", err)
+	}
+	if err := db.UpsertFrozenAddress(ctx, "0xAnotherBad", "fraud", "0xAdmin"); err != nil {
+		t.Fatalf("upsert second frozen address: %v", err)
+	}
+
+	addrs, err := db.ListFrozenAddresses(ctx)
+	if err != nil {
+		t.Fatalf("list frozen addresses: %v", err)
+	}
+	if len(addrs) != 2 {
+		t.Fatalf("expected 2 frozen addresses, got %d", len(addrs))
+	}
+	if addrs[0].Address != "0xAnotherBad" && addrs[0].Address != "0xBadActor" {
+		t.Fatalf("unexpected address in list: %q", addrs[0].Address)
+	}
+	if addrs[0].Reason == "" || addrs[0].FrozenBy == "" {
+		t.Fatalf("expected reason and frozen_by to be set")
+	}
+
+	// IsFrozenAddress
+	frozen, err := db.IsFrozenAddress(ctx, "0xBadActor")
+	if err != nil {
+		t.Fatalf("is frozen: %v", err)
+	}
+	if !frozen {
+		t.Fatal("expected 0xBadActor to be frozen")
+	}
+	frozen, err = db.IsFrozenAddress(ctx, "0xGoodActor")
+	if err != nil {
+		t.Fatalf("is frozen (good): %v", err)
+	}
+	if frozen {
+		t.Fatal("expected 0xGoodActor to not be frozen")
+	}
+
+	// Upsert updates existing
+	if err := db.UpsertFrozenAddress(ctx, "0xBadActor", "updated reason", "0xNewAdmin"); err != nil {
+		t.Fatalf("upsert update: %v", err)
+	}
+	addrs, err = db.ListFrozenAddresses(ctx)
+	if err != nil {
+		t.Fatalf("list after upsert: %v", err)
+	}
+	var found *FrozenAddress
+	for _, a := range addrs {
+		if a.Address == "0xBadActor" {
+			found = a
+			break
+		}
+	}
+	if found == nil || found.Reason != "updated reason" || found.FrozenBy != "0xNewAdmin" {
+		t.Fatalf("expected upsert to update: got %+v", found)
+	}
+
+	// Delete
+	if err := db.DeleteFrozenAddress(ctx, "0xBadActor"); err != nil {
+		t.Fatalf("delete frozen address: %v", err)
+	}
+	frozen, err = db.IsFrozenAddress(ctx, "0xBadActor")
+	if err != nil {
+		t.Fatalf("is frozen after delete: %v", err)
+	}
+	if frozen {
+		t.Fatal("expected 0xBadActor to not be frozen after delete")
+	}
+	addrs, err = db.ListFrozenAddresses(ctx)
+	if err != nil {
+		t.Fatalf("list after delete: %v", err)
+	}
+	if len(addrs) != 1 {
+		t.Fatalf("expected 1 frozen address after delete, got %d", len(addrs))
+	}
+}
+
+func TestEmergencyActions(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Create actions
+	for i := range 5 {
+		err := db.CreateEmergencyAction(ctx, "freeze", "0xTarget", "escrow-1", "reason", fmt.Sprintf("0xtx%d", i))
+		if err != nil {
+			t.Fatalf("create emergency action %d: %v", i, err)
+		}
+	}
+
+	// List with limit/offset
+	all, err := db.ListEmergencyActions(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("list all: %v", err)
+	}
+	if len(all) != 5 {
+		t.Fatalf("expected 5 actions, got %d", len(all))
+	}
+	if all[0].Action != "freeze" || all[0].Target != "0xTarget" || all[0].EscrowID != "escrow-1" {
+		t.Fatalf("unexpected action fields: %+v", all[0])
+	}
+	if all[0].TxHash == "" || all[0].CreatedAt.IsZero() {
+		t.Fatalf("expected tx_hash and created_at to be set")
+	}
+
+	// Pagination
+	page1, err := db.ListEmergencyActions(ctx, 2, 0)
+	if err != nil {
+		t.Fatalf("list limit 2: %v", err)
+	}
+	if len(page1) != 2 {
+		t.Fatalf("expected 2 actions, got %d", len(page1))
+	}
+	page2, err := db.ListEmergencyActions(ctx, 2, 2)
+	if err != nil {
+		t.Fatalf("list offset 2: %v", err)
+	}
+	if len(page2) != 2 {
+		t.Fatalf("expected 2 actions on page 2, got %d", len(page2))
+	}
+	if page1[0].ID == page2[0].ID {
+		t.Fatal("expected different IDs across pages")
+	}
+}
+
+func TestUpdateEscrowFrozen(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	task, err := db.CreateTask(ctx, "Task", "", "0x123")
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	escrow, err := db.CreateEscrow(ctx, &Escrow{
+		TaskID:         task.ID,
+		ChainID:        84532,
+		FactoryAddress: "0xF",
+		EscrowAddress:  "0xE",
+		Buyer:          "0xBuyer",
+		Worker:         "0xWorker",
+		Verifier:       "0xV",
+		Arbitrator:     "0xA",
+		Amount:         "100",
+		Status:         "created",
+		Frozen:         false,
+	})
+	if err != nil {
+		t.Fatalf("create escrow: %v", err)
+	}
+
+	got, err := db.GetEscrow(ctx, escrow.ID)
+	if err != nil {
+		t.Fatalf("get escrow: %v", err)
+	}
+	if got.Frozen {
+		t.Fatal("expected escrow to not be frozen initially")
+	}
+
+	if err := db.UpdateEscrowFrozen(ctx, escrow.ID, true); err != nil {
+		t.Fatalf("update escrow frozen: %v", err)
+	}
+	got, err = db.GetEscrow(ctx, escrow.ID)
+	if err != nil {
+		t.Fatalf("get escrow after update: %v", err)
+	}
+	if !got.Frozen {
+		t.Fatal("expected escrow to be frozen")
+	}
+
+	if err := db.UpdateEscrowFrozen(ctx, escrow.ID, false); err != nil {
+		t.Fatalf("update escrow unfrozen: %v", err)
+	}
+	got, err = db.GetEscrow(ctx, escrow.ID)
+	if err != nil {
+		t.Fatalf("get escrow after unfreeze: %v", err)
+	}
+	if got.Frozen {
+		t.Fatal("expected escrow to not be frozen after unfreeze")
+	}
+}
+
+func TestGetEscrowByOnChainID(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	task, err := db.CreateTask(ctx, "Task", "", "0x123")
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	escrow, err := db.CreateEscrow(ctx, &Escrow{
+		TaskID:         task.ID,
+		ChainID:        84532,
+		FactoryAddress: "0xF",
+		EscrowAddress:  "0xEscrowAddr",
+		EscrowID:       42,
+		Buyer:          "0xBuyer",
+		Worker:         "0xWorker",
+		Verifier:       "0xV",
+		Arbitrator:     "0xA",
+		Amount:         "100",
+		Status:         "created",
+	})
+	if err != nil {
+		t.Fatalf("create escrow: %v", err)
+	}
+
+	got, err := db.GetEscrowByOnChainID(ctx, 84532, 42)
+	if err != nil {
+		t.Fatalf("get escrow by on-chain ID: %v", err)
+	}
+	if got.ID != escrow.ID {
+		t.Fatalf("expected escrow ID %d, got %d", escrow.ID, got.ID)
+	}
+	if got.EscrowAddress != "0xEscrowAddr" {
+		t.Fatalf("expected address 0xEscrowAddr, got %q", got.EscrowAddress)
+	}
+	if got.EscrowID != 42 {
+		t.Fatalf("expected escrow_id 42, got %d", got.EscrowID)
+	}
+
+	// Different chain or escrow_id should not find
+	_, err = db.GetEscrowByOnChainID(ctx, 1, 42)
+	if err == nil {
+		t.Fatal("expected error for wrong chain")
+	}
+	_, err = db.GetEscrowByOnChainID(ctx, 84532, 99)
+	if err == nil {
+		t.Fatal("expected error for non-existent escrow_id")
 	}
 }

@@ -50,6 +50,14 @@ type ChainClient interface {
 
 	// Backup agent operations
 	ActivateBackup(ctx context.Context, escrow common.Address) (*types.Transaction, error)
+
+	// Emergency response protocol (paper §4.9)
+	FreezeAddress(ctx context.Context, factory common.Address, target common.Address) (*types.Transaction, error)
+	UnfreezeAddress(ctx context.Context, factory common.Address, target common.Address) (*types.Transaction, error)
+	FreezeEscrow(ctx context.Context, factory common.Address, escrowID *big.Int) (*types.Transaction, error)
+	UnfreezeEscrow(ctx context.Context, factory common.Address, escrowID *big.Int) (*types.Transaction, error)
+	EmergencyResolve(ctx context.Context, factory common.Address, escrowID *big.Int, workerAwardBps uint16) (*types.Transaction, error)
+	IsFrozenAddress(ctx context.Context, factory common.Address, target common.Address) (bool, error)
 }
 
 // Compile-time check that *Client satisfies ChainClient.

@@ -7,7 +7,7 @@ library FactoryLib {
     /// @dev Returns true if any pair of core roles collide, or if backupWorker
     /// (when non-zero) collides with any core role.
     function rolesCollide(address buyer, address _worker, address _verifier, address _arbitrator, address _backupWorker)
-        internal
+        public
         pure
         returns (bool)
     {

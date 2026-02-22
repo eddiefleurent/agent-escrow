@@ -51,6 +51,9 @@ type Config struct {
 	EventsEnabled           bool          // Enable SSE/WebSocket event streaming (default true)
 	EventsBufferSize        int           // Per-subscriber channel buffer size (default 64)
 	EventsHeartbeatInterval time.Duration // Heartbeat interval for L0 liveness (default 30s)
+
+	// Emergency response protocol (paper §4.9: rapid incident response).
+	EmergencyEnabled bool // Enable emergency freeze/resolve endpoints (default true)
 }
 
 // WebhookMode reports whether CDP webhook mode is enabled (secret is configured).
@@ -189,6 +192,15 @@ func Load() (*Config, error) {
 		eventsBufferSize = v
 	}
 
+	emergencyEnabled := true
+	if raw := os.Getenv("EMERGENCY_ENABLED"); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid EMERGENCY_ENABLED: %w", err)
+		}
+		emergencyEnabled = v
+	}
+
 	eventsHeartbeatInterval := 30 * time.Second
 	if raw := os.Getenv("EVENTS_HEARTBEAT_INTERVAL"); raw != "" {
 		d, err := time.ParseDuration(raw)
@@ -224,6 +236,7 @@ func Load() (*Config, error) {
 		EventsEnabled:           eventsEnabled,
 		EventsBufferSize:        eventsBufferSize,
 		EventsHeartbeatInterval: eventsHeartbeatInterval,
+		EmergencyEnabled:        emergencyEnabled,
 	}
 
 	result := cfg.Validate()

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.34;
 
-import {IERC20} from "./interfaces/IERC20.sol";
-import {IEIP3009} from "./interfaces/IEIP3009.sol";
 import {MilestoneLib} from "./MilestoneLib.sol";
+import {TransferLib} from "./TransferLib.sol";
+import {FactoryLib} from "./FactoryLib.sol";
 
 interface ITaskEscrowFactory {
     function recordOutcome(uint8 outcome) external;
@@ -67,6 +67,7 @@ contract TaskEscrow {
     error BackupAlreadyActivated();
     error NoBackupDesignated();
     error FactoryCallbackFailed();
+    error Frozen();
 
     event EscrowFunded(address indexed buyer, uint256 amount);
     event WorkerStakeDeposited(address indexed worker, uint256 amount);
@@ -91,6 +92,9 @@ contract TaskEscrow {
     event MilestoneCancelled(uint8 indexed milestoneIndex);
     event RemainingMilestonesAborted(uint8 fromIndex, uint256 refundAmount);
     event BackupActivated(address indexed previousWorker, address indexed newWorker, uint64 newDeadline);
+    event EmergencyFrozen();
+    event EmergencyUnfrozen();
+    event EmergencyResolved(uint16 workerAwardBps);
 
     address public immutable factory;
     address public immutable token;
@@ -112,6 +116,7 @@ contract TaskEscrow {
 
     address public activeWorker;
     bool public backupActivated;
+    bool public frozen;
     uint64 public deadlineExtensionApplied;
 
     uint64 public submittedAt;
@@ -168,19 +173,8 @@ contract TaskEscrow {
             revert InvalidAddress();
         }
         if (p.treasurySnapshot == address(0)) revert InvalidAddress();
-        if (
-            p.buyer == p.worker || p.buyer == p.verifier || p.buyer == p.arbitrator || p.worker == p.verifier
-                || p.worker == p.arbitrator || p.verifier == p.arbitrator
-        ) {
+        if (FactoryLib.rolesCollide(p.buyer, p.worker, p.verifier, p.arbitrator, p.backupWorker)) {
             revert RolesNotDistinct();
-        }
-        if (p.backupWorker != address(0)) {
-            if (
-                p.backupWorker == p.buyer || p.backupWorker == p.worker || p.backupWorker == p.verifier
-                    || p.backupWorker == p.arbitrator
-            ) {
-                revert RolesNotDistinct();
-            }
         }
         if (p.amount == 0) revert InvalidAmount();
         if (p.submissionDeadline <= block.timestamp) revert InvalidDeadline();
@@ -210,55 +204,46 @@ contract TaskEscrow {
     }
 
     function _initMilestones(Params memory p) internal {
-        if (p.milestones.length > 0) {
-            if (p.milestones.length > 16) revert TooManyMilestones();
+        uint256 len = p.milestones.length;
+        if (len > 0) {
+            if (len > 16) revert TooManyMilestones();
             uint256 total;
             uint64 prevDl;
-            for (uint256 i = 0; i < p.milestones.length; i++) {
+            for (uint256 i; i < len;) {
                 if (p.milestones[i].submissionDeadline <= block.timestamp) revert InvalidDeadline();
                 if (i > 0 && p.milestones[i].submissionDeadline <= prevDl) revert InvalidMilestoneDeadlineOrder();
                 prevDl = p.milestones[i].submissionDeadline;
                 total += p.milestones[i].amount;
-                milestones.push(
-                    Milestone({
-                        amount: p.milestones[i].amount,
-                        submissionDeadline: p.milestones[i].submissionDeadline,
-                        submissionHash: bytes32(0),
-                        submissionURI: "",
-                        submittedAt: 0,
-                        approvedAt: 0,
-                        disputedAt: 0,
-                        disputeReasonURI: "",
-                        status: MilestoneStatus.Pending,
-                        awardBps: 0
-                    })
-                );
+                milestones.push(_emptyMs(p.milestones[i].amount, p.milestones[i].submissionDeadline));
+                unchecked {
+                    ++i;
+                }
             }
             if (total != p.amount) revert MilestoneAmountMismatch();
-            milestoneCount = uint8(p.milestones.length);
+            milestoneCount = uint8(len);
         } else {
             milestoneCount = 1;
-            milestones.push(
-                Milestone({
-                    amount: p.amount,
-                    submissionDeadline: p.submissionDeadline,
-                    submissionHash: bytes32(0),
-                    submissionURI: "",
-                    submittedAt: 0,
-                    approvedAt: 0,
-                    disputedAt: 0,
-                    disputeReasonURI: "",
-                    status: MilestoneStatus.Pending,
-                    awardBps: 0
-                })
-            );
+            milestones.push(_emptyMs(p.amount, p.submissionDeadline));
         }
+    }
+
+    function _emptyMs(uint256 amt, uint64 dl) internal pure returns (Milestone memory) {
+        return Milestone(amt, dl, bytes32(0), "", 0, 0, 0, "", MilestoneStatus.Pending, 0);
     }
 
     modifier nonReentrant() {
         _nonReentrantBefore();
         _;
         _locked = _NOT_ENTERED;
+    }
+
+    modifier whenNotFrozen() {
+        _whenNotFrozen();
+        _;
+    }
+
+    function _whenNotFrozen() internal view {
+        if (frozen) revert Frozen();
     }
 
     function _nonReentrantBefore() internal {
@@ -270,13 +255,37 @@ contract TaskEscrow {
         if (msg.sender != buyer) revert Unauthorized();
     }
 
+    function setFrozen(bool f) external {
+        if (msg.sender != factory) revert Unauthorized();
+        frozen = f;
+        if (f) emit EmergencyFrozen();
+        else emit EmergencyUnfrozen();
+    }
+
+    /// @notice Emergency resolve: force-settle from any non-terminal state.
+    /// Callable only by the factory. Uses dispute resolution math for proportional split.
+    function emergencyResolve(uint16 bps) external nonReentrant {
+        if (msg.sender != factory) revert Unauthorized();
+        if (bps > 10_000) revert InvalidAwardBps();
+        Status s = status;
+        if (s >= Status.Settled) revert InvalidState();
+        if (s == Status.Created) {
+            status = Status.Cancelled;
+            emit Cancelled();
+            return;
+        }
+        emit EmergencyResolved(bps);
+        if (milestoneCount <= 1) _settleResolved(bps);
+        else _emergencySettleMilestones(bps);
+    }
+
     function _requireState(Status s) internal view {
         if (status != s) revert InvalidState();
     }
 
     // ── V1 single-shot functions ──
 
-    function fund() external payable nonReentrant {
+    function fund() external payable nonReentrant whenNotFrozen {
         _requireBuyer();
         _requireState(Status.Created);
         if (token == address(0)) {
@@ -299,7 +308,7 @@ contract TaskEscrow {
         uint8 v,
         bytes32 r,
         bytes32 s
-    ) external nonReentrant {
+    ) external nonReentrant whenNotFrozen {
         if (from != buyer) revert Unauthorized();
         _requireState(Status.Created);
         if (token == address(0)) revert ETHNotAccepted();
@@ -317,7 +326,7 @@ contract TaskEscrow {
         emit Cancelled();
     }
 
-    function depositStake() external payable nonReentrant {
+    function depositStake() external payable nonReentrant whenNotFrozen {
         if (msg.sender != activeWorker) revert Unauthorized();
         _requireState(Status.Funded);
         if (workerStake == 0) revert InvalidAmount();
@@ -332,7 +341,7 @@ contract TaskEscrow {
         emit WorkerStakeDeposited(msg.sender, workerStake);
     }
 
-    function submit(bytes32 _submissionHash, string calldata _submissionURI) external {
+    function submit(bytes32 _submissionHash, string calldata _submissionURI) external whenNotFrozen {
         if (msg.sender != activeWorker) revert Unauthorized();
         _requireState(Status.Funded);
         if (block.timestamp > uint256(submissionDeadline) + uint256(deadlineExtensionApplied)) revert WindowExpired();
@@ -346,17 +355,17 @@ contract TaskEscrow {
         if (milestoneCount == 1) _syncMs0Submit(_submissionHash, _submissionURI);
     }
 
-    function approveByBuyer() external nonReentrant {
+    function approveByBuyer() external nonReentrant whenNotFrozen {
         _requireBuyer();
         _approve(msg.sender);
     }
 
-    function approveByVerifier() external nonReentrant {
+    function approveByVerifier() external nonReentrant whenNotFrozen {
         if (msg.sender != verifier) revert Unauthorized();
         _approve(msg.sender);
     }
 
-    function rejectByVerifier(string calldata reasonURI) external {
+    function rejectByVerifier(string calldata reasonURI) external whenNotFrozen {
         if (msg.sender != verifier) revert Unauthorized();
         _requireState(Status.Submitted);
         if (block.timestamp > _reviewWindowEnds()) revert WindowExpired();
@@ -368,7 +377,7 @@ contract TaskEscrow {
         if (milestoneCount == 1) _syncMs0Dispute(reasonURI);
     }
 
-    function dispute(string calldata reasonURI) external {
+    function dispute(string calldata reasonURI) external whenNotFrozen {
         _requireBuyer();
         _requireState(Status.Submitted);
         if (block.timestamp > _disputeWindowEnds()) revert WindowExpired();
@@ -379,7 +388,7 @@ contract TaskEscrow {
         if (milestoneCount == 1) _syncMs0Dispute(reasonURI);
     }
 
-    function escalateSilence(string calldata reasonURI) external {
+    function escalateSilence(string calldata reasonURI) external whenNotFrozen {
         if (msg.sender != activeWorker) revert Unauthorized();
         _requireState(Status.Submitted);
         if (block.timestamp <= _reviewWindowEnds()) revert WindowNotOpen();
@@ -392,7 +401,7 @@ contract TaskEscrow {
         if (milestoneCount == 1) _syncMs0Dispute(reasonURI);
     }
 
-    function resolveDispute(uint16 workerAwardBps, string calldata resolutionURI) external nonReentrant {
+    function resolveDispute(uint16 workerAwardBps, string calldata resolutionURI) external nonReentrant whenNotFrozen {
         if (msg.sender != arbitrator) revert Unauthorized();
         _requireState(Status.Disputed);
         if (workerAwardBps > 10_000) revert InvalidAwardBps();
@@ -431,7 +440,7 @@ contract TaskEscrow {
 
     // ── Backup agent activation (paper §4.4) ──
 
-    function activateBackup() external nonReentrant {
+    function activateBackup() external nonReentrant whenNotFrozen {
         _requireBuyer();
         _requireState(Status.Funded);
         if (backupWorker == address(0)) revert NoBackupDesignated();
@@ -473,7 +482,10 @@ contract TaskEscrow {
 
     // ── Milestone functions (multi-milestone mode, milestoneCount > 1) ──
 
-    function submitMilestone(uint8 milestoneIndex, bytes32 _submissionHash, string calldata _submissionURI) external {
+    function submitMilestone(uint8 milestoneIndex, bytes32 _submissionHash, string calldata _submissionURI)
+        external
+        whenNotFrozen
+    {
         if (msg.sender != activeWorker) revert Unauthorized();
         _requireState(Status.Funded);
         if (milestoneCount <= 1) revert InvalidState();
@@ -490,17 +502,17 @@ contract TaskEscrow {
         emit MilestoneSubmitted(milestoneIndex, _submissionHash, _submissionURI);
     }
 
-    function approveMilestoneByBuyer(uint8 milestoneIndex) external nonReentrant {
+    function approveMilestoneByBuyer(uint8 milestoneIndex) external nonReentrant whenNotFrozen {
         _requireBuyer();
         _approveMilestone(milestoneIndex, msg.sender);
     }
 
-    function approveMilestoneByVerifier(uint8 milestoneIndex) external nonReentrant {
+    function approveMilestoneByVerifier(uint8 milestoneIndex) external nonReentrant whenNotFrozen {
         if (msg.sender != verifier) revert Unauthorized();
         _approveMilestone(milestoneIndex, msg.sender);
     }
 
-    function disputeMilestone(uint8 milestoneIndex, string calldata reasonURI) external {
+    function disputeMilestone(uint8 milestoneIndex, string calldata reasonURI) external whenNotFrozen {
         _requireMultiMsFunded();
         _requireBuyer();
         if (milestoneIndex != currentMilestone) revert InvalidMilestoneIndex();
@@ -515,7 +527,7 @@ contract TaskEscrow {
         emit MilestoneDisputed(milestoneIndex, msg.sender, reasonURI);
     }
 
-    function rejectMilestoneByVerifier(uint8 milestoneIndex, string calldata reasonURI) external {
+    function rejectMilestoneByVerifier(uint8 milestoneIndex, string calldata reasonURI) external whenNotFrozen {
         _requireMultiMsFunded();
         if (msg.sender != verifier) revert Unauthorized();
         if (milestoneIndex != currentMilestone) revert InvalidMilestoneIndex();
@@ -529,7 +541,7 @@ contract TaskEscrow {
         emit MilestoneDisputed(milestoneIndex, msg.sender, reasonURI);
     }
 
-    function escalateMilestoneSilence(uint8 milestoneIndex, string calldata reasonURI) external {
+    function escalateMilestoneSilence(uint8 milestoneIndex, string calldata reasonURI) external whenNotFrozen {
         _requireMultiMsFunded();
         if (msg.sender != activeWorker) revert Unauthorized();
         if (milestoneIndex != currentMilestone) revert InvalidMilestoneIndex();
@@ -548,6 +560,7 @@ contract TaskEscrow {
     function resolveMilestoneDispute(uint8 milestoneIndex, uint16 workerAwardBps, string calldata resolutionURI)
         external
         nonReentrant
+        whenNotFrozen
     {
         _requireMultiMsFunded();
         if (msg.sender != arbitrator) revert Unauthorized();
@@ -592,7 +605,7 @@ contract TaskEscrow {
         _advanceMilestone();
     }
 
-    function abortRemainingMilestones() external nonReentrant {
+    function abortRemainingMilestones() external nonReentrant whenNotFrozen {
         _requireMultiMsFunded();
         _requireBuyer();
 
@@ -631,6 +644,24 @@ contract TaskEscrow {
     }
 
     // ── Internal ──
+
+    function _emergencySettleMilestones(uint16 bps) internal {
+        uint8 mc = milestoneCount;
+        for (uint8 i; i < mc;) {
+            MilestoneStatus ms = milestones[i].status;
+            if (ms < MilestoneStatus.Approved || ms == MilestoneStatus.Disputed) {
+                milestones[i].status = MilestoneStatus.Resolved;
+                milestones[i].awardBps = bps;
+                _doMsResolvedSettle(i, bps);
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        _settleWorkerStake();
+        status = Status.Settled;
+        _recordOutcome(OUTCOME_DISPUTED);
+    }
 
     function _requireMultiMsFunded() internal view {
         _requireState(Status.Funded);
@@ -779,29 +810,13 @@ contract TaskEscrow {
     }
 
     function _send(address to, uint256 value) internal {
-        if (token == address(0)) {
-            (bool ok,) = payable(to).call{value: value}("");
-            if (!ok) revert TransferFailed();
-        } else {
-            _safeTransfer(IERC20(token), to, value);
-        }
+        TransferLib.send(token, to, value);
     }
 
-    function _safeTransfer(IERC20 _token, address to, uint256 value) internal {
-        (bool success, bytes memory data) =
-            address(_token).call(abi.encodeWithSelector(_token.transfer.selector, to, value));
-        if (!success || (data.length > 0 && !abi.decode(data, (bool)))) revert TransferFailed();
-    }
-
-    /// @dev Pull `value` of the escrow's ERC20 token from msg.sender via transferFrom,
-    /// reverting if the received balance delta does not match (fee-on-transfer guard).
     function _receiveERC20(uint256 value) internal {
-        uint256 bb = IERC20(token).balanceOf(address(this));
-        _safeTransferFrom(IERC20(token), msg.sender, address(this), value);
-        if (IERC20(token).balanceOf(address(this)) - bb != value) revert InsufficientReceived();
+        TransferLib.receiveERC20(token, value);
     }
 
-    /// @dev Pull `value` via EIP-3009 receiveWithAuthorization with balance-delta guard.
     function _receiveEIP3009(
         address from,
         uint256 value,
@@ -812,15 +827,7 @@ contract TaskEscrow {
         bytes32 r,
         bytes32 s
     ) internal {
-        uint256 bb = IERC20(token).balanceOf(address(this));
-        IEIP3009(token).receiveWithAuthorization(from, address(this), value, validAfter, validBefore, nonce, v, r, s);
-        if (IERC20(token).balanceOf(address(this)) - bb != value) revert InsufficientReceived();
-    }
-
-    function _safeTransferFrom(IERC20 _token, address from, address to, uint256 value) internal {
-        (bool success, bytes memory data) =
-            address(_token).call(abi.encodeWithSelector(_token.transferFrom.selector, from, to, value));
-        if (!success || (data.length > 0 && !abi.decode(data, (bool)))) revert TransferFailed();
+        TransferLib.receiveEIP3009(token, from, value, validAfter, validBefore, nonce, v, r, s);
     }
 
     function _reviewWindowEnds() internal view returns (uint256) {

@@ -71,6 +71,15 @@ type MockClient struct {
 
 	// Backup agent error field
 	ActivateBackupErr error
+
+	// Emergency response protocol error fields
+	FreezeAddressErr    error
+	UnfreezeAddressErr  error
+	FreezeEscrowErr     error
+	UnfreezeEscrowErr   error
+	EmergencyResolveErr error
+	IsFrozenVal         bool
+	IsFrozenErr         error
 }
 
 type MockTxRecord struct {
@@ -423,6 +432,62 @@ func (m *MockClient) ActivateBackup(_ context.Context, addr common.Address) (*ty
 	}
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "activateBackup", To: addr})
 	return makeFakeTx(), nil
+}
+
+func (m *MockClient) FreezeAddress(_ context.Context, _ common.Address, target common.Address) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.FreezeAddressErr != nil {
+		return nil, m.FreezeAddressErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "freezeAddress", To: target})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) UnfreezeAddress(_ context.Context, _ common.Address, target common.Address) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.UnfreezeAddressErr != nil {
+		return nil, m.UnfreezeAddressErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "unfreezeAddress", To: target})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) FreezeEscrow(_ context.Context, factory common.Address, _ *big.Int) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.FreezeEscrowErr != nil {
+		return nil, m.FreezeEscrowErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "freezeEscrow", To: factory})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) UnfreezeEscrow(_ context.Context, factory common.Address, _ *big.Int) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.UnfreezeEscrowErr != nil {
+		return nil, m.UnfreezeEscrowErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "unfreezeEscrow", To: factory})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) EmergencyResolve(_ context.Context, factory common.Address, _ *big.Int, _ uint16) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.EmergencyResolveErr != nil {
+		return nil, m.EmergencyResolveErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "emergencyResolve", To: factory})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) IsFrozenAddress(_ context.Context, _ common.Address, _ common.Address) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.IsFrozenVal, m.IsFrozenErr
 }
 
 // MakeEscrowCreatedReceipt builds a fake receipt containing an EscrowCreated event log

@@ -57,6 +57,12 @@ Cancelled --> [*]
 Refunded --> [*]
 Settled --> [*]
 
+' Emergency response protocol (paper §4.9)
+Created -[#D32F2F,dashed]-> Resolved : emergencyResolve()
+Funded -[#D32F2F,dashed]-> Resolved : emergencyResolve()
+Submitted -[#D32F2F,dashed]-> Resolved : emergencyResolve()
+Disputed -[#D32F2F,dashed]-> Resolved : emergencyResolve()
+
 note right of Funded
   Worker must depositStake()
   before submit() when
@@ -76,6 +82,13 @@ note right of Resolved
   Stake follows same split ratio.
   0% = full refund + stake to buyer.
   100% = full payout + stake returned.
+end note
+
+note bottom of Resolved
+  **Emergency path** (dashed red):
+  Owner freezes escrow, then calls
+  emergencyResolve(bps). Same
+  settlement math as dispute resolution.
 end note
 
 @enduml
