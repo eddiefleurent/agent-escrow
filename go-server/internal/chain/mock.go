@@ -3,7 +3,7 @@ package chain
 import (
 	"context"
 	"crypto/rand"
-	"fmt"
+	"errors"
 	"math/big"
 	"sync"
 	"time"
@@ -157,7 +157,7 @@ func (m *MockClient) TransactionReceipt(_ context.Context, _ common.Hash) (*type
 	if m.Receipt != nil {
 		return m.Receipt, nil
 	}
-	return nil, fmt.Errorf("receipt not found")
+	return nil, errors.New("receipt not found")
 }
 
 func (m *MockClient) CreateEscrow(_ context.Context, _ common.Address, _ CreateEscrowParams) (*types.Transaction, error) {

@@ -151,7 +151,7 @@ func (h *Handler) handleTasksCancel(w http.ResponseWriter, req JSONRPCRequest) {
 	writeJSONRPCResult(w, req.ID, task)
 }
 
-func writeJSONRPCResult(w http.ResponseWriter, id interface{}, result interface{}) {
+func writeJSONRPCResult(w http.ResponseWriter, id any, result any) {
 	resp := JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,
@@ -163,7 +163,7 @@ func writeJSONRPCResult(w http.ResponseWriter, id interface{}, result interface{
 	}
 }
 
-func writeJSONRPCError(w http.ResponseWriter, id interface{}, code int, message string) {
+func writeJSONRPCError(w http.ResponseWriter, id any, code int, message string) {
 	resp := JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,

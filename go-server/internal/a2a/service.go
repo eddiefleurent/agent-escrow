@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
@@ -130,10 +131,10 @@ func (s *Service) createNewTask(taskID, sessionID string, params TaskSendParams)
 
 	if raw, ok := params.Metadata["verification_policy"]; ok {
 		if err := json.Unmarshal([]byte(raw), &vp); err != nil {
-			return nil, fmt.Errorf("%w: invalid verification_policy: %v", ErrInvalidParams, err)
+			return nil, fmt.Errorf("%w: invalid verification_policy: %w", ErrInvalidParams, err)
 		}
 		if err := validateVerificationPolicy(vp); err != nil {
-			return nil, fmt.Errorf("%w: verification_policy validation: %v", ErrInvalidParams, err)
+			return nil, fmt.Errorf("%w: verification_policy validation: %w", ErrInvalidParams, err)
 		}
 		escrowTrigger = vp.EscrowTrigger
 		vpJSON = raw
@@ -236,13 +237,13 @@ func validateVerificationPolicy(vp VerificationPolicy) error {
 	switch vp.Mode {
 	case "strict", "optimistic", "manual":
 	case "":
-		return fmt.Errorf("mode is required")
+		return errors.New("mode is required")
 	default:
 		return fmt.Errorf("invalid mode: %s (must be strict, optimistic, or manual)", vp.Mode)
 	}
 
 	if vp.Mode == "strict" && len(vp.Artifacts) == 0 {
-		return fmt.Errorf("strict mode requires at least one verification artifact")
+		return errors.New("strict mode requires at least one verification artifact")
 	}
 
 	for i, a := range vp.Artifacts {
@@ -271,7 +272,7 @@ func buildTaskResponse(a2aTask *storage.A2ATask, message string) *Task {
 		metadata = make(map[string]string)
 	}
 
-	metadata["escrow_trigger"] = fmt.Sprintf("%t", a2aTask.EscrowTrigger)
+	metadata["escrow_trigger"] = strconv.FormatBool(a2aTask.EscrowTrigger)
 	metadata["verification_policy"] = a2aTask.VerificationPolicyJSON
 
 	return &Task{

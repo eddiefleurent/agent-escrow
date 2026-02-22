@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -31,22 +32,22 @@ type Service struct {
 // ValidateMandate checks that a mandate envelope is well-formed and has valid constraints.
 func (s *Service) ValidateMandate(_ context.Context, env MandateEnvelope) error {
 	if env.Type == "" {
-		return fmt.Errorf("mandate type is required")
+		return errors.New("mandate type is required")
 	}
 	if env.Type != MandateTypeIntent && env.Type != MandateTypeCart && env.Type != MandateTypePayment {
 		return fmt.Errorf("unsupported mandate type: %s", env.Type)
 	}
 	if env.SignerAddress == "" {
-		return fmt.Errorf("signer_address is required")
+		return errors.New("signer_address is required")
 	}
 	if !common.IsHexAddress(env.SignerAddress) {
 		return fmt.Errorf("invalid signer_address: %s", env.SignerAddress)
 	}
 	if env.Signature == "" {
-		return fmt.Errorf("signature is required")
+		return errors.New("signature is required")
 	}
 	if env.Authorization.From == "" {
-		return fmt.Errorf("authorization.from is required")
+		return errors.New("authorization.from is required")
 	}
 	if !common.IsHexAddress(env.Authorization.From) {
 		return fmt.Errorf("invalid authorization.from: %s", env.Authorization.From)
@@ -55,11 +56,11 @@ func (s *Service) ValidateMandate(_ context.Context, env MandateEnvelope) error 
 	signerNorm := strings.ToLower(common.HexToAddress(env.SignerAddress).Hex())
 	fromNorm := strings.ToLower(common.HexToAddress(env.Authorization.From).Hex())
 	if signerNorm != fromNorm {
-		return fmt.Errorf("signer_address and authorization.from must match")
+		return errors.New("signer_address and authorization.from must match")
 	}
 
 	if env.Authorization.Value == "" {
-		return fmt.Errorf("authorization.value is required")
+		return errors.New("authorization.value is required")
 	}
 	if _, ok := new(big.Int).SetString(env.Authorization.Value, 10); !ok {
 		return fmt.Errorf("invalid authorization.value: %s", env.Authorization.Value)
@@ -76,7 +77,7 @@ func (s *Service) ValidateMandate(_ context.Context, env MandateEnvelope) error 
 		}
 	}
 	if env.Authorization.ValidBefore == "" {
-		return fmt.Errorf("authorization.valid_before is required")
+		return errors.New("authorization.valid_before is required")
 	}
 	validBefore, ok := new(big.Int).SetString(env.Authorization.ValidBefore, 10)
 	if !ok || validBefore.Sign() < 0 {
@@ -87,19 +88,19 @@ func (s *Service) ValidateMandate(_ context.Context, env MandateEnvelope) error 
 	}
 
 	if env.Authorization.Nonce == "" {
-		return fmt.Errorf("authorization.nonce is required")
+		return errors.New("authorization.nonce is required")
 	}
 	if _, err := hexToBytes32(env.Authorization.Nonce); err != nil {
 		return fmt.Errorf("invalid authorization.nonce: %w", err)
 	}
 	if env.Authorization.R == "" {
-		return fmt.Errorf("authorization.r is required")
+		return errors.New("authorization.r is required")
 	}
 	if _, err := hexToBytes32(env.Authorization.R); err != nil {
 		return fmt.Errorf("invalid authorization.r: %w", err)
 	}
 	if env.Authorization.S == "" {
-		return fmt.Errorf("authorization.s is required")
+		return errors.New("authorization.s is required")
 	}
 	if _, err := hexToBytes32(env.Authorization.S); err != nil {
 		return fmt.Errorf("invalid authorization.s: %w", err)
@@ -118,7 +119,7 @@ func (s *Service) BindToEscrow(ctx context.Context, env MandateEnvelope, escrowI
 	signerNorm := strings.ToLower(common.HexToAddress(env.SignerAddress).Hex())
 	buyerNorm := strings.ToLower(common.HexToAddress(escrow.Buyer).Hex())
 	if signerNorm != buyerNorm {
-		return nil, fmt.Errorf("mandate signer must be the escrow buyer")
+		return nil, errors.New("mandate signer must be the escrow buyer")
 	}
 
 	// EIP-3009 authorization recipient must match the escrow contract address
@@ -130,11 +131,11 @@ func (s *Service) BindToEscrow(ctx context.Context, env MandateEnvelope, escrowI
 
 	authValue, ok := new(big.Int).SetString(env.Authorization.Value, 10)
 	if !ok {
-		return nil, fmt.Errorf("invalid authorization value")
+		return nil, errors.New("invalid authorization value")
 	}
 	escrowAmount, ok := new(big.Int).SetString(escrow.Amount, 10)
 	if !ok {
-		return nil, fmt.Errorf("invalid escrow amount")
+		return nil, errors.New("invalid escrow amount")
 	}
 	if authValue.Cmp(escrowAmount) < 0 {
 		return nil, fmt.Errorf("authorization value (%s) is less than escrow amount (%s)", authValue, escrowAmount)
@@ -208,7 +209,7 @@ func (s *Service) FundViaMandate(ctx context.Context, escrowID int64, env Mandat
 	}
 	validBefore, _ := new(big.Int).SetString(env.Authorization.ValidBefore, 10)
 	if validBefore == nil {
-		return nil, fmt.Errorf("invalid authorization.valid_before")
+		return nil, errors.New("invalid authorization.valid_before")
 	}
 
 	nonceBytes, err := hexToBytes32(env.Authorization.Nonce)
@@ -265,7 +266,7 @@ func hexToBytes32(s string) ([32]byte, error) {
 		return result, err
 	}
 	if len(b) > 32 {
-		return result, fmt.Errorf("value exceeds 32 bytes")
+		return result, errors.New("value exceeds 32 bytes")
 	}
 	copy(result[32-len(b):], b)
 	return result, nil

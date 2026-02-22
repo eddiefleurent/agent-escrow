@@ -112,7 +112,9 @@ func (sh *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if msg.Action != "subscribe" {
-		conn.WriteJSON(map[string]string{"error": "first message must be a subscribe action"})
+		if err := conn.WriteJSON(map[string]string{"error": "first message must be a subscribe action"}); err != nil {
+			slog.Warn("ws: failed to send invalid-action response", "error", err)
+		}
 		return
 	}
 

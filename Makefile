@@ -1,4 +1,9 @@
-.PHONY: build test test-unit test-invariant fmt fmt-check sizes snapshot clean deploy-base-sepolia go-abi go-build go-test go-vet go-run go-fmt all test-all
+.PHONY: build test test-unit test-invariant fmt fmt-check sizes snapshot clean deploy-base-sepolia go-abi go-build go-test go-vet go-lint go-lint-fix go-run go-fmt all test-all
+
+GO_CACHE_DIR := $(CURDIR)/.cache/go-build
+GOLANGCI_LINT_CACHE_DIR := $(CURDIR)/.cache/golangci-lint
+GOLANGCI_LINT_VERSION ?= v2.5.0
+GOLANGCI_LINT := GOCACHE=$(GO_CACHE_DIR) GOLANGCI_LINT_CACHE=$(GOLANGCI_LINT_CACHE_DIR) go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 # Solidity targets
 build:
@@ -43,16 +48,22 @@ go-abi:
 	cp out/TaskEscrow.sol/TaskEscrow.json go-server/abi/
 
 go-build: go-abi
-	cd go-server && go build -o bin/server ./cmd/server/
+	cd go-server && GOCACHE=$(GO_CACHE_DIR) go build -o bin/server ./cmd/server/
 
 go-test: go-abi
-	cd go-server && go test ./...
+	cd go-server && GOCACHE=$(GO_CACHE_DIR) go test ./...
 
 go-vet: go-abi
-	cd go-server && go vet ./...
+	cd go-server && GOCACHE=$(GO_CACHE_DIR) go vet ./...
 
 go-run: go-build
 	cd go-server && ./bin/server
+
+go-lint:
+	cd go-server && $(GOLANGCI_LINT) run ./...
+
+go-lint-fix:
+	cd go-server && $(GOLANGCI_LINT) run --fix ./...
 
 go-fmt:
 	cd go-server && gofmt -w .
@@ -60,4 +71,4 @@ go-fmt:
 # Combined targets
 all: build go-build
 
-test-all: fmt-check test test-invariant go-vet go-test
+test-all: fmt-check test test-invariant go-vet go-lint go-test

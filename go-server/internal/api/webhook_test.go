@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -57,7 +58,7 @@ func setupWebhookTest(t *testing.T) *webhookTestEnv {
 func signPayload(t *testing.T, body string, secret string, headers http.Header) string {
 	t.Helper()
 
-	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	headerNames := "content-type x-hook0-id"
 
 	nameList := strings.Split(headerNames, " ")
@@ -85,7 +86,7 @@ func makeCDPPayload(t *testing.T, eventName string, contractAddr string, txHash 
 	t.Helper()
 
 	// Build the data object: standard fields + decoded event params
-	data := map[string]interface{}{
+	data := map[string]any{
 		"subscriptionId":  "sub_test",
 		"networkId":       "base-sepolia",
 		"blockNumber":     100,
@@ -99,7 +100,7 @@ func makeCDPPayload(t *testing.T, eventName string, contractAddr string, txHash 
 		data[k] = v
 	}
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"id":        "evt_test123",
 		"type":      "onchain.activity.detected",
 		"createdAt": time.Now().UTC().Format(time.RFC3339),
@@ -212,11 +213,11 @@ func TestWebhook_MissingSignature_Rejected(t *testing.T) {
 func TestWebhook_UnknownEventType_Ignored(t *testing.T) {
 	env := setupWebhookTest(t)
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"id":        "evt_unknown",
 		"type":      "some.unknown.type",
 		"createdAt": time.Now().UTC().Format(time.RFC3339),
-		"data":      map[string]interface{}{"subscriptionId": "sub_test"},
+		"data":      map[string]any{"subscriptionId": "sub_test"},
 	}
 	bodyBytes, _ := json.Marshal(payload)
 	body := string(bodyBytes)
@@ -361,7 +362,7 @@ func TestWebhook_ReplayedTimestamp_Rejected(t *testing.T) {
 	req.Header.Set("X-Hook0-Id", "evt_test123")
 
 	// Sign with a timestamp from 10 minutes ago
-	oldTimestamp := fmt.Sprintf("%d", time.Now().Add(-10*time.Minute).Unix())
+	oldTimestamp := strconv.FormatInt(time.Now().Add(-10*time.Minute).Unix(), 10)
 	headerNames := "content-type x-hook0-id"
 
 	nameList := strings.Split(headerNames, " ")
@@ -425,7 +426,7 @@ func TestVerifyCDPSignature_Valid(t *testing.T) {
 	headers.Set("Content-Type", "application/json")
 	headers.Set("X-Hook0-Id", "evt_123")
 
-	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	headerNames := "content-type x-hook0-id"
 
 	signedPayload := fmt.Sprintf("%s.%s.%s.%s.%s",
@@ -451,7 +452,7 @@ func TestVerifyCDPSignature_Invalid(t *testing.T) {
 	headers.Set("Content-Type", "application/json")
 	headers.Set("X-Hook0-Id", "evt_123")
 
-	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	headerNames := "content-type x-hook0-id"
 
 	sigHeader := fmt.Sprintf("t=%s,h=%s,v1=%s", timestamp, headerNames,
@@ -470,7 +471,7 @@ func TestVerifyCDPSignature_ExpiredTimestamp(t *testing.T) {
 	headers.Set("Content-Type", "application/json")
 	headers.Set("X-Hook0-Id", "evt_123")
 
-	timestamp := fmt.Sprintf("%d", time.Now().Add(-10*time.Minute).Unix())
+	timestamp := strconv.FormatInt(time.Now().Add(-10*time.Minute).Unix(), 10)
 	headerNames := "content-type x-hook0-id"
 
 	signedPayload := fmt.Sprintf("%s.%s.%s.%s.%s",

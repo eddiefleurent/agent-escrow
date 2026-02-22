@@ -490,7 +490,7 @@ func TestListBidsByRFQ(t *testing.T) {
 		t.Fatalf("create rfq: %v", err)
 	}
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		_, err := db.CreateBid(&Bid{
 			RFQID: rfq.ID, Bidder: "0xWorker", Amount: "200",
 			Status: "pending", ExpiresAt: 1850000000, MilestonesJSON: "[]",

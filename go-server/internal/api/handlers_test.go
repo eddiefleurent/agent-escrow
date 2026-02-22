@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -54,7 +55,7 @@ func (e *testEnv) request(t *testing.T, method, path, body string) *httptest.Res
 		req = httptest.NewRequest(method, path, strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 	} else {
-		req = httptest.NewRequest(method, path, nil)
+		req = httptest.NewRequest(method, path, http.NoBody)
 	}
 	rr := httptest.NewRecorder()
 	e.mux.ServeHTTP(rr, req)
@@ -565,7 +566,7 @@ func TestResolveDispute_Success(t *testing.T) {
 func TestCORS_Preflight_WildcardDefault(t *testing.T) {
 	env := setup(t)
 
-	req := httptest.NewRequest("OPTIONS", "/api/v1/health", nil)
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/health", http.NoBody)
 	rr := httptest.NewRecorder()
 	env.mux.ServeHTTP(rr, req)
 
@@ -582,7 +583,7 @@ func TestCORS_ExplicitWildcard(t *testing.T) {
 	env.cfg.CORSOrigins = []string{"*"}
 	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
-	req := httptest.NewRequest("GET", "/api/v1/health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", http.NoBody)
 	req.Header.Set("Origin", "https://anything.example.com")
 	rr := httptest.NewRecorder()
 	env.mux.ServeHTTP(rr, req)
@@ -597,7 +598,7 @@ func TestCORS_RestrictedOrigins_Allowed(t *testing.T) {
 	env.cfg.CORSOrigins = []string{"https://example.com", "https://app.example.com"}
 	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
-	req := httptest.NewRequest("GET", "/api/v1/health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", http.NoBody)
 	req.Header.Set("Origin", "https://example.com")
 	rr := httptest.NewRecorder()
 	env.mux.ServeHTTP(rr, req)
@@ -615,7 +616,7 @@ func TestCORS_RestrictedOrigins_Rejected(t *testing.T) {
 	env.cfg.CORSOrigins = []string{"https://example.com"}
 	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
-	req := httptest.NewRequest("GET", "/api/v1/health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", http.NoBody)
 	req.Header.Set("Origin", "https://evil.com")
 	rr := httptest.NewRecorder()
 	env.mux.ServeHTTP(rr, req)
@@ -630,7 +631,7 @@ func TestCORS_RestrictedOrigins_Preflight(t *testing.T) {
 	env.cfg.CORSOrigins = []string{"https://app.example.com"}
 	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
-	req := httptest.NewRequest("OPTIONS", "/api/v1/escrows", nil)
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/escrows", http.NoBody)
 	req.Header.Set("Origin", "https://app.example.com")
 	rr := httptest.NewRecorder()
 	env.mux.ServeHTTP(rr, req)
@@ -823,11 +824,11 @@ func TestCreateEscrow_EmptyComplexityFloorAllowsAny(t *testing.T) {
 // RFQ Bidding Protocol Tests
 
 func futureTimestamp() string {
-	return fmt.Sprintf("%d", time.Now().Unix()+86400)
+	return strconv.FormatInt(time.Now().Unix()+86400, 10)
 }
 
 func farFutureTimestamp() string {
-	return fmt.Sprintf("%d", time.Now().Unix()+172800)
+	return strconv.FormatInt(time.Now().Unix()+172800, 10)
 }
 
 func TestCreateRFQ_Success(t *testing.T) {

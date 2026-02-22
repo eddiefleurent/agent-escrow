@@ -436,7 +436,7 @@ func (d *DB) UpsertReputation(address, role, outcome string) error {
 		return fmt.Errorf("invalid outcome: %s", outcome)
 	}
 
-	query := fmt.Sprintf(
+	query := fmt.Sprintf( //nolint:gosec // col is from a hardcoded switch, not user input
 		`INSERT INTO reputation (address, role, %s) VALUES (?, ?, 1)
 		 ON CONFLICT(address, role)
 		 DO UPDATE SET %s = %s + 1, updated_at = datetime('now')`,

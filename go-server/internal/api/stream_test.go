@@ -147,8 +147,8 @@ func TestSSEHandler_EscrowFiltered(t *testing.T) {
 			if !ok {
 				goto check
 			}
-			if strings.HasPrefix(line, "id: ") {
-				receivedID = strings.TrimPrefix(line, "id: ")
+			if after, ok0 := strings.CutPrefix(line, "id: "); ok0 {
+				receivedID = after
 				goto check
 			}
 		}
@@ -273,7 +273,7 @@ func TestMCPSubscribeEvents(t *testing.T) {
 	bus := events.NewEventBus(16)
 
 	// Publish some events
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		bus.Publish(events.Event{
 			Name:   events.EventEscrowFunded,
 			Escrow: "0xABC",

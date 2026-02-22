@@ -17,6 +17,7 @@ import (
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/numconv"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/ethereum/go-ethereum/common"
 )
@@ -197,6 +198,11 @@ func (wh *WebhookHandler) publishWebhookEvent(data cdpWebhookEventData, blockNum
 	if wh.bus == nil {
 		return
 	}
+	blockUint, err := numconv.Int64ToUint64(blockNum, "block_number")
+	if err != nil {
+		slog.Warn("webhook: invalid block number for event publish", "block_number", blockNum, "error", err)
+		return
+	}
 	streamName, ok := events.OnChainEventName[data.EventName]
 	if !ok {
 		return
@@ -205,7 +211,7 @@ func (wh *WebhookHandler) publishWebhookEvent(data cdpWebhookEventData, blockNum
 		Name:   streamName,
 		Escrow: data.Escrow,
 		Level:  events.L1,
-		Block:  uint64(blockNum),
+		Block:  blockUint,
 		ID:     fmt.Sprintf("%s-%s", data.TransactionHash, data.LogIndex.String()),
 	})
 }

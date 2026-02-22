@@ -13,6 +13,7 @@ import (
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/numconv"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -231,7 +232,10 @@ func (idx *Indexer) RunOnce(ctx context.Context) error {
 		return fmt.Errorf("get cursor: %w", err)
 	}
 
-	fromBlock := uint64(cursor)
+	fromBlock, err := numconv.Int64ToUint64(cursor, "cursor")
+	if err != nil {
+		return fmt.Errorf("invalid cursor value: %w", err)
+	}
 	if fromBlock == 0 {
 		if idx.startBlock > 0 {
 			fromBlock = idx.startBlock
@@ -290,7 +294,11 @@ func (idx *Indexer) indexFactoryEvents(ctx context.Context, from, to uint64) err
 // ProcessFactoryLog deduplicates, stores, and dispatches a single factory event log.
 // Exported so the CDP webhook handler can reuse the same processing pipeline.
 func (idx *Indexer) ProcessFactoryLog(lg types.Log) error {
-	exists, err := idx.db.ChainLogExists(lg.TxHash.Hex(), int(lg.Index))
+	logIndex, err := numconv.UintToInt(lg.Index, "log index")
+	if err != nil {
+		return err
+	}
+	exists, err := idx.db.ChainLogExists(lg.TxHash.Hex(), logIndex)
 	if err != nil {
 		return err
 	}
@@ -307,7 +315,11 @@ func (idx *Indexer) ProcessFactoryLog(lg types.Log) error {
 	if err != nil {
 		return fmt.Errorf("marshal factory log: %w", err)
 	}
-	if err := idx.db.CreateChainLog(lg.TxHash.Hex(), int(lg.Index), int64(lg.BlockNumber), event.Name, lg.Address.Hex(), string(rawData)); err != nil {
+	blockNumber, err := numconv.Uint64ToInt64(lg.BlockNumber, "block number")
+	if err != nil {
+		return err
+	}
+	if err := idx.db.CreateChainLog(lg.TxHash.Hex(), logIndex, blockNumber, event.Name, lg.Address.Hex(), string(rawData)); err != nil {
 		return err
 	}
 
@@ -331,7 +343,7 @@ func (idx *Indexer) ProcessFactoryLog(lg types.Log) error {
 func (idx *Indexer) handleEscrowCreated(lg types.Log) error {
 	// EscrowCreated(uint256 indexed escrowId, address indexed escrow, address indexed buyer, address worker, address verifier, address arbitrator, bytes32 taskSpecHash, address token)
 	if len(lg.Topics) < 4 {
-		return fmt.Errorf("insufficient topics")
+		return errors.New("insufficient topics")
 	}
 
 	escrowIDBig := new(big.Int).SetBytes(lg.Topics[1].Bytes())
@@ -464,7 +476,11 @@ func (idx *Indexer) isTerminalStatus(dbEscrowID int64) bool {
 // ProcessEscrowLog deduplicates, stores, and dispatches a single escrow event log.
 // Exported so the CDP webhook handler can reuse the same processing pipeline.
 func (idx *Indexer) ProcessEscrowLog(lg types.Log, dbEscrowID int64) error {
-	exists, err := idx.db.ChainLogExists(lg.TxHash.Hex(), int(lg.Index))
+	logIndex, err := numconv.UintToInt(lg.Index, "log index")
+	if err != nil {
+		return err
+	}
+	exists, err := idx.db.ChainLogExists(lg.TxHash.Hex(), logIndex)
 	if err != nil {
 		return err
 	}
@@ -474,14 +490,18 @@ func (idx *Indexer) ProcessEscrowLog(lg types.Log, dbEscrowID int64) error {
 
 	event, err := chain.EscrowABI.EventByID(lg.Topics[0])
 	if err != nil {
-		return nil // Unknown event, skip
+		return nil //nolint:nilerr // Unknown ABI event ID -- not an error, just skip
 	}
 
 	rawData, err := json.Marshal(lg)
 	if err != nil {
 		return fmt.Errorf("marshal escrow log: %w", err)
 	}
-	if err := idx.db.CreateChainLog(lg.TxHash.Hex(), int(lg.Index), int64(lg.BlockNumber), event.Name, lg.Address.Hex(), string(rawData)); err != nil {
+	blockNumber, err := numconv.Uint64ToInt64(lg.BlockNumber, "block number")
+	if err != nil {
+		return err
+	}
+	if err := idx.db.CreateChainLog(lg.TxHash.Hex(), logIndex, blockNumber, event.Name, lg.Address.Hex(), string(rawData)); err != nil {
 		return err
 	}
 
@@ -640,7 +660,7 @@ func (idx *Indexer) handleBackupActivated(lg types.Log, dbEscrowID int64) error 
 		return fmt.Errorf("BackupActivated: unpack non-indexed args: %w", err)
 	}
 	if len(vals) == 0 {
-		return fmt.Errorf("BackupActivated: missing non-indexed args")
+		return errors.New("BackupActivated: missing non-indexed args")
 	}
 	newDeadline, ok := vals[0].(uint64)
 	if !ok {

@@ -15,6 +15,7 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/bidding"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/numconv"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -303,7 +304,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 	for _, m := range args.Milestones {
 		msAmount, ok := new(big.Int).SetString(m.Amount, 10)
 		if !ok {
-			return textResult(fmt.Sprintf("invalid milestone amount: %s", m.Amount)), nil, nil
+			return textResult("invalid milestone amount: " + m.Amount), nil, nil
 		}
 		msDeadline, err := strconv.ParseUint(m.SubmissionDeadline, 10, 64)
 		if err != nil {
@@ -372,6 +373,26 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 	if len(milestones) > 0 {
 		milestoneCount = len(milestones)
 	}
+	submissionDeadline, err := numconv.Uint64ToInt64(deadline, "submission_deadline")
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
+	reviewPeriod, err := numconv.Uint64ToInt64(review, "review_period_seconds")
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
+	disputePeriod, err := numconv.Uint64ToInt64(dispute, "dispute_period_seconds")
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
+	arbitratorTimeout, err := numconv.Uint64ToInt64(arbTimeout, "arbitrator_timeout_seconds")
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
+	backupDeadline, err := numconv.Uint64ToInt64(backupDeadlineExt, "backup_deadline_extension")
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
 
 	escrow, err := s.db.CreateEscrow(&storage.Escrow{
 		TaskID:                   task.ID,
@@ -387,14 +408,14 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		WorkerStake:              workerStakeVal.String(),
 		Token:                    tokenAddr.Hex(),
 		Status:                   "created",
-		SubmissionDeadline:       int64(deadline),
-		ReviewPeriodSeconds:      int64(review),
-		DisputePeriodSeconds:     int64(dispute),
-		ArbitratorTimeoutSeconds: int64(arbTimeout),
+		SubmissionDeadline:       submissionDeadline,
+		ReviewPeriodSeconds:      reviewPeriod,
+		DisputePeriodSeconds:     disputePeriod,
+		ArbitratorTimeoutSeconds: arbitratorTimeout,
 		MilestoneCount:           milestoneCount,
 		CurrentMilestone:         0,
 		BackupWorker:             backupWorkerAddr.Hex(),
-		BackupDeadlineExtension:  int64(backupDeadlineExt),
+		BackupDeadlineExtension:  backupDeadline,
 		ActiveWorker:             args.Worker,
 	})
 	if err != nil {
@@ -402,11 +423,15 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 	}
 
 	for i, m := range milestones {
+		msDeadline, convErr := numconv.Uint64ToInt64(m.SubmissionDeadline, fmt.Sprintf("milestones[%d].submission_deadline", i))
+		if convErr != nil {
+			return textResult(convErr.Error()), nil, nil
+		}
 		_, err := s.db.CreateMilestone(&storage.MilestoneRecord{
 			EscrowID:           escrow.ID,
 			MilestoneIndex:     i,
 			Amount:             m.Amount.String(),
-			SubmissionDeadline: int64(m.SubmissionDeadline),
+			SubmissionDeadline: msDeadline,
 			Status:             "pending",
 		})
 		if err != nil {
@@ -1091,7 +1116,7 @@ func (s *Server) handleSubscribeEvents(ctx context.Context, req *mcp.CallToolReq
 	if args.Limit != "" {
 		v, err := strconv.Atoi(args.Limit)
 		if err != nil || v <= 0 {
-			return textResult("invalid limit: must be a positive integer"), nil, nil
+			return textResult("invalid limit: must be a positive integer"), nil, nil //nolint:nilerr // err is from Atoi; we return a user-facing message, not the parse error
 		}
 		if v > 200 {
 			v = 200
@@ -1137,7 +1162,7 @@ func (s *Server) handleSubscribeEvents(ctx context.Context, req *mcp.CallToolReq
 func parseMilestoneIndex(s string) (uint8, error) {
 	v, err := strconv.ParseUint(s, 10, 8)
 	if err != nil {
-		return 0, fmt.Errorf("invalid milestone_index: %v", err)
+		return 0, fmt.Errorf("invalid milestone_index: %w", err)
 	}
 	return uint8(v), nil
 }

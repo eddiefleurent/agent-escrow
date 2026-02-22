@@ -98,7 +98,7 @@ func TestErr_ResetsOnSuccess(t *testing.T) {
 	// so we test RunOnce directly to verify the counter logic.
 	mock.BlockNumErr = errors.New("temporary failure")
 
-	for i := 0; i < threshold-1; i++ {
+	for range threshold - 1 {
 		if err := idx.RunOnce(context.Background()); err == nil {
 			t.Fatal("expected error from RunOnce")
 		}
@@ -114,7 +114,7 @@ func TestErr_ResetsOnSuccess(t *testing.T) {
 
 	// Fail again -- counter should have reset, so threshold-1 more failures should not trigger fatal
 	mock.BlockNumErr = errors.New("another failure")
-	for i := 0; i < threshold-1; i++ {
+	for range threshold - 1 {
 		if err := idx.RunOnce(context.Background()); err == nil {
 			t.Fatal("expected error from RunOnce")
 		}

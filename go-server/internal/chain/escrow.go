@@ -133,7 +133,11 @@ func (c *Client) Status(ctx context.Context, escrow common.Address) (uint8, erro
 	if err != nil {
 		return 0, fmt.Errorf("unpack status: %w", err)
 	}
-	return values[0].(uint8), nil
+	status, ok := values[0].(uint8)
+	if !ok {
+		return 0, fmt.Errorf("unexpected status type: %T", values[0])
+	}
+	return status, nil
 }
 
 // Milestone-specific operations (V2 multi-milestone)

@@ -17,6 +17,7 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/numconv"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -229,6 +230,31 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 	if len(milestones) > 0 {
 		milestoneCount = len(milestones)
 	}
+	submissionDeadline, err := numconv.Uint64ToInt64(deadline, "submission_deadline")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	reviewPeriod, err := numconv.Uint64ToInt64(review, "review_period_seconds")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	disputePeriod, err := numconv.Uint64ToInt64(dispute, "dispute_period_seconds")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	arbitratorTimeout, err := numconv.Uint64ToInt64(arbTimeout, "arbitrator_timeout_seconds")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	backupDeadline, err := numconv.Uint64ToInt64(backupDeadlineExt, "backup_deadline_extension")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
 	escrow, err := h.db.CreateEscrow(&storage.Escrow{
 		TaskID:                   task.ID,
@@ -244,14 +270,14 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		WorkerStake:              workerStakeVal.String(),
 		Token:                    tokenAddr.Hex(),
 		Status:                   "created",
-		SubmissionDeadline:       int64(deadline),
-		ReviewPeriodSeconds:      int64(review),
-		DisputePeriodSeconds:     int64(dispute),
-		ArbitratorTimeoutSeconds: int64(arbTimeout),
+		SubmissionDeadline:       submissionDeadline,
+		ReviewPeriodSeconds:      reviewPeriod,
+		DisputePeriodSeconds:     disputePeriod,
+		ArbitratorTimeoutSeconds: arbitratorTimeout,
 		MilestoneCount:           milestoneCount,
 		CurrentMilestone:         0,
 		BackupWorker:             backupWorkerAddr.Hex(),
-		BackupDeadlineExtension:  int64(backupDeadlineExt),
+		BackupDeadlineExtension:  backupDeadline,
 		ActiveWorker:             req.Worker,
 	})
 	if err != nil {
@@ -260,11 +286,16 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for i, m := range milestones {
+		msDeadline, convErr := numconv.Uint64ToInt64(m.SubmissionDeadline, fmt.Sprintf("milestones[%d].submission_deadline", i))
+		if convErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": convErr.Error()})
+			return
+		}
 		_, err := h.db.CreateMilestone(&storage.MilestoneRecord{
 			EscrowID:           escrow.ID,
 			MilestoneIndex:     i,
 			Amount:             m.Amount.String(),
-			SubmissionDeadline: int64(m.SubmissionDeadline),
+			SubmissionDeadline: msDeadline,
 			Status:             "pending",
 		})
 		if err != nil {
@@ -483,7 +514,12 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdx, escrow.MilestoneCount)})
 			return
 		}
-		tx, err := h.chain.SubmitMilestone(r.Context(), addr, uint8(msIdx), hashBytes, req.SubmissionURI)
+		msIdxU8, convErr := numconv.IntToUint8(msIdx, "milestone_index")
+		if convErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": convErr.Error()})
+			return
+		}
+		tx, err := h.chain.SubmitMilestone(r.Context(), addr, msIdxU8, hashBytes, req.SubmissionURI)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 			return
@@ -539,7 +575,11 @@ func (h *Handlers) ApproveWork(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdxVal, escrow.MilestoneCount)})
 			return
 		}
-		msIdx := uint8(msIdxVal)
+		msIdx, convErr := numconv.IntToUint8(msIdxVal, "milestone_index")
+		if convErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": convErr.Error()})
+			return
+		}
 		var txHash string
 		switch req.Role {
 		case "buyer":
@@ -627,7 +667,11 @@ func (h *Handlers) DisputeWork(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdxVal, escrow.MilestoneCount)})
 			return
 		}
-		msIdx := uint8(msIdxVal)
+		msIdx, convErr := numconv.IntToUint8(msIdxVal, "milestone_index")
+		if convErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": convErr.Error()})
+			return
+		}
 		var txHash string
 		switch req.Role {
 		case "buyer":
@@ -735,7 +779,12 @@ func (h *Handlers) ResolveDispute(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdxVal, escrow.MilestoneCount)})
 			return
 		}
-		tx, err := h.chain.ResolveMilestoneDispute(r.Context(), addr, uint8(msIdxVal), uint16(bps), req.ResolutionURI)
+		msIdx, convErr := numconv.IntToUint8(msIdxVal, "milestone_index")
+		if convErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": convErr.Error()})
+			return
+		}
+		tx, err := h.chain.ResolveMilestoneDispute(r.Context(), addr, msIdx, uint16(bps), req.ResolutionURI)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 			return

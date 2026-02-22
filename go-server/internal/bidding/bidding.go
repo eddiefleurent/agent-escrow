@@ -3,6 +3,7 @@ package bidding
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -12,6 +13,7 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/numconv"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -105,39 +107,39 @@ type AcceptBidResult struct {
 func (s *Service) CreateRFQ(p CreateRFQParams) (*storage.RFQ, error) {
 	budgetMin, ok := new(big.Int).SetString(p.BudgetMin, 10)
 	if !ok || budgetMin.Sign() < 0 {
-		return nil, fmt.Errorf("invalid budget_min")
+		return nil, errors.New("invalid budget_min")
 	}
 	budgetMax, ok := new(big.Int).SetString(p.BudgetMax, 10)
 	if !ok || budgetMax.Sign() <= 0 {
-		return nil, fmt.Errorf("invalid budget_max")
+		return nil, errors.New("invalid budget_max")
 	}
 	if budgetMin.Cmp(budgetMax) > 0 {
-		return nil, fmt.Errorf("budget_min must be <= budget_max")
+		return nil, errors.New("budget_min must be <= budget_max")
 	}
 
 	now := time.Now().Unix()
 	if p.ExpiresAt <= now {
-		return nil, fmt.Errorf("expires_at must be in the future")
+		return nil, errors.New("expires_at must be in the future")
 	}
 	if p.Deadline <= now {
-		return nil, fmt.Errorf("deadline must be in the future")
+		return nil, errors.New("deadline must be in the future")
 	}
 
 	if !common.IsHexAddress(p.Buyer) {
-		return nil, fmt.Errorf("invalid buyer address")
+		return nil, errors.New("invalid buyer address")
 	}
 
 	if p.Token != "" && p.Token != "0x0000000000000000000000000000000000000000" {
 		if !common.IsHexAddress(p.Token) {
-			return nil, fmt.Errorf("invalid token address")
+			return nil, errors.New("invalid token address")
 		}
 	}
 
 	if p.Verifier != "" && !common.IsHexAddress(p.Verifier) {
-		return nil, fmt.Errorf("invalid verifier address")
+		return nil, errors.New("invalid verifier address")
 	}
 	if p.Arbitrator != "" && !common.IsHexAddress(p.Arbitrator) {
-		return nil, fmt.Errorf("invalid arbitrator address")
+		return nil, errors.New("invalid arbitrator address")
 	}
 
 	if p.WorkerStake == "" {
@@ -145,7 +147,7 @@ func (s *Service) CreateRFQ(p CreateRFQParams) (*storage.RFQ, error) {
 	}
 	ws, ok := new(big.Int).SetString(p.WorkerStake, 10)
 	if !ok || ws.Sign() < 0 {
-		return nil, fmt.Errorf("invalid worker_stake")
+		return nil, errors.New("invalid worker_stake")
 	}
 
 	if p.MilestonesJSON == "" {
@@ -194,19 +196,19 @@ func (s *Service) PlaceBid(p PlaceBidParams) (*storage.Bid, error) {
 
 	now := time.Now().Unix()
 	if rfq.ExpiresAt <= now {
-		return nil, fmt.Errorf("rfq has expired")
+		return nil, errors.New("rfq has expired")
 	}
 
 	if !common.IsHexAddress(p.Bidder) {
-		return nil, fmt.Errorf("invalid bidder address")
+		return nil, errors.New("invalid bidder address")
 	}
 	if p.Bidder == rfq.Buyer {
-		return nil, fmt.Errorf("bidder cannot be the same as the rfq buyer")
+		return nil, errors.New("bidder cannot be the same as the rfq buyer")
 	}
 
 	amount, ok := new(big.Int).SetString(p.Amount, 10)
 	if !ok || amount.Sign() <= 0 {
-		return nil, fmt.Errorf("invalid amount")
+		return nil, errors.New("invalid amount")
 	}
 	budgetMin, ok := new(big.Int).SetString(rfq.BudgetMin, 10)
 	if !ok {
@@ -221,10 +223,10 @@ func (s *Service) PlaceBid(p PlaceBidParams) (*storage.Bid, error) {
 	}
 
 	if p.ExpiresAt <= now {
-		return nil, fmt.Errorf("bid expires_at must be in the future")
+		return nil, errors.New("bid expires_at must be in the future")
 	}
 	if p.ExpiresAt > rfq.ExpiresAt {
-		return nil, fmt.Errorf("bid expires_at must not exceed rfq expires_at")
+		return nil, errors.New("bid expires_at must not exceed rfq expires_at")
 	}
 
 	if p.ReputationBond == "" {
@@ -232,10 +234,10 @@ func (s *Service) PlaceBid(p PlaceBidParams) (*storage.Bid, error) {
 	}
 	rb, ok := new(big.Int).SetString(p.ReputationBond, 10)
 	if !ok {
-		return nil, fmt.Errorf("invalid reputation_bond")
+		return nil, errors.New("invalid reputation_bond")
 	}
 	if rb.Sign() < 0 {
-		return nil, fmt.Errorf("invalid reputation_bond: negative value")
+		return nil, errors.New("invalid reputation_bond: negative value")
 	}
 
 	if p.MilestonesJSON == "" {
@@ -271,13 +273,13 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 	}
 	now := time.Now().Unix()
 	if rfq.ExpiresAt <= now {
-		return nil, fmt.Errorf("rfq has expired")
+		return nil, errors.New("rfq has expired")
 	}
 	if rfq.Deadline <= now {
-		return nil, fmt.Errorf("rfq deadline has passed")
+		return nil, errors.New("rfq deadline has passed")
 	}
 	if p.Caller == "" || p.Caller != rfq.Buyer {
-		return nil, fmt.Errorf("only the rfq buyer can accept bids")
+		return nil, errors.New("only the rfq buyer can accept bids")
 	}
 
 	bid, err := s.DB.GetBid(p.BidID)
@@ -285,26 +287,26 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 		return nil, fmt.Errorf("bid not found: %w", err)
 	}
 	if bid.RFQID != p.RFQID {
-		return nil, fmt.Errorf("bid does not belong to this rfq")
+		return nil, errors.New("bid does not belong to this rfq")
 	}
 	if bid.Status != "pending" {
 		return nil, fmt.Errorf("bid is not pending (status: %s)", bid.Status)
 	}
 
 	if bid.ExpiresAt <= now {
-		return nil, fmt.Errorf("bid has expired")
+		return nil, errors.New("bid has expired")
 	}
 
 	amount, ok := new(big.Int).SetString(bid.Amount, 10)
 	if !ok {
-		return nil, fmt.Errorf("invalid bid amount")
+		return nil, errors.New("invalid bid amount")
 	}
 
 	workerStakeVal := big.NewInt(0)
 	if rfq.WorkerStake != "" && rfq.WorkerStake != "0" {
 		ws, ok := new(big.Int).SetString(rfq.WorkerStake, 10)
 		if !ok {
-			return nil, fmt.Errorf("invalid rfq worker_stake")
+			return nil, errors.New("invalid rfq worker_stake")
 		}
 		workerStakeVal = ws
 	}
@@ -327,6 +329,22 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 	}
 
 	factory := common.HexToAddress(s.Cfg.FactoryAddress)
+	submissionDeadline, err := numconv.Int64ToUint64(rfq.Deadline, "rfq.deadline")
+	if err != nil {
+		return nil, err
+	}
+	reviewPeriodSeconds, err := numconv.Int64ToUint64(rfq.ReviewPeriodSeconds, "rfq.review_period_seconds")
+	if err != nil {
+		return nil, err
+	}
+	disputePeriodSeconds, err := numconv.Int64ToUint64(rfq.DisputePeriodSeconds, "rfq.dispute_period_seconds")
+	if err != nil {
+		return nil, err
+	}
+	arbitratorTimeoutSeconds, err := numconv.Int64ToUint64(rfq.ArbitratorTimeoutSeconds, "rfq.arbitrator_timeout_seconds")
+	if err != nil {
+		return nil, err
+	}
 	params := chain.CreateEscrowParams{
 		Buyer:                    common.HexToAddress(rfq.Buyer),
 		Worker:                   common.HexToAddress(bid.Bidder),
@@ -334,11 +352,11 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 		Arbitrator:               common.HexToAddress(rfq.Arbitrator),
 		Amount:                   amount,
 		WorkerStake:              workerStakeVal,
-		SubmissionDeadline:       uint64(rfq.Deadline),
-		ReviewPeriodSeconds:      uint64(rfq.ReviewPeriodSeconds),
-		DisputePeriodSeconds:     uint64(rfq.DisputePeriodSeconds),
+		SubmissionDeadline:       submissionDeadline,
+		ReviewPeriodSeconds:      reviewPeriodSeconds,
+		DisputePeriodSeconds:     disputePeriodSeconds,
 		TaskSpecHash:             specHash,
-		ArbitratorTimeoutSeconds: uint64(rfq.ArbitratorTimeoutSeconds),
+		ArbitratorTimeoutSeconds: arbitratorTimeoutSeconds,
 		Token:                    tokenAddr,
 		Milestones:               milestones,
 	}
@@ -397,11 +415,16 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 	}
 
 	for i, m := range milestones {
+		milestoneDeadline, convErr := numconv.Uint64ToInt64(m.SubmissionDeadline, fmt.Sprintf("milestones[%d].submission_deadline", i))
+		if convErr != nil {
+			dbTx.Rollback()
+			return nil, convErr
+		}
 		_, err := s.DB.CreateMilestoneTx(dbTx, &storage.MilestoneRecord{
 			EscrowID:           escrow.ID,
 			MilestoneIndex:     i,
 			Amount:             m.Amount.String(),
-			SubmissionDeadline: int64(m.SubmissionDeadline),
+			SubmissionDeadline: milestoneDeadline,
 			Status:             "pending",
 		})
 		if err != nil {

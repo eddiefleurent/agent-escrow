@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // SQLite driver registration
 )
 
 //go:embed migrations/001_create_tables.sql
@@ -193,13 +193,13 @@ func (d *DB) BeginTx(ctx context.Context) (*sql.Tx, error) {
 	return d.db.BeginTx(ctx, nil)
 }
 
-func (d *DB) SqlDB() *sql.DB {
+func (d *DB) SQLDB() *sql.DB {
 	return d.db
 }
 
 func splitStatements(sql string) []string {
 	var stmts []string
-	for _, s := range strings.Split(sql, ";") {
+	for s := range strings.SplitSeq(sql, ";") {
 		s = strings.TrimSpace(s)
 		if s != "" {
 			stmts = append(stmts, s)

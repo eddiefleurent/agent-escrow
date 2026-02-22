@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -82,7 +83,7 @@ func Load() (*Config, error) {
 
 	var corsOrigins []string
 	if raw := os.Getenv("CORS_ORIGINS"); raw != "" {
-		for _, o := range strings.Split(raw, ",") {
+		for o := range strings.SplitSeq(raw, ",") {
 			if trimmed := strings.TrimSpace(o); trimmed != "" {
 				corsOrigins = append(corsOrigins, trimmed)
 			}
@@ -111,7 +112,7 @@ func Load() (*Config, error) {
 	if raw := os.Getenv("LOG_CHUNK_SIZE"); raw != "" {
 		v, err := strconv.ParseUint(raw, 10, 64)
 		if err != nil || v == 0 {
-			return nil, fmt.Errorf("invalid LOG_CHUNK_SIZE: must be a positive integer")
+			return nil, errors.New("invalid LOG_CHUNK_SIZE: must be a positive integer")
 		}
 		logChunkSize = v
 	}
@@ -129,10 +130,10 @@ func Load() (*Config, error) {
 	if complexityFloor != "" {
 		bi := new(big.Int)
 		if _, ok := bi.SetString(complexityFloor, 10); !ok {
-			return nil, fmt.Errorf("invalid COMPLEXITY_FLOOR: must be a non-negative integer")
+			return nil, errors.New("invalid COMPLEXITY_FLOOR: must be a non-negative integer")
 		}
 		if bi.Sign() < 0 {
-			return nil, fmt.Errorf("invalid COMPLEXITY_FLOOR: must be a non-negative integer")
+			return nil, errors.New("invalid COMPLEXITY_FLOOR: must be a non-negative integer")
 		}
 	}
 
@@ -182,7 +183,7 @@ func Load() (*Config, error) {
 	if raw := os.Getenv("EVENTS_BUFFER_SIZE"); raw != "" {
 		v, err := strconv.Atoi(raw)
 		if err != nil || v <= 0 {
-			return nil, fmt.Errorf("invalid EVENTS_BUFFER_SIZE: must be a positive integer")
+			return nil, errors.New("invalid EVENTS_BUFFER_SIZE: must be a positive integer")
 		}
 		eventsBufferSize = v
 	}
@@ -194,7 +195,7 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("invalid EVENTS_HEARTBEAT_INTERVAL: %w", err)
 		}
 		if d <= 0 {
-			return nil, fmt.Errorf("invalid EVENTS_HEARTBEAT_INTERVAL: must be positive")
+			return nil, errors.New("invalid EVENTS_HEARTBEAT_INTERVAL: must be positive")
 		}
 		eventsHeartbeatInterval = d
 	}
@@ -316,7 +317,7 @@ func validateHexKey(s string) error {
 // with a 0x prefix.
 func validateEthAddress(s string) error {
 	if !strings.HasPrefix(s, "0x") && !strings.HasPrefix(s, "0X") {
-		return fmt.Errorf("must start with 0x prefix")
+		return errors.New("must start with 0x prefix")
 	}
 	b, err := hex.DecodeString(s[2:])
 	if err != nil {

@@ -67,7 +67,7 @@ func TestGranularityFiltering(t *testing.T) {
 
 	// L1 subscriber should get both
 	var l1Events []Event
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		select {
 		case got := <-subL1.Ch:
 			l1Events = append(l1Events, got)
@@ -99,7 +99,7 @@ func TestEscrowFiltering(t *testing.T) {
 	bus.Publish(Event{Name: EventEscrowFunded, Escrow: "0xDEF", Level: L1, ID: "e2"})
 
 	// All-escrow subscriber gets both
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		select {
 		case <-subAll.Ch:
 		case <-time.After(time.Second):
@@ -151,7 +151,7 @@ func TestBufferOverflow(t *testing.T) {
 	defer bus.Unsubscribe(sub.ID)
 
 	// Publish 5 events without reading -- only first 2 should be buffered
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		bus.Publish(Event{Name: EventEscrowFunded, Level: L1, ID: itoa(uint64(i))})
 	}
 
@@ -176,18 +176,18 @@ func TestConcurrentAccess(t *testing.T) {
 	const numEvents = 100
 
 	var subs []*Subscription
-	for i := 0; i < numSubscribers; i++ {
+	for range numSubscribers {
 		subs = append(subs, bus.Subscribe(L1, ""))
 	}
 
 	var wg sync.WaitGroup
 
 	// Concurrent publishers
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			for j := 0; j < numEvents; j++ {
+			for j := range numEvents {
 				bus.Publish(Event{
 					Name:  EventEscrowFunded,
 					Level: L1,
@@ -198,14 +198,12 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 
 	// Concurrent unsubscribers (unsubscribe half the subscribers)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		time.Sleep(5 * time.Millisecond)
-		for i := 0; i < numSubscribers/2; i++ {
+		for i := range numSubscribers / 2 {
 			bus.Unsubscribe(subs[i].ID)
 		}
-	}()
+	})
 
 	wg.Wait()
 
@@ -247,7 +245,7 @@ func TestHeartbeat(t *testing.T) {
 func TestRecentEvents(t *testing.T) {
 	bus := NewEventBus(16)
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		bus.Publish(Event{
 			Name:   EventEscrowFunded,
 			Escrow: "0xABC",
