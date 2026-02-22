@@ -414,9 +414,11 @@ go-server/
       migrations/
         001_create_tables.sql      Schema
     indexer/indexer.go             Event polling -> DB reconciliation
+    bidding/
+      bidding.go                   Shared bidding protocol logic (RFQ + Bid lifecycle)
     mcpserver/
       server.go                    MCP server setup
-      tools.go                     12 tool handlers
+      tools.go                     16 tool handlers
     api/
       router.go                    HTTP mux with middleware
       handlers.go                  JSON request/response handlers
@@ -451,6 +453,8 @@ SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 | `submissions` | Worker submission records |
 | `disputes` | Dispute and resolution records |
 | `reputation` | Per-address, per-role outcome counters (completed, disputed, failed) indexed from on-chain events |
+| `rfqs` | Task Request for Quote broadcasts (paper §6.1: Task_RFQ) |
+| `bids` | Signed Bid_Objects from worker agents (paper §6.1: Bid_Object) |
 | `chain_logs` | Raw chain event log (idempotent by tx_hash + log_index) |
 | `chain_cursors` | Indexer block cursor per chain |
 
@@ -487,6 +491,21 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 | Factory events (`EscrowCreated`, `OutcomeRecorded`) | `TaskEscrowFactory` | Real-time push (webhook) + 15s poll (fallback) | CDP Webhooks + polling indexer |
 | Escrow events (~15 types) | Individual `TaskEscrow` contracts | 15s poll | Polling indexer only |
 
+### Bidding Protocol (Task_RFQ + Bid_Object)
+
+The bidding protocol implements the paper's decentralized market mechanism (§4.2, §6.1) where delegators broadcast task requests and agents respond with competitive bids. This is entirely off-chain -- the on-chain escrow creation is the formalization step triggered when a bid is accepted.
+
+![Bidding Sequence](diagrams/bidding-sequence.png)
+
+**Flow:**
+1. Buyer broadcasts a **Task_RFQ** with task spec, budget range, deadline, and requirements
+2. Workers discover RFQs via `list_rfqs` / `GET /api/v1/rfqs`
+3. Workers submit **Bid_Objects** with proposed price, duration, and reputation bond
+4. Buyer evaluates bids (cost, reputation, capability) and accepts one
+5. Acceptance atomically creates an on-chain escrow, closes the RFQ, and rejects remaining bids
+
+**Data model:** Two new tables (`rfqs`, `bids`) with status-based lifecycle management. RFQs have budget ranges enabling competitive bidding within buyer constraints. Both RFQs and bids have expiry timestamps checked at read time (no background cleanup needed).
+
 ### MCP Tools (Primary Interface)
 
 | Tool | Inputs | Chain Method |
@@ -503,6 +522,10 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 | `get_escrow` | escrow_id | DB read (includes milestone details) |
 | `list_escrows` | role, address, status | DB query |
 | `get_reputation` | address, role (optional) | DB read (indexed from on-chain OutcomeRecorded events) |
+| `create_rfq` | title, description, buyer, budget_min/max, deadline, expires_at, etc. | DB write (off-chain) |
+| `place_bid` | rfq_id, bidder, amount, estimated_duration, expires_at, etc. | DB write (off-chain) |
+| `list_bids` | rfq_id or bidder | DB query |
+| `accept_bid` | rfq_id, bid_id, caller | `Factory.createEscrow` (on acceptance) |
 
 ### HTTP API (Secondary Interface)
 
@@ -521,6 +544,13 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 | POST | `/api/v1/escrows/{id}/abort-milestones` | Abort remaining milestones (buyer only) |
 | POST | `/api/v1/escrows/{id}/activate-backup` | Activate backup worker (buyer only) |
 | GET | `/api/v1/reputation/{address}` | Get reputation (query: role) |
+| POST | `/api/v1/rfqs` | Create RFQ (Task_RFQ broadcast) |
+| GET | `/api/v1/rfqs` | List RFQs (query: status, buyer) |
+| GET | `/api/v1/rfqs/{id}` | Get RFQ details with bids |
+| POST | `/api/v1/rfqs/{id}/cancel` | Cancel an open RFQ (buyer only) |
+| POST | `/api/v1/rfqs/{id}/bids` | Place bid on RFQ |
+| GET | `/api/v1/rfqs/{id}/bids` | List bids for RFQ |
+| POST | `/api/v1/rfqs/{id}/accept` | Accept bid and create escrow |
 | POST | `/webhooks/cdp` | CDP webhook receiver (factory events; requires `CDP_WEBHOOK_SECRET`) |
 
 ### Configuration

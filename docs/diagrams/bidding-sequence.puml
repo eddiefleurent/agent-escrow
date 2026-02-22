@@ -1,0 +1,88 @@
+@startuml bidding-sequence
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam sequenceArrowThickness 1.5
+skinparam sequenceLifeLineBorderColor #CCCCCC
+skinparam sequenceDividerBackgroundColor #F5F5F5
+skinparam sequenceDividerFontStyle bold
+skinparam sequenceGroupBackgroundColor #FAFAFA
+skinparam sequenceGroupBorderColor #CCCCCC
+
+skinparam participant {
+  BorderColor #42A5F5
+  BackgroundColor #E3F2FD
+  FontStyle bold
+}
+
+skinparam actor {
+  BorderColor #7E57C2
+  BackgroundColor #EDE7F6
+}
+
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #E0D68A
+  FontSize 11
+}
+
+title Task_RFQ + Bid_Object Bidding Protocol\n(Paper §6.1: Task_RFQ broadcast + signed Bid_Objects)
+
+actor "Buyer Agent" as Buyer
+participant "Go Server\n(MCP / HTTP)" as Server
+database "SQLite" as DB
+actor "Worker Agent A" as WorkerA
+actor "Worker Agent B" as WorkerB
+participant "Base L2\n(Contracts)" as Chain
+
+== RFQ Broadcast ==
+
+Buyer -> Server : create_rfq / POST /api/v1/rfqs\n(title, budget_min/max, deadline, requirements)
+Server -> DB : INSERT rfq (status=open)
+Server --> Buyer : rfq_id, status=open
+
+note over Server : Workers discover RFQs via\nlist_rfqs / GET /api/v1/rfqs?status=open
+
+== Bid Submission ==
+
+WorkerA -> Server : place_bid / POST /api/v1/rfqs/{id}/bids\n(amount=200, duration=3600)
+Server -> DB : Validate: amount in [budget_min, budget_max],\nbidder != buyer, RFQ is open
+Server -> DB : INSERT bid (status=pending)
+Server --> WorkerA : bid_id, status=pending
+
+WorkerB -> Server : place_bid / POST /api/v1/rfqs/{id}/bids\n(amount=300, duration=7200)
+Server -> DB : INSERT bid (status=pending)
+Server --> WorkerB : bid_id, status=pending
+
+== Bid Evaluation ==
+
+Buyer -> Server : list_bids / GET /api/v1/rfqs/{id}/bids
+Server -> DB : SELECT bids WHERE rfq_id=?
+Server --> Buyer : [bid_A(200), bid_B(300)]
+
+note over Buyer : Evaluate bids:\ncost, reputation, capability\n(Paper §4.3: multi-objective optimization)
+
+== Bid Acceptance → Escrow Formalization ==
+
+Buyer -> Server : accept_bid / POST /api/v1/rfqs/{id}/accept\n(bid_id=bid_A)
+
+group Atomic acceptance
+  Server -> Chain : createEscrow(buyer, worker_A,\namount=200, verifier, arbitrator, deadline)
+  Chain --> Server : tx_hash, escrow_address, escrow_id
+
+  Server -> DB : INSERT task + escrow (status=created)
+  Server -> DB : UPDATE bid_A: status=accepted, escrow_id=N
+  Server -> DB : UPDATE rfq: status=closed
+  Server -> DB : UPDATE bid_B: status=rejected
+end
+
+Server --> Buyer : escrow_id, escrow_address, tx_hash
+
+note over WorkerB : Bid rejected;\nfree to bid on other RFQs
+
+== Post-Acceptance: Standard Escrow Lifecycle ==
+
+note over Buyer, Chain : Buyer funds escrow → Worker submits → Verifier approves → Settlement\n(See lifecycle-sequence diagram)
+
+@enduml
