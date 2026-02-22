@@ -223,7 +223,11 @@ All divisions floor toward zero (Solidity default). Remainders stay with the buy
 
 These must hold for every escrow at all times:
 
-1. **Balance conservation**: escrow balance is either `0` (after terminal settlement/refund) or `amount` (or `amount + workerStake` when stake deposited) during active states.
+1. **Balance conservation**:
+   - At terminal completion, escrow balance is always `0`.
+   - Before terminal completion, escrow balance equals remaining undistributed escrow principal plus any still-held worker stake.
+   - For single-shot escrows, this is `amount` (or `amount + workerStake` when staked).
+   - For milestone escrows, each approved/resolved partial payout, each milestone timeout refund, and each `abortRemainingMilestones` refund reduces the remaining undistributed escrow principal before terminal completion.
 2. **Terminal exclusivity**: Settled, Refunded, and Cancelled are mutually exclusive. No function can transition from a terminal state to a non-terminal state.
 3. **Fund conservation**: total funds distributed never exceeds `amount + workerStake`.
 4. **Fee bound**: protocol fee never exceeds worker gross award.
@@ -242,11 +246,11 @@ The factory owner can freeze or unfreeze individual addresses via `freezeAddress
 
 ### Contract Freeze
 
-The factory owner can freeze or unfreeze individual escrows via `freezeEscrow(escrowId)` / `unfreezeEscrow(escrowId)`. A frozen escrow blocks all participant-callable state-changing functions (fund, submit, approve, dispute, resolve, cancel, claim, deposit stake, activate backup). The `whenNotFrozen` modifier on TaskEscrow enforces this.
+The factory owner can freeze or unfreeze individual escrows via `freezeEscrow(escrowId)` / `unfreezeEscrow(escrowId)`. A frozen escrow blocks participant-callable state-changing functions protected by `whenNotFrozen`: `fund`, `fundWithAuthorization`, `depositStake`, `submit`, `approveByBuyer`, `approveByVerifier`, `rejectByVerifier`, `dispute`, `escalateSilence`, `resolveDispute`, `activateBackup`, `submitMilestone`, `approveMilestoneByBuyer`, `approveMilestoneByVerifier`, `rejectMilestoneByVerifier`, `disputeMilestone`, `escalateMilestoneSilence`, `resolveMilestoneDispute`, and `abortRemainingMilestones`. Timeout claim paths (`claimTimeoutRefund`, `claimArbitratorTimeout`) remain callable while frozen to preserve fund-recovery liveness. `emergencyResolve` is intentionally excluded from this participant-callable list because it is owner/factory-callable emergency control.
 
 ### Emergency Resolution
 
-The factory owner can force-settle a frozen escrow via `emergencyResolve(escrowId, workerAwardBps)`. This performs the same proportional settlement as dispute resolution but from any non-terminal state. The escrow must be frozen first; otherwise the call reverts with `EscrowNotFrozen`.
+The factory owner can force-settle a frozen escrow via `emergencyResolve(escrowId, workerAwardBps)`. If the escrow is in any non-terminal state other than `Created`, settlement uses the same dispute-equivalent proportional math. `Created` is the only special case: it transitions directly to `Cancelled` (no settlement transfer), since no funds have been deposited yet. The escrow must already be frozen; otherwise `emergencyResolve` reverts with `EscrowNotFrozen`.
 
 ### Events
 
@@ -255,7 +259,7 @@ The factory owner can force-settle a frozen escrow via `emergencyResolve(escrowI
 
 ### Invariant
 
-Emergency resolve preserves the same settlement math as normal dispute resolution: proportional split of payment and stake based on `workerAwardBps`, with fee and remainder handling identical to `resolveDispute`.
+Emergency resolve preserves dispute-equivalent settlement math for funded/disputed/active escrows: proportional split of payment and stake based on `workerAwardBps`, with fee and remainder handling identical to `resolveDispute`. The only exception is the `Created` state, which cancels without settlement.
 
 ## 8) Reputation Recording
 

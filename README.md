@@ -60,7 +60,7 @@ Each design decision traces to the paper. The settlement kernel (V1) covers the 
 | Adaptive Execution (§4.4) | Timeouts + escalation paths | Milestones + backup agents | Checkpoint/resume for agent swaps |
 | Structural Transparency (§4.5, 4.8) | Events + hash commitments | Attestation chains | ZK verification |
 | Scalable Market Coordination (§4.3, 4.6) | Designated verifier/arbitrator | Reputation + credentials | Market stability mechanisms |
-| Systemic Resilience (§4.7, 4.9) | Role gates + reentrancy guard | DCTs + Sybil resistance | Tiered service levels |
+| Systemic Resilience (§4.7, 4.9) | Role gates + reentrancy guard | Emergency response + Sybil resistance | DCTs + tiered service levels |
 
 Full mapping with paper section references: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
@@ -70,36 +70,74 @@ Full mapping with paper section references: [`docs/ARCHITECTURE.md`](docs/ARCHIT
 
 The MCP server is the primary interface for AI agents. Any MCP-compatible client (Claude, GPT, custom agents) can use escrow without Solidity or wallet libraries -- the server handles chain interaction.
 
-| Tool | Description |
-|---|---|
-| `create_escrow` | Create task + escrow via factory (ETH or ERC20) |
-| `fund_escrow` | Buyer funds escrow |
-| `submit_work` | Worker submits hash + URI |
-| `approve_work` | Buyer or verifier approves |
-| `dispute_work` | Buyer disputes or verifier rejects |
-| `resolve_dispute` | Arbitrator resolves with BPS split |
-| `get_escrow` | Read escrow state |
-| `list_escrows` | Filter by role, address, or status |
+Default configuration (`EMERGENCY_ENABLED=true`, `EVENTS_ENABLED=true`, `A2A_ENABLED=true`) exposes:
+
+- Core escrow: `create_escrow`, `fund_escrow`, `deposit_stake`, `submit_work`, `approve_work`, `dispute_work`, `resolve_dispute`, `abort_remaining_milestones`, `activate_backup`
+- Querying: `get_escrow`, `list_escrows`, `get_reputation`
+- Bidding: `create_rfq`, `place_bid`, `list_bids`, `accept_bid`
+- AP2/x402 bridge: `fund_via_mandate`
+- Emergency protocol: `freeze_address`, `unfreeze_address`, `freeze_escrow`, `unfreeze_escrow`, `emergency_resolve`, `list_frozen_addresses`, `list_emergency_actions`
+- Event stream: `subscribe_events`
+- A2A adapter: `get_agent_card`
 
 ### HTTP API
 
 ```text
 GET  /api/v1/health               Health check
+
+# Core escrow lifecycle
 POST /api/v1/escrows              Create escrow
 GET  /api/v1/escrows              List (query: role, address, status)
 GET  /api/v1/escrows/{id}         Get escrow details
 POST /api/v1/escrows/{id}/fund    Fund escrow
+POST /api/v1/escrows/{id}/deposit-stake Deposit worker stake
 POST /api/v1/escrows/{id}/submit  Submit work
 POST /api/v1/escrows/{id}/approve Approve submission
 POST /api/v1/escrows/{id}/dispute Dispute submission
 POST /api/v1/escrows/{id}/resolve Resolve dispute
+POST /api/v1/escrows/{id}/abort-milestones Abort remaining milestones
+POST /api/v1/escrows/{id}/activate-backup Activate backup worker
+GET  /api/v1/reputation/{address} Read on-chain outcome counters
+
+# RFQ/bidding
+POST /api/v1/rfqs
+GET  /api/v1/rfqs
+GET  /api/v1/rfqs/{id}
+POST /api/v1/rfqs/{id}/cancel
+POST /api/v1/rfqs/{id}/bids
+GET  /api/v1/rfqs/{id}/bids
+POST /api/v1/rfqs/{id}/accept
+
+# AP2 bridge
+POST /api/v1/ap2/fund
+POST /api/v1/ap2/validate
+GET  /api/v1/ap2/mandates/{id}
+
+# Real-time events (when enabled)
+GET  /api/v1/events
+GET  /api/v1/escrows/{id}/events
+GET  /api/v1/events/ws
+POST /webhooks/cdp
+
+# Emergency protocol (when enabled)
+POST /api/v1/emergency/freeze-address
+POST /api/v1/emergency/unfreeze-address
+POST /api/v1/emergency/freeze-escrow
+POST /api/v1/emergency/unfreeze-escrow
+POST /api/v1/emergency/resolve
+GET  /api/v1/emergency/frozen-addresses
+GET  /api/v1/emergency/actions
+
+# A2A adapter (when enabled)
+GET  /.well-known/agent.json
+POST /a2a
 ```
 
 ## Implementation Status
 
 **V1 -- Settlement Kernel**: Complete. 9-state escrow contracts, full test suite (unit, fuzz, invariant), Go server with MCP + HTTP + indexer, live on Base Sepolia.
 
-**V2 -- Market Primitives**: Nearly complete (10/11 items). ERC20/USDC payments, worker stake, milestone-based escrow, backup agent clause, on-chain reputation, complexity floor, bidding protocol (Task_RFQ + Bid_Object), A2A settlement adapter, AP2 mandate-to-escrow bridge, real-time event subscriptions (SSE/WebSocket + MCP polling). Remaining: emergency response protocol.
+**V2 -- Market Primitives**: Complete (11/11 items). ERC20/USDC payments, worker stake, milestone-based escrow, backup agent clause, on-chain reputation, complexity floor, bidding protocol (Task_RFQ + Bid_Object), A2A settlement adapter, AP2 mandate-to-escrow bridge, real-time event subscriptions (SSE/WebSocket + MCP polling), and emergency response protocol.
 
 **V3 -- Delegation Intelligence**: Planned. DCTs, ZK verification, checkpoint/resume, tiered service levels, multi-verifier quorum, attestation chains.
 

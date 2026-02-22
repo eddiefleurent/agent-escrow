@@ -403,7 +403,7 @@ go-server/
       bus.go                       In-process pub/sub EventBus (publish, subscribe, heartbeat, recent events ring buffer)
     mcpserver/
       server.go                    MCP server setup
-      tools.go                     19 tool handlers (includes subscribe_events)
+      tools.go                     26 registered tool handlers with default feature flags enabled (core + bidding + AP2 + emergency + events + A2A)
     api/
       router.go                    HTTP mux with middleware
       handlers.go                  JSON request/response handlers
