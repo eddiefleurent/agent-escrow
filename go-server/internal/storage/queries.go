@@ -1100,7 +1100,10 @@ func (d *DB) CreateAP2Mandate(ctx context.Context, id, mandateType, mandateHash,
 		`INSERT INTO ap2_mandates (id, mandate_type, mandate_hash, signer_address, budget_amount, budget_currency, expires_at, escrow_id, status, raw_payload)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, mandateType, mandateHash, signerAddress, budgetAmount, budgetCurrency, expiresAt, escrowID, status, rawPayload)
-	return err
+	if err != nil {
+		return fmt.Errorf("insert ap2_mandate: %w", err)
+	}
+	return nil
 }
 
 // UpdateAP2MandateFunding updates a mandate's funding tx hash and status.
