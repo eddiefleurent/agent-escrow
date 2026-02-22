@@ -52,25 +52,10 @@ func setup(t *testing.T) *testEnv {
 func setupWithEmergency(t *testing.T) *testEnv {
 	t.Helper()
 
-	db, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open test db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-
-	mock := chain.NewMockClient()
-	cfg := &config.Config{
-		ChainID:          84532,
-		FactoryAddress:   "0xFactoryAddr",
-		RequestTimeout:   10 * time.Second,
-		TxTimeout:        90 * time.Second,
-		EmergencyEnabled: true,
-	}
-
-	idx := indexer.New(db, mock, cfg.FactoryAddress)
-	mux := NewRouter(db, mock, idx, cfg, nil)
-
-	return &testEnv{db: db, mock: mock, idx: idx, cfg: cfg, mux: mux}
+	env := setup(t)
+	env.cfg.EmergencyEnabled = true
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
+	return env
 }
 
 func (e *testEnv) request(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
