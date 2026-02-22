@@ -134,6 +134,7 @@ type fundViaMandateArgs struct {
 	Signature       string `json:"signature" jsonschema:"Cryptographic signature of the mandate"`
 	Payload         string `json:"payload,omitempty" jsonschema:"JSON string of mandate payload (budget, items, etc.)"`
 	AuthFrom        string `json:"auth_from" jsonschema:"EIP-3009 authorization from address"`
+	AuthTo          string `json:"auth_to" jsonschema:"EIP-3009 authorization to address (must match escrow address)"`
 	AuthValue       string `json:"auth_value" jsonschema:"EIP-3009 authorization value"`
 	AuthValidAfter  string `json:"auth_valid_after" jsonschema:"EIP-3009 validAfter timestamp"`
 	AuthValidBefore string `json:"auth_valid_before" jsonschema:"EIP-3009 validBefore timestamp"`
@@ -1015,6 +1016,15 @@ func (s *Server) handleFundViaMandate(ctx context.Context, req *mcp.CallToolRequ
 		}
 	}
 
+	authTo := args.AuthTo
+	if authTo == "" {
+		escrow, err := s.db.GetEscrow(escrowID)
+		if err != nil {
+			return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
+		}
+		authTo = escrow.EscrowAddress
+	}
+
 	env := ap2.MandateEnvelope{
 		Type:          ap2.MandateType(args.MandateType),
 		Payload:       payload,
@@ -1022,6 +1032,7 @@ func (s *Server) handleFundViaMandate(ctx context.Context, req *mcp.CallToolRequ
 		SignerAddress: args.SignerAddress,
 		Authorization: ap2.EIP3009Authorization{
 			From:        args.AuthFrom,
+			To:          authTo,
 			Value:       args.AuthValue,
 			ValidAfter:  args.AuthValidAfter,
 			ValidBefore: args.AuthValidBefore,

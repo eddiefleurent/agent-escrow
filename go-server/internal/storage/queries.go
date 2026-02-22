@@ -1105,10 +1105,20 @@ func (d *DB) CreateAP2Mandate(ctx context.Context, id, mandateType, mandateHash,
 
 // UpdateAP2MandateFunding updates a mandate's funding tx hash and status.
 func (d *DB) UpdateAP2MandateFunding(ctx context.Context, mandateID, txHash string) error {
-	_, err := d.db.ExecContext(ctx,
+	res, err := d.db.ExecContext(ctx,
 		`UPDATE ap2_mandates SET funding_tx_hash = ?, status = 'funded' WHERE id = ?`,
 		txHash, mandateID)
-	return err
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("UpdateAP2MandateFunding id=%s: %w", mandateID, sql.ErrNoRows)
+	}
+	return nil
 }
 
 // GetAP2Mandate retrieves a mandate by ID.

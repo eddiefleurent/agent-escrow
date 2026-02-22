@@ -121,6 +121,13 @@ func (s *Service) BindToEscrow(ctx context.Context, env MandateEnvelope, escrowI
 		return nil, fmt.Errorf("mandate signer must be the escrow buyer")
 	}
 
+	// EIP-3009 authorization recipient must match the escrow contract address
+	authToNorm := strings.ToLower(common.HexToAddress(env.Authorization.To).Hex())
+	escrowAddrNorm := strings.ToLower(common.HexToAddress(escrow.EscrowAddress).Hex())
+	if authToNorm != escrowAddrNorm {
+		return nil, fmt.Errorf("authorization.to (%s) does not match escrow address (%s)", authToNorm, escrowAddrNorm)
+	}
+
 	authValue, ok := new(big.Int).SetString(env.Authorization.Value, 10)
 	if !ok {
 		return nil, fmt.Errorf("invalid authorization value")
@@ -133,7 +140,10 @@ func (s *Service) BindToEscrow(ctx context.Context, env MandateEnvelope, escrowI
 		return nil, fmt.Errorf("authorization value (%s) is less than escrow amount (%s)", authValue, escrowAmount)
 	}
 
-	mandateHash := hashMandate(env)
+	mandateHash, err := hashMandate(env)
+	if err != nil {
+		return nil, err
+	}
 	mandateID := mandateHash[:16]
 
 	payloadJSON, err := json.Marshal(env.Payload)
@@ -238,10 +248,13 @@ func (s *Service) FundViaMandate(ctx context.Context, escrowID int64, env Mandat
 	}, nil
 }
 
-func hashMandate(env MandateEnvelope) string {
-	data, _ := json.Marshal(env)
+func hashMandate(env MandateEnvelope) (string, error) {
+	data, err := json.Marshal(env)
+	if err != nil {
+		return "", fmt.Errorf("marshal mandate for hashing: %w", err)
+	}
 	h := sha256.Sum256(data)
-	return hex.EncodeToString(h[:])
+	return hex.EncodeToString(h[:]), nil
 }
 
 func hexToBytes32(s string) ([32]byte, error) {
