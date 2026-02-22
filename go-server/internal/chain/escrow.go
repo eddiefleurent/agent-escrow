@@ -19,6 +19,16 @@ func (c *Client) Fund(ctx context.Context, escrow common.Address, amount *big.In
 	return c.SendTx(ctx, escrow, data, amount)
 }
 
+// FundWithAuthorization calls fundWithAuthorization on the escrow contract
+// using an EIP-3009 signed authorization for gasless ERC20 funding.
+func (c *Client) FundWithAuthorization(ctx context.Context, escrow common.Address, from common.Address, validAfter, validBefore *big.Int, nonce [32]byte, v uint8, r, s [32]byte) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("fundWithAuthorization", from, validAfter, validBefore, nonce, v, r, s)
+	if err != nil {
+		return nil, fmt.Errorf("pack fundWithAuthorization: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, nil)
+}
+
 // DepositStake sends the depositStake() transaction. For ETH escrows, stakeAmount is sent as msg.value.
 // For ERC20 escrows, pass stakeAmount as nil/zero (the worker must approve the token first via ApproveERC20).
 func (c *Client) DepositStake(ctx context.Context, escrow common.Address, stakeAmount *big.Int) (*types.Transaction, error) {

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -596,21 +597,25 @@ func (d *DB) UpdateRFQStatusTx(tx *sql.Tx, id int64, status string) error {
 // Bid queries
 
 const bidColumns = `id, rfq_id, bidder, amount, estimated_duration, reputation_bond,
-	milestones_json, message, status, escrow_id, expires_at, created_at, updated_at`
+	milestones_json, message, status, escrow_id, expires_at, stake_mandate_id, created_at, updated_at`
 
 func scanBid(scanner interface{ Scan(...any) error }) (*Bid, error) {
 	b := &Bid{}
 	var createdAt, updatedAt string
 	var escrowID sql.NullInt64
+	var stakeMandateID sql.NullString
 	err := scanner.Scan(&b.ID, &b.RFQID, &b.Bidder, &b.Amount, &b.EstimatedDuration,
 		&b.ReputationBond, &b.MilestonesJSON, &b.Message, &b.Status,
-		&escrowID, &b.ExpiresAt, &createdAt, &updatedAt)
+		&escrowID, &b.ExpiresAt, &stakeMandateID, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
 	if escrowID.Valid {
 		v := escrowID.Int64
 		b.EscrowID = &v
+	}
+	if stakeMandateID.Valid {
+		b.StakeMandateID = stakeMandateID.String
 	}
 	b.CreatedAt, err = parseSQLiteTime(createdAt)
 	if err != nil {
@@ -626,10 +631,10 @@ func scanBid(scanner interface{ Scan(...any) error }) (*Bid, error) {
 func (d *DB) CreateBid(b *Bid) (*Bid, error) {
 	res, err := d.db.Exec(
 		`INSERT INTO bids (rfq_id, bidder, amount, estimated_duration, reputation_bond,
-			milestones_json, message, status, expires_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			milestones_json, message, status, expires_at, stake_mandate_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		b.RFQID, b.Bidder, b.Amount, b.EstimatedDuration, b.ReputationBond,
-		b.MilestonesJSON, b.Message, b.Status, b.ExpiresAt,
+		b.MilestonesJSON, b.Message, b.Status, b.ExpiresAt, nilIfEmpty(b.StakeMandateID),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert bid: %w", err)
@@ -1083,6 +1088,79 @@ func (d *DB) ListA2ATasksBySession(sessionID string) ([]*A2ATask, error) {
 	return tasks, rows.Err()
 }
 
+// ── AP2 Mandates ──
+
+// CreateAP2Mandate inserts a new AP2 mandate record.
+func (d *DB) CreateAP2Mandate(ctx context.Context, id, mandateType, mandateHash, signerAddress, budgetAmount, budgetCurrency string, expiresAt *string, escrowID *int64, rawPayload string) error {
+	status := "bound"
+	if escrowID == nil {
+		status = "pending"
+	}
+	_, err := d.db.ExecContext(ctx,
+		`INSERT INTO ap2_mandates (id, mandate_type, mandate_hash, signer_address, budget_amount, budget_currency, expires_at, escrow_id, status, raw_payload)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, mandateType, mandateHash, signerAddress, nilIfEmpty(budgetAmount), nilIfEmpty(budgetCurrency), expiresAt, escrowID, status, rawPayload)
+	if err != nil {
+		return fmt.Errorf("insert ap2_mandate: %w", err)
+	}
+	return nil
+}
+
+// UpdateAP2MandateFunding updates a mandate's funding tx hash and status.
+func (d *DB) UpdateAP2MandateFunding(ctx context.Context, mandateID, txHash string) error {
+	res, err := d.db.ExecContext(ctx,
+		`UPDATE ap2_mandates SET funding_tx_hash = ?, status = 'funded' WHERE id = ?`,
+		txHash, mandateID)
+	if err != nil {
+		return fmt.Errorf("UpdateAP2MandateFunding: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("UpdateAP2MandateFunding rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("UpdateAP2MandateFunding id=%s: %w", mandateID, sql.ErrNoRows)
+	}
+	return nil
+}
+
+// GetAP2Mandate retrieves a mandate by ID.
+func (d *DB) GetAP2Mandate(ctx context.Context, id string) (*AP2Mandate, error) {
+	row := d.db.QueryRowContext(ctx,
+		`SELECT id, mandate_type, mandate_hash, signer_address, budget_amount, budget_currency, expires_at, escrow_id, funding_tx_hash, status, raw_payload, created_at
+		 FROM ap2_mandates WHERE id = ?`, id)
+
+	var m AP2Mandate
+	var budgetAmt, budgetCur, expiresAt, fundingTx, createdAt sql.NullString
+	var escrowID sql.NullInt64
+
+	err := row.Scan(&m.ID, &m.MandateType, &m.MandateHash, &m.SignerAddress,
+		&budgetAmt, &budgetCur, &expiresAt, &escrowID, &fundingTx, &m.Status, &m.RawPayload, &createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("get ap2 mandate: %w", err)
+	}
+
+	m.BudgetAmount = budgetAmt.String
+	m.BudgetCurrency = budgetCur.String
+	m.FundingTxHash = fundingTx.String
+	if expiresAt.Valid {
+		m.ExpiresAt = expiresAt.String
+	}
+	if escrowID.Valid {
+		eid := escrowID.Int64
+		m.EscrowID = &eid
+	}
+	if createdAt.Valid {
+		t, err := parseSQLiteTime(createdAt.String)
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+		m.CreatedAt = t
+	}
+
+	return &m, nil
+}
+
 // parseSQLiteTime handles the two timestamp formats that SQLite / modernc.org/sqlite
 // can produce: datetime('now') returns "2006-01-02 15:04:05" while
 // CURRENT_TIMESTAMP can return "2006-01-02T15:04:05Z" (ISO 8601).
@@ -1097,6 +1175,13 @@ func parseSQLiteTime(s string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("unrecognised timestamp format: %q", s)
+}
+
+func nilIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func parseNullTime(ns sql.NullString) (*time.Time, error) {

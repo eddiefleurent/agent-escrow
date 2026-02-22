@@ -423,9 +423,15 @@ go-server/
       types.go                     A2A protocol types (AgentCard, Task, verification_policy)
       service.go                   A2A-to-escrow lifecycle mapping
       handler.go                   HTTP handlers (agent card + JSON-RPC endpoint)
+    x402/
+      client.go                    HTTP client for CDP x402 facilitator API (verify + settle)
+    ap2/
+      types.go                     AP2 mandate types
+      service.go                   Mandate validation, binding, fund orchestration
+      handler.go                   HTTP handlers (validate, fund, get mandate)
     mcpserver/
       server.go                    MCP server setup
-      tools.go                     17 tool handlers
+      tools.go                     18 tool handlers
     api/
       router.go                    HTTP mux with middleware
       handlers.go                  JSON request/response handlers
@@ -461,7 +467,8 @@ SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 | `disputes` | Dispute and resolution records |
 | `reputation` | Per-address, per-role outcome counters (completed, disputed, failed) indexed from on-chain events |
 | `rfqs` | Task Request for Quote broadcasts (paper §6.1: Task_RFQ) |
-| `bids` | Signed Bid_Objects from worker agents (paper §6.1: Bid_Object) |
+| `bids` | Signed Bid_Objects from worker agents (paper §6.1: Bid_Object); optional `stake_mandate_id` for Sybil resistance |
+| `ap2_mandates` | AP2 mandate records for gasless escrow funding via x402 facilitator |
 | `a2a_tasks` | A2A protocol tasks linked to escrows (paper §6: A2A Task object extension) |
 | `chain_logs` | Raw chain event log (idempotent by tx_hash + log_index) |
 | `chain_cursors` | Indexer block cursor per chain |
@@ -533,6 +540,14 @@ The A2A adapter makes the escrow settlement layer accessible as an A2A-compatibl
 
 **Data model:** The `a2a_tasks` table links A2A task IDs and sessions to escrow records, storing verification policy and escrow trigger state.
 
+### AP2 Mandate-to-Escrow Bridge (Paper §6)
+
+The AP2 mandate bridge enables gasless ERC20 escrow funding via the [x402](https://docs.cdp.coinbase.com/x402/welcome) payment rail. A buyer authorizes a mandate off-chain; the server validates it against the x402 facilitator API, binds it to an escrow, and submits `fundWithAuthorization()` on-chain. The facilitator sponsors gas; the buyer pays only in tokens. This implements the paper's AP2 conditional settlement integration (§6): mandate authorization triggers escrow funding, which then governs conditional custody and release.
+
+**x402 facilitator integration:** The `x402` package provides an HTTP client for the CDP x402 facilitator API (verify and settle endpoints). When `X402_ENABLED` is true, the AP2 service uses it to validate mandate authorizations before binding and to coordinate EIP-3009 settlement. The escrow contract's `fundWithAuthorization()` accepts the signed authorization; any caller (the server, acting as relayer) submits the transaction.
+
+**Flow:** Validate mandate → Bind mandate to escrow → Fund escrow via `fundWithAuthorization` (EIP-3009). Bids may include an optional `stake_mandate_id` for worker stake funding, providing Sybil resistance via the same gasless rail.
+
 ### MCP Tools (Primary Interface)
 
 | Tool | Inputs | Chain Method |
@@ -553,6 +568,7 @@ The A2A adapter makes the escrow settlement layer accessible as an A2A-compatibl
 | `place_bid` | rfq_id, bidder, amount, estimated_duration, expires_at, etc. | DB write (off-chain) |
 | `list_bids` | rfq_id or bidder | DB query |
 | `accept_bid` | rfq_id, bid_id, caller | `Factory.createEscrow` (on acceptance) |
+| `fund_via_mandate` | escrow_id, mandate_id, authorization params | x402 validate + `Escrow.fundWithAuthorization` |
 | `get_agent_card` | (none) | Returns A2A agent card JSON |
 
 ### HTTP API (Secondary Interface)
@@ -564,6 +580,9 @@ The A2A adapter makes the escrow settlement layer accessible as an A2A-compatibl
 | GET | `/api/v1/escrows` | List (query: role, address, status) |
 | GET | `/api/v1/escrows/{id}` | Get escrow (includes milestone details if applicable) |
 | POST | `/api/v1/escrows/{id}/fund` | Fund |
+| POST | `/api/v1/ap2/fund` | Fund escrow via AP2 mandate (EIP-3009 gasless) |
+| POST | `/api/v1/ap2/validate` | Validate AP2 mandate against x402 facilitator |
+| GET | `/api/v1/ap2/mandates/{id}` | Get mandate details |
 | POST | `/api/v1/escrows/{id}/deposit-stake` | Deposit worker stake |
 | POST | `/api/v1/escrows/{id}/submit` | Submit work (optional `milestone_index` in body) |
 | POST | `/api/v1/escrows/{id}/approve` | Approve (body: role, optional milestone_index) |
@@ -599,6 +618,8 @@ The A2A adapter makes the escrow settlement layer accessible as an A2A-compatibl
 | `TX_TIMEOUT` | No | `90s` | Timeout for chain transaction HTTP requests |
 | `COMPLEXITY_FLOOR` | No | -- | Minimum escrow amount (wei/smallest unit) for early rejection; `0` or empty = disabled |
 | `CDP_WEBHOOK_SECRET` | No | -- | CDP webhook HMAC secret; enables real-time factory event delivery via `POST /webhooks/cdp` |
+| `X402_ENABLED` | No | `false` | Enable x402 facilitator integration for AP2 mandate funding |
+| `X402_FACILITATOR_URL` | No (if X402_ENABLED) | -- | CDP x402 facilitator API base URL |
 | `A2A_ENABLED` | No | `true` | Enable A2A settlement adapter routes |
 | `A2A_AGENT_NAME` | No | `Escrow Settlement Agent` | Agent card display name |
 | `A2A_AGENT_URL` | No | `http://localhost:{PORT}` | Agent card URL |

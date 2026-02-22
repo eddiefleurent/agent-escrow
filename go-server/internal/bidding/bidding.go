@@ -86,6 +86,7 @@ type PlaceBidParams struct {
 	MilestonesJSON    string
 	Message           string
 	ExpiresAt         int64
+	StakeMandateID    string // Optional AP2 mandate ID for Sybil-resistant stake-on-bid (paper §6)
 }
 
 type AcceptBidParams struct {
@@ -251,6 +252,7 @@ func (s *Service) PlaceBid(p PlaceBidParams) (*storage.Bid, error) {
 		Message:           p.Message,
 		Status:            "pending",
 		ExpiresAt:         p.ExpiresAt,
+		StakeMandateID:    p.StakeMandateID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create bid: %w", err)

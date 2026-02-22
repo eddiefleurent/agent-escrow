@@ -2,6 +2,7 @@
 pragma solidity ^0.8.34;
 
 import {IERC20} from "./interfaces/IERC20.sol";
+import {IEIP3009} from "./interfaces/IEIP3009.sol";
 import {MilestoneLib} from "./MilestoneLib.sol";
 
 interface ITaskEscrowFactory {
@@ -255,48 +256,77 @@ contract TaskEscrow {
     }
 
     modifier nonReentrant() {
-        if (_locked == _ENTERED) revert Reentrancy();
-        _locked = _ENTERED;
+        _nonReentrantBefore();
         _;
         _locked = _NOT_ENTERED;
+    }
+
+    function _nonReentrantBefore() internal {
+        if (_locked == _ENTERED) revert Reentrancy();
+        _locked = _ENTERED;
+    }
+
+    function _requireBuyer() internal view {
+        if (msg.sender != buyer) revert Unauthorized();
+    }
+
+    function _requireState(Status s) internal view {
+        if (status != s) revert InvalidState();
     }
 
     // ── V1 single-shot functions ──
 
     function fund() external payable nonReentrant {
-        if (msg.sender != buyer) revert Unauthorized();
-        if (status != Status.Created) revert InvalidState();
+        _requireBuyer();
+        _requireState(Status.Created);
         if (token == address(0)) {
             if (msg.value != amount) revert InvalidAmount();
         } else {
             if (msg.value != 0) revert ETHNotAccepted();
-            uint256 bb = IERC20(token).balanceOf(address(this));
-            _safeTransferFrom(IERC20(token), msg.sender, address(this), amount);
-            if (IERC20(token).balanceOf(address(this)) - bb != amount) revert InsufficientReceived();
+            _receiveERC20(amount);
         }
         status = Status.Funded;
         emit EscrowFunded(msg.sender, amount);
     }
 
+    /// @notice Fund via EIP-3009 signed authorization (gasless).
+    /// Any caller may submit; `from` must be the buyer.
+    function fundWithAuthorization(
+        address from,
+        uint256 validAfter,
+        uint256 validBefore,
+        bytes32 nonce,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external nonReentrant {
+        if (from != buyer) revert Unauthorized();
+        _requireState(Status.Created);
+        if (token == address(0)) revert ETHNotAccepted();
+
+        _receiveEIP3009(from, amount, validAfter, validBefore, nonce, v, r, s);
+
+        status = Status.Funded;
+        emit EscrowFunded(from, amount);
+    }
+
     function cancelBeforeFunding() external {
-        if (msg.sender != buyer) revert Unauthorized();
-        if (status != Status.Created) revert InvalidState();
+        _requireBuyer();
+        _requireState(Status.Created);
         status = Status.Cancelled;
         emit Cancelled();
     }
 
     function depositStake() external payable nonReentrant {
         if (msg.sender != activeWorker) revert Unauthorized();
-        if (status != Status.Funded) revert InvalidState();
+        _requireState(Status.Funded);
         if (workerStake == 0) revert InvalidAmount();
         if (workerStaked) revert StakeAlreadyDeposited();
         if (token == address(0)) {
             if (msg.value != workerStake) revert InvalidAmount();
         } else {
             if (msg.value != 0) revert ETHNotAccepted();
-            uint256 bb = IERC20(token).balanceOf(address(this));
-            _safeTransferFrom(IERC20(token), msg.sender, address(this), workerStake);
-            if (IERC20(token).balanceOf(address(this)) - bb != workerStake) revert InsufficientReceived();
+            _receiveERC20(workerStake);
         }
         workerStaked = true;
         emit WorkerStakeDeposited(msg.sender, workerStake);
@@ -304,7 +334,7 @@ contract TaskEscrow {
 
     function submit(bytes32 _submissionHash, string calldata _submissionURI) external {
         if (msg.sender != activeWorker) revert Unauthorized();
-        if (status != Status.Funded) revert InvalidState();
+        _requireState(Status.Funded);
         if (block.timestamp > uint256(submissionDeadline) + uint256(deadlineExtensionApplied)) revert WindowExpired();
         if (_submissionHash == bytes32(0)) revert InvalidHash();
         if (workerStake > 0 && !workerStaked) revert StakeNotDeposited();
@@ -317,7 +347,7 @@ contract TaskEscrow {
     }
 
     function approveByBuyer() external nonReentrant {
-        if (msg.sender != buyer) revert Unauthorized();
+        _requireBuyer();
         _approve(msg.sender);
     }
 
@@ -328,7 +358,7 @@ contract TaskEscrow {
 
     function rejectByVerifier(string calldata reasonURI) external {
         if (msg.sender != verifier) revert Unauthorized();
-        if (status != Status.Submitted) revert InvalidState();
+        _requireState(Status.Submitted);
         if (block.timestamp > _reviewWindowEnds()) revert WindowExpired();
         disputeReasonURI = reasonURI;
         disputedAt = uint64(block.timestamp);
@@ -339,8 +369,8 @@ contract TaskEscrow {
     }
 
     function dispute(string calldata reasonURI) external {
-        if (msg.sender != buyer) revert Unauthorized();
-        if (status != Status.Submitted) revert InvalidState();
+        _requireBuyer();
+        _requireState(Status.Submitted);
         if (block.timestamp > _disputeWindowEnds()) revert WindowExpired();
         disputeReasonURI = reasonURI;
         disputedAt = uint64(block.timestamp);
@@ -351,7 +381,7 @@ contract TaskEscrow {
 
     function escalateSilence(string calldata reasonURI) external {
         if (msg.sender != activeWorker) revert Unauthorized();
-        if (status != Status.Submitted) revert InvalidState();
+        _requireState(Status.Submitted);
         if (block.timestamp <= _reviewWindowEnds()) revert WindowNotOpen();
         if (block.timestamp > _disputeWindowEnds()) revert WindowExpired();
         disputeReasonURI = reasonURI;
@@ -364,7 +394,7 @@ contract TaskEscrow {
 
     function resolveDispute(uint16 workerAwardBps, string calldata resolutionURI) external nonReentrant {
         if (msg.sender != arbitrator) revert Unauthorized();
-        if (status != Status.Disputed) revert InvalidState();
+        _requireState(Status.Disputed);
         if (workerAwardBps > 10_000) revert InvalidAwardBps();
         status = Status.Resolved;
         emit DisputeResolved(msg.sender, workerAwardBps, resolutionURI);
@@ -373,8 +403,8 @@ contract TaskEscrow {
     }
 
     function claimTimeoutRefund() external nonReentrant {
-        if (msg.sender != buyer) revert Unauthorized();
-        if (status != Status.Funded) revert InvalidState();
+        _requireBuyer();
+        _requireState(Status.Funded);
         if (block.timestamp <= uint256(submissionDeadline) + uint256(deadlineExtensionApplied)) revert WindowNotOpen();
         uint256 sf = workerStaked ? workerStake : 0;
         status = Status.Refunded;
@@ -385,8 +415,8 @@ contract TaskEscrow {
     }
 
     function claimArbitratorTimeout() external nonReentrant {
-        if (msg.sender != buyer) revert Unauthorized();
-        if (status != Status.Disputed) revert InvalidState();
+        _requireBuyer();
+        _requireState(Status.Disputed);
         if (block.timestamp <= uint256(disputedAt) + uint256(arbitratorTimeoutSeconds)) {
             revert ArbitratorTimeoutNotReached();
         }
@@ -402,8 +432,8 @@ contract TaskEscrow {
     // ── Backup agent activation (paper §4.4) ──
 
     function activateBackup() external nonReentrant {
-        if (msg.sender != buyer) revert Unauthorized();
-        if (status != Status.Funded) revert InvalidState();
+        _requireBuyer();
+        _requireState(Status.Funded);
         if (backupWorker == address(0)) revert NoBackupDesignated();
         if (backupActivated) revert BackupAlreadyActivated();
 
@@ -445,7 +475,7 @@ contract TaskEscrow {
 
     function submitMilestone(uint8 milestoneIndex, bytes32 _submissionHash, string calldata _submissionURI) external {
         if (msg.sender != activeWorker) revert Unauthorized();
-        if (status != Status.Funded) revert InvalidState();
+        _requireState(Status.Funded);
         if (milestoneCount <= 1) revert InvalidState();
         if (milestoneIndex != currentMilestone) revert InvalidMilestoneIndex();
         if (_submissionHash == bytes32(0)) revert InvalidHash();
@@ -461,7 +491,7 @@ contract TaskEscrow {
     }
 
     function approveMilestoneByBuyer(uint8 milestoneIndex) external nonReentrant {
-        if (msg.sender != buyer) revert Unauthorized();
+        _requireBuyer();
         _approveMilestone(milestoneIndex, msg.sender);
     }
 
@@ -472,7 +502,7 @@ contract TaskEscrow {
 
     function disputeMilestone(uint8 milestoneIndex, string calldata reasonURI) external {
         _requireMultiMsFunded();
-        if (msg.sender != buyer) revert Unauthorized();
+        _requireBuyer();
         if (milestoneIndex != currentMilestone) revert InvalidMilestoneIndex();
         Milestone storage ms = milestones[milestoneIndex];
         if (ms.status != MilestoneStatus.Submitted) revert InvalidState();
@@ -534,7 +564,7 @@ contract TaskEscrow {
 
     function claimMilestoneTimeoutRefund(uint8 milestoneIndex) external nonReentrant {
         _requireMultiMsFunded();
-        if (msg.sender != buyer) revert Unauthorized();
+        _requireBuyer();
         if (milestoneIndex != currentMilestone) revert InvalidMilestoneIndex();
         Milestone storage ms = milestones[milestoneIndex];
         if (ms.status != MilestoneStatus.Pending) revert InvalidState();
@@ -548,7 +578,7 @@ contract TaskEscrow {
 
     function claimMilestoneArbitratorTimeout(uint8 milestoneIndex) external nonReentrant {
         _requireMultiMsFunded();
-        if (msg.sender != buyer) revert Unauthorized();
+        _requireBuyer();
         if (milestoneIndex != currentMilestone) revert InvalidMilestoneIndex();
         Milestone storage ms = milestones[milestoneIndex];
         if (ms.status != MilestoneStatus.Disputed) revert InvalidState();
@@ -564,7 +594,7 @@ contract TaskEscrow {
 
     function abortRemainingMilestones() external nonReentrant {
         _requireMultiMsFunded();
-        if (msg.sender != buyer) revert Unauthorized();
+        _requireBuyer();
 
         // The most recently completed milestone must be in a terminal failure state.
         // After _advanceMilestone(), currentMilestone points to the next milestone.
@@ -603,7 +633,7 @@ contract TaskEscrow {
     // ── Internal ──
 
     function _requireMultiMsFunded() internal view {
-        if (status != Status.Funded) revert InvalidState();
+        _requireState(Status.Funded);
         if (milestoneCount <= 1) revert InvalidState();
     }
 
@@ -621,7 +651,7 @@ contract TaskEscrow {
     }
 
     function _approve(address approver) internal {
-        if (status != Status.Submitted) revert InvalidState();
+        _requireState(Status.Submitted);
         if (block.timestamp > _reviewWindowEnds()) revert WindowExpired();
         approvedAt = uint64(block.timestamp);
         status = Status.Approved;
@@ -761,6 +791,30 @@ contract TaskEscrow {
         (bool success, bytes memory data) =
             address(_token).call(abi.encodeWithSelector(_token.transfer.selector, to, value));
         if (!success || (data.length > 0 && !abi.decode(data, (bool)))) revert TransferFailed();
+    }
+
+    /// @dev Pull `value` of the escrow's ERC20 token from msg.sender via transferFrom,
+    /// reverting if the received balance delta does not match (fee-on-transfer guard).
+    function _receiveERC20(uint256 value) internal {
+        uint256 bb = IERC20(token).balanceOf(address(this));
+        _safeTransferFrom(IERC20(token), msg.sender, address(this), value);
+        if (IERC20(token).balanceOf(address(this)) - bb != value) revert InsufficientReceived();
+    }
+
+    /// @dev Pull `value` via EIP-3009 receiveWithAuthorization with balance-delta guard.
+    function _receiveEIP3009(
+        address from,
+        uint256 value,
+        uint256 validAfter,
+        uint256 validBefore,
+        bytes32 nonce,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) internal {
+        uint256 bb = IERC20(token).balanceOf(address(this));
+        IEIP3009(token).receiveWithAuthorization(from, address(this), value, validAfter, validBefore, nonce, v, r, s);
+        if (IERC20(token).balanceOf(address(this)) - bb != value) revert InsufficientReceived();
     }
 
     function _safeTransferFrom(IERC20 _token, address from, address to, uint256 value) internal {

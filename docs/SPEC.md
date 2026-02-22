@@ -62,7 +62,7 @@ Role assignment is immutable per escrow (including `backupWorker`). This is a V1
 ### Single-Shot Escrow
 
 ```text
-Created ──fund()──> Funded ──submit()──> Submitted
+Created ──fund() / fundWithAuthorization()──> Funded ──submit()──> Submitted
   │                   │                    │  │  │
   │                   │                    │  │  └─ approve ──> Approved ──> Settled
   │                   │                    │  │
@@ -90,6 +90,7 @@ Terminal states (Settled, Refunded, Cancelled) are mutually exclusive and irreve
 | Transition | Who | From State | Guard |
 |---|---|---|---|
 | `fund` | buyer | Created | Exact amount (ETH or ERC20) |
+| `fundWithAuthorization` | buyer (via any caller) | Created | ERC20 only; EIP-3009 signed authorization; `from` must be buyer; balance-delta guard for fee-on-transfer |
 | `depositStake` | worker | Funded | `workerStake > 0`, not already deposited |
 | `cancelBeforeFunding` | buyer | Created | -- |
 | `submit` | worker | Funded | Before deadline; stake deposited if required |
@@ -104,6 +105,10 @@ Terminal states (Settled, Refunded, Cancelled) are mutually exclusive and irreve
 | `activateBackup` | buyer | Funded | `backupWorker != address(0)`, not already activated |
 
 Invalid transitions revert with custom errors.
+
+### EIP-3009 Funding Path
+
+For ERC20-denominated escrows, the buyer may fund via `fundWithAuthorization()` instead of `fund()`. This uses EIP-3009 `receiveWithAuthorization`: the buyer signs an authorization off-chain; any caller (e.g., a relayer or x402 facilitator) submits the signed payload on-chain. The escrow contract pulls tokens via the token's `receiveWithAuthorization` entrypoint. The `from` address in the authorization must equal the escrow's `buyer`. A balance-delta guard protects against fee-on-transfer tokens. This enables gasless funding flows where the facilitator sponsors gas on behalf of the buyer.
 
 ### Backup Agent Clause
 

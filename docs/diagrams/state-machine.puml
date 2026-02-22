@@ -34,7 +34,7 @@ state Cancelled #E0E0E0 ##9E9E9E
 
 [*] --> Created
 
-Created --> Funded : fund()
+Created --> Funded : fund() / fundWithAuthorization()
 Created --> Cancelled : cancel()
 
 Funded --> Funded : depositStake()

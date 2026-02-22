@@ -83,6 +83,6 @@ note over WorkerB : Bid rejected;\nfree to bid on other RFQs
 
 == Post-Acceptance: Standard Escrow Lifecycle ==
 
-note over Buyer, Chain : Buyer funds escrow → Worker submits → Verifier approves → Settlement\n(See lifecycle-sequence diagram)
+note over Buyer, Chain : Buyer funds escrow (fund or fund_via_mandate) → Worker submits → Verifier approves → Settlement\n(See lifecycle-sequence diagram)
 
 @enduml

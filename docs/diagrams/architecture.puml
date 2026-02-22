@@ -31,6 +31,7 @@ package "Go Server" as server #E3F2FD {
   [HTTP API\n(JSON REST)] as http_api #BBDEFB
   [Webhook Handler\n(POST /webhooks/cdp)] as webhook #BBDEFB
   [Event Indexer\n(background poller)] as indexer #BBDEFB
+  [AP2 Handler\n(POST /api/v1/ap2/*)] as ap2 #BBDEFB
 
   package "Shared Logic" as shared #E1F5FE {
     [Chain Client\n(go-ethereum)] as chain_client #B3E5FC
@@ -41,10 +42,15 @@ package "Go Server" as server #E3F2FD {
   mcp_server -down-> storage
   http_api -down-> chain_client
   http_api -down-> storage
+  ap2 -down-> chain_client
+  ap2 -down-> storage
   webhook -down-> storage
   indexer -down-> chain_client
   indexer -down-> storage
 }
+
+cloud "x402 Facilitator" as x402 #E8EAF6
+ap2 -down-> x402 : verify + settle\n(when X402_ENABLED)
 
 package "Base (Ethereum L2)" as chain #E8F5E9 {
   [TaskEscrowFactory\n+ reputation storage] as factory #A5D6A7
@@ -68,8 +74,9 @@ cdp ..up..> factory : subscribes to\nfactory events
 
 note right of mcp_server
   Primary agent interface.
-  12 tools covering escrow
-  lifecycle + reputation.
+  18 tools covering escrow
+  lifecycle, bidding, AP2,
+  and reputation.
 end note
 
 note right of webhook

@@ -22,6 +22,7 @@ type ChainClient interface {
 	// High-level escrow operations (V1 single-milestone)
 	CreateEscrow(ctx context.Context, factory common.Address, p CreateEscrowParams) (*types.Transaction, error)
 	Fund(ctx context.Context, escrow common.Address, amount *big.Int) (*types.Transaction, error)
+	FundWithAuthorization(ctx context.Context, escrow common.Address, from common.Address, validAfter, validBefore *big.Int, nonce [32]byte, v uint8, r, s [32]byte) (*types.Transaction, error)
 	DepositStake(ctx context.Context, escrow common.Address, stakeAmount *big.Int) (*types.Transaction, error)
 	ApproveERC20(ctx context.Context, token common.Address, spender common.Address, amount *big.Int) (*types.Transaction, error)
 	Submit(ctx context.Context, escrow common.Address, submissionHash [32]byte, submissionURI string) (*types.Transaction, error)

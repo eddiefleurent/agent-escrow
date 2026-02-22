@@ -25,7 +25,6 @@ This project implements the ["Intelligent AI Delegation"](https://arxiv.org/abs/
 
 - Keep Solidity pinned to `0.8.34` unless explicitly requested.
 - Keep contract behavior aligned with `docs/SPEC.md` (state machine and role semantics).
-- When contract behavior changes, update `docs/SPEC.md` and `docs/diagrams/*.puml` to match.
 - Do not introduce destructive git operations (`reset --hard`, force clean, etc.) unless explicitly requested.
 - Do not remove or weaken tests to make CI pass.
 - Use real implementations over mocks whenever possible in tests.
@@ -51,27 +50,29 @@ make test-all       # fmt-check + all Solidity + Go vet + Go tests
 
 Always run `make test-all` before finishing changes. If tests fail, fix the root cause, rerun, and report what changed.
 
-## Solidity Code Standards
+## Solidity Standards
 
-- Use custom errors over string reverts.
-- Keep checks-effects-interactions ordering.
-- Use `nonReentrant` where ETH transfers occur in state-changing flows.
+- Custom errors over string reverts.
+- Checks-effects-interactions ordering.
+- `nonReentrant` where ETH transfers occur in state-changing flows.
 - Emit events for all critical state transitions and administrative actions.
-- Prefer explicit role checks and strict state guards.
+- Explicit role checks and strict state guards.
 
-## Go Code Standards
+## Go Standards
 
-- Use `gofmt` and standard Go conventions.
-- No ORM -- use `database/sql` with hand-written queries.
-- ABI files are embedded via `//go:embed` from `go-server/abi/`.
+- `gofmt` and standard Go conventions.
+- No ORM -- `database/sql` with hand-written queries.
+- ABI files embedded via `//go:embed` from `go-server/abi/`.
 - Run `make go-abi` after any contract changes before building Go.
-- Keep MCP tool handlers and HTTP handlers as thin wrappers around shared logic.
-- Error handling: return errors, don't panic (except in `init()` for ABI parsing).
-- Use `context.Context` for all chain and DB operations.
+- MCP tool handlers and HTTP handlers are thin wrappers around shared logic.
+- Return errors, don't panic (except in `init()` for ABI parsing).
+- `context.Context` for all chain and DB operations.
 - Logging: use `log/slog` (stdlib structured logger). Never use `log.Printf` or `fmt.Printf` for operational logging. Use JSON handler with leveled output (`slog.Info`, `slog.Warn`, `slog.Error`). Include relevant context as key-value pairs.
-- Chain operations: depend on the `chain.ChainClient` interface, not `*chain.Client` directly. Use `chain.MockClient` in tests.
+- Chain operations: depend on `chain.ChainClient` interface, not `*chain.Client` directly. Use `chain.MockClient` in tests.
 
 ## Python Scripts
+
+Python scripts live in `scripts/` and use `uv` for environment management. Do not use `pip install --break-system-packages`.
 
 ```bash
 uv venv .venv                              # create venv (one-time)
@@ -93,24 +94,28 @@ scripts/                  Utility scripts (Python)
 go-server/
   cmd/server/main.go      Entrypoint
   internal/
-    chain/                go-ethereum client, ABI bindings
-    storage/              SQLite schema, queries, models
-    indexer/              Event polling -> DB reconciliation
-    bidding/              Shared bidding protocol logic (RFQ + Bid lifecycle)
-    mcpserver/            MCP server + 16 tool handlers
-    api/                  HTTP JSON API + middleware
-  abi/                    Embedded ABI artifacts (copied by make go-abi)
+    chain/                 go-ethereum client, ABI bindings
+    storage/               SQLite schema, queries, models
+    indexer/                Event polling -> DB reconciliation
+    bidding/               Shared bidding protocol logic (RFQ + Bid lifecycle)
+    mcpserver/             MCP server + 16 tool handlers
+    api/                   HTTP JSON API + middleware
+  abi/                     Embedded ABI artifacts (copied by make go-abi)
 docs/                     Architecture, spec, roadmap, setup
 ```
 
-## Deployment Checklist
+## Deployment
 
-Before testnet/mainnet deployment:
-1. Confirm env vars: `PRIVATE_KEY`, `TREASURY`, `OWNER`, `PROTOCOL_FEE_BPS`, `BASE_SEPOLIA_RPC_URL`.
-2. Verify fee bounds and treasury/owner addresses.
-3. Deploy with: `make deploy-base-sepolia`
-4. Record deployed addresses and tx hashes in docs.
-5. Verify contract source on explorer.
+```bash
+export PRIVATE_KEY=0x...
+export TREASURY=0x...
+export OWNER=0x...
+export PROTOCOL_FEE_BPS=100
+export BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
+make deploy-base-sepolia
+```
+
+Verify contract source on block explorer after deployment. Record deployed addresses and tx hashes in docs.
 
 ## Documentation Maintenance
 
@@ -118,7 +123,7 @@ Three docs are kept in sync with the code:
 
 - **`docs/SPEC.md`** -- contract design intent: state machine, settlement math, invariants, and paper traceability. Does not duplicate Solidity interfaces, events, or off-chain details (those live in the code and ARCHITECTURE.md). Update only when the state machine, settlement formulas, or invariants change.
 - **`docs/diagrams/*.puml`** -- PlantUML visual diagrams. Update when contract state transitions, lifecycle flows, or system architecture change. Multiple `@startuml` blocks can live in one file; prefer extending existing files over creating new ones. When editing, match the existing style, formatting conventions, and level of detail of the surrounding diagram. After any `.puml` change, regenerate the corresponding PNGs with `plantuml docs/diagrams/*.puml`.
-- **`docs/ARCHITECTURE.md`** -- high-level system design and paper grounding. Update when major structural changes occur (new components, new integration paths). Code-level documentation is handled by DeepWiki; `docs/ARCHITECTURE.md` covers the "why" and "how things connect."
+- **`docs/ARCHITECTURE.md`** -- high-level system design and paper grounding. Update when major structural changes occur (new components, new integration paths). Code-level documentation is handled by DeepWiki; ARCHITECTURE.md covers the "why" and "how things connect."
 
 When updating `docs/SPEC.md` or `docs/ARCHITECTURE.md`, always check whether `docs/diagrams/*.puml` also needs updating. State transitions, settlement flows, and role semantics described in the spec or architecture doc are often visualized in the diagrams -- keep them in sync.
 
@@ -134,7 +139,7 @@ Do not create new documentation files unless explicitly requested. Prefer updati
 ## ERC20 Token Support
 
 - `token == address(0)` (or `""` / `"0x0000000000000000000000000000000000000000"` in Go) means ETH-denominated escrow; any other address is ERC20.
-- ERC20 funding flow: `ApproveERC20` -> `WaitMined` (check `receipt.Status == 1`) -> `Fund(ctx, addr, nil)`.
+- ERC20 funding flow: `ApproveERC20` → `WaitMined` (check `receipt.Status == 1`) → `Fund(ctx, addr, nil)`.
 - ETH funding flow: `Fund(ctx, addr, amount)` with non-nil amount.
 - Comprehensive ERC20 tests live in `test/TaskEscrowERC20.t.sol`.
 - Contracts use `Params` structs (e.g., `CreateEscrowParams`) to reduce constructor argument count -- extend these structs rather than adding bare parameters.
