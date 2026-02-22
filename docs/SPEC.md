@@ -227,7 +227,7 @@ These must hold for every escrow at all times:
    - At terminal completion, escrow balance is always `0`.
    - Before terminal completion, escrow balance equals remaining undistributed escrow principal plus any still-held worker stake.
    - For single-shot escrows, this is `amount` (or `amount + workerStake` when staked).
-   - For milestone escrows, each approved/resolved partial payout reduces the remaining principal before terminal completion.
+   - For milestone escrows, each approved/resolved partial payout, each milestone timeout refund, and each `abortRemainingMilestones` refund reduces the remaining undistributed escrow principal before terminal completion.
 2. **Terminal exclusivity**: Settled, Refunded, and Cancelled are mutually exclusive. No function can transition from a terminal state to a non-terminal state.
 3. **Fund conservation**: total funds distributed never exceeds `amount + workerStake`.
 4. **Fee bound**: protocol fee never exceeds worker gross award.
