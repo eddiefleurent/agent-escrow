@@ -1099,7 +1099,7 @@ func (d *DB) CreateAP2Mandate(ctx context.Context, id, mandateType, mandateHash,
 	_, err := d.db.ExecContext(ctx,
 		`INSERT INTO ap2_mandates (id, mandate_type, mandate_hash, signer_address, budget_amount, budget_currency, expires_at, escrow_id, status, raw_payload)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, mandateType, mandateHash, signerAddress, budgetAmount, budgetCurrency, expiresAt, escrowID, status, rawPayload)
+		id, mandateType, mandateHash, signerAddress, nilIfEmpty(budgetAmount), nilIfEmpty(budgetCurrency), expiresAt, escrowID, status, rawPayload)
 	if err != nil {
 		return fmt.Errorf("insert ap2_mandate: %w", err)
 	}
