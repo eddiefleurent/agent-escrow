@@ -14,6 +14,7 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/ap2"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/bidding"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -144,6 +145,13 @@ type fundViaMandateArgs struct {
 	AuthS           string `json:"auth_s" jsonschema:"EIP-3009 signature s (hex)"`
 }
 
+type subscribeEventsArgs struct {
+	EscrowID    string `json:"escrow_id,omitempty" jsonschema:"Filter to specific escrow address; omit for all"`
+	SinceID     string `json:"since_id,omitempty" jsonschema:"Return events after this event ID (cursor-based pagination)"`
+	Granularity string `json:"granularity,omitempty" jsonschema:"Granularity level: L0, L1, L2, L3 (default L1)"`
+	Limit       string `json:"limit,omitempty" jsonschema:"Max events to return (default 50, max 200)"`
+}
+
 type emptyArgs struct{}
 
 func (s *Server) registerTools(srv *mcp.Server) {
@@ -231,6 +239,13 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Name:        "fund_via_mandate",
 		Description: "Fund an escrow via an AP2 mandate with EIP-3009 gasless authorization. Paper §6: AP2 stake-on-bid + conditional settlement.",
 	}, s.handleFundViaMandate)
+
+	if s.bus != nil && s.cfg.EventsEnabled {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name:        "subscribe_events",
+			Description: "Poll recent escrow lifecycle events with cursor-based pagination. Returns events since a given cursor (event ID). Paper §4.5: configurable granularity L0-L3.",
+		}, s.handleSubscribeEvents)
+	}
 
 	if s.cfg.A2AEnabled {
 		mcp.AddTool(srv, &mcp.Tool{
@@ -1067,6 +1082,56 @@ func (s *Server) handleGetAgentCard(ctx context.Context, req *mcp.CallToolReques
 	}
 	card := svc.BuildAgentCard()
 	return jsonResult(card)
+}
+
+func (s *Server) handleSubscribeEvents(ctx context.Context, req *mcp.CallToolRequest, args subscribeEventsArgs) (*mcp.CallToolResult, any, error) {
+	granularity := events.ParseGranularity(args.Granularity)
+
+	limit := 50
+	if args.Limit != "" {
+		v, err := strconv.Atoi(args.Limit)
+		if err != nil || v <= 0 {
+			return textResult("invalid limit: must be a positive integer"), nil, nil
+		}
+		if v > 200 {
+			v = 200
+		}
+		limit = v
+	}
+
+	recent := s.bus.RecentEvents(args.EscrowID, granularity, args.SinceID, limit)
+
+	type eventOut struct {
+		Event     string         `json:"event"`
+		Escrow    string         `json:"escrow,omitempty"`
+		ID        string         `json:"id"`
+		Block     uint64         `json:"block,omitempty"`
+		Timestamp int64          `json:"timestamp"`
+		Payload   map[string]any `json:"payload,omitempty"`
+	}
+
+	out := make([]eventOut, len(recent))
+	for i, e := range recent {
+		out[i] = eventOut{
+			Event:     e.Name,
+			Escrow:    e.Escrow,
+			ID:        e.ID,
+			Block:     e.Block,
+			Timestamp: e.Timestamp.Unix(),
+			Payload:   e.Payload,
+		}
+	}
+
+	var cursor string
+	if len(recent) > 0 {
+		cursor = recent[len(recent)-1].ID
+	}
+
+	return jsonResult(map[string]any{
+		"events": out,
+		"cursor": cursor,
+		"count":  len(out),
+	})
 }
 
 func parseMilestoneIndex(s string) (uint8, error) {

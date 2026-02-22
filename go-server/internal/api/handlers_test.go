@@ -42,7 +42,7 @@ func setup(t *testing.T) *testEnv {
 	}
 
 	idx := indexer.New(db, mock, cfg.FactoryAddress)
-	mux := NewRouter(db, mock, idx, cfg)
+	mux := NewRouter(db, mock, idx, cfg, nil)
 
 	return &testEnv{db: db, mock: mock, idx: idx, cfg: cfg, mux: mux}
 }
@@ -580,7 +580,7 @@ func TestCORS_Preflight_WildcardDefault(t *testing.T) {
 func TestCORS_RestrictedOrigins_Allowed(t *testing.T) {
 	env := setup(t)
 	env.cfg.CORSOrigins = []string{"https://example.com", "https://app.example.com"}
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/health", nil)
 	req.Header.Set("Origin", "https://example.com")
@@ -598,7 +598,7 @@ func TestCORS_RestrictedOrigins_Allowed(t *testing.T) {
 func TestCORS_RestrictedOrigins_Rejected(t *testing.T) {
 	env := setup(t)
 	env.cfg.CORSOrigins = []string{"https://example.com"}
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/health", nil)
 	req.Header.Set("Origin", "https://evil.com")
@@ -613,7 +613,7 @@ func TestCORS_RestrictedOrigins_Rejected(t *testing.T) {
 func TestCORS_RestrictedOrigins_Preflight(t *testing.T) {
 	env := setup(t)
 	env.cfg.CORSOrigins = []string{"https://app.example.com"}
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
 	req := httptest.NewRequest("OPTIONS", "/api/v1/escrows", nil)
 	req.Header.Set("Origin", "https://app.example.com")
@@ -635,7 +635,7 @@ func TestTimeout_GET_Exceeded(t *testing.T) {
 	// Reconfigure with a very short read timeout
 	env.cfg.RequestTimeout = 50 * time.Millisecond
 	env.cfg.TxTimeout = 90 * time.Second
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
 	// Delay longer than the read timeout
 	env.mock.Delay = 200 * time.Millisecond
@@ -656,7 +656,7 @@ func TestTimeout_GET_WithinLimit(t *testing.T) {
 
 	env.cfg.RequestTimeout = 2 * time.Second
 	env.cfg.TxTimeout = 90 * time.Second
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
 	rr := env.request(t, "GET", "/api/v1/health", "")
 	if rr.Code != http.StatusOK {
@@ -684,7 +684,7 @@ func TestTimeout_POST_UsesLongerTxTimeout(t *testing.T) {
 	// Short read timeout but long tx timeout; delay is between them
 	env.cfg.RequestTimeout = 50 * time.Millisecond
 	env.cfg.TxTimeout = 2 * time.Second
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
 	env.mock.Delay = 100 * time.Millisecond
 
@@ -713,7 +713,7 @@ func TestTimeout_POST_TxTimeoutExceeded(t *testing.T) {
 
 	env.cfg.RequestTimeout = 50 * time.Millisecond
 	env.cfg.TxTimeout = 50 * time.Millisecond
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
 	env.mock.Delay = 200 * time.Millisecond
 
@@ -726,7 +726,7 @@ func TestTimeout_POST_TxTimeoutExceeded(t *testing.T) {
 func TestCreateEscrow_BelowComplexityFloor(t *testing.T) {
 	env := setup(t)
 	env.cfg.ComplexityFloor = "1000000000000000000" // 1 ETH
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
 	body := `{
 		"title": "Test", "description": "x",
@@ -754,7 +754,7 @@ func TestCreateEscrow_BelowComplexityFloor(t *testing.T) {
 func TestCreateEscrow_AtComplexityFloor(t *testing.T) {
 	env := setup(t)
 	env.cfg.ComplexityFloor = "100"
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
 	escrowAddr := common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12")
 	buyerAddr := common.HexToAddress("0x1000000000000000000000000000000000000001")
@@ -781,7 +781,7 @@ func TestCreateEscrow_AtComplexityFloor(t *testing.T) {
 func TestCreateEscrow_EmptyComplexityFloorAllowsAny(t *testing.T) {
 	env := setup(t)
 	env.cfg.ComplexityFloor = ""
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
 	escrowAddr := common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12")
 	buyerAddr := common.HexToAddress("0x1000000000000000000000000000000000000001")

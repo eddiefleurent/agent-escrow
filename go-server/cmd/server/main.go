@@ -13,6 +13,7 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/api"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/mcpserver"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
@@ -52,9 +53,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Event bus for real-time event streaming (paper §4.5: configurable granularity L0-L3).
+	var bus *events.EventBus
+	if cfg.EventsEnabled {
+		bus = events.NewEventBus(cfg.EventsBufferSize)
+		slog.Info("event bus enabled",
+			"buffer_size", cfg.EventsBufferSize,
+			"heartbeat_interval", cfg.EventsHeartbeatInterval,
+		)
+	}
+
 	idxOpts := []indexer.Option{}
 	if cfg.StartBlock > 0 {
 		idxOpts = append(idxOpts, indexer.WithStartBlock(cfg.StartBlock))
+	}
+	if bus != nil {
+		idxOpts = append(idxOpts, indexer.WithEventBus(bus))
 	}
 	idx := indexer.New(db, chainClient, cfg.FactoryAddress, idxOpts...)
 
@@ -69,15 +83,19 @@ func main() {
 		slog.Info("CDP webhook mode enabled for factory events")
 	}
 
+	if bus != nil {
+		go bus.RunHeartbeat(ctx, cfg.EventsHeartbeatInterval)
+	}
+
 	if cfg.MCPTransport == "stdio" {
 		go func() {
-			if err := mcpserver.Serve(ctx, db, chainClient, idx, cfg); err != nil {
+			if err := mcpserver.Serve(ctx, db, chainClient, idx, cfg, bus); err != nil {
 				slog.Error("mcp server exited", "error", err)
 			}
 		}()
 	}
 
-	router := api.NewRouter(db, chainClient, idx, cfg)
+	router := api.NewRouter(db, chainClient, idx, cfg, bus)
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
 		Handler:      router,

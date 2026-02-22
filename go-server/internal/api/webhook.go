@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/ethereum/go-ethereum/common"
@@ -71,10 +72,13 @@ type cdpWebhookEventData struct {
 type WebhookHandler struct {
 	idx    *indexer.Indexer
 	secret string
+	bus    *events.EventBus
 }
 
-func NewWebhookHandler(idx *indexer.Indexer, secret string) *WebhookHandler {
-	return &WebhookHandler{idx: idx, secret: secret}
+// NewWebhookHandler creates a webhook handler. The bus parameter may be nil
+// when event streaming is disabled.
+func NewWebhookHandler(idx *indexer.Indexer, secret string, bus *events.EventBus) *WebhookHandler {
+	return &WebhookHandler{idx: idx, secret: secret, bus: bus}
 }
 
 // HandleCDPWebhook is the HTTP handler for POST /webhooks/cdp.
@@ -184,7 +188,30 @@ func (wh *WebhookHandler) processWebhookEvent(payload cdpWebhookPayload) error {
 		return fmt.Errorf("create chain log: %w", err)
 	}
 
+	wh.publishWebhookEvent(data, blockNum)
 	return nil
+}
+
+// publishWebhookEvent publishes an L1 event to the bus for webhook-delivered events.
+func (wh *WebhookHandler) publishWebhookEvent(data cdpWebhookEventData, blockNum int64) {
+	if wh.bus == nil {
+		return
+	}
+	streamName, ok := events.OnChainEventName[data.EventName]
+	if !ok {
+		return
+	}
+	escrow := data.Escrow
+	if escrow == "" {
+		escrow = data.ContractAddress
+	}
+	wh.bus.Publish(events.Event{
+		Name:   streamName,
+		Escrow: escrow,
+		Level:  events.L1,
+		Block:  uint64(blockNum),
+		ID:     fmt.Sprintf("%s-%s", data.TransactionHash, data.LogIndex.String()),
+	})
 }
 
 // handleEscrowCreated processes an EscrowCreated event from the CDP webhook.

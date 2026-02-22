@@ -48,7 +48,7 @@ func setupWebhookTest(t *testing.T) *webhookTestEnv {
 	}
 
 	idx := indexer.New(db, mock, cfg.FactoryAddress)
-	mux := NewRouter(db, mock, idx, cfg)
+	mux := NewRouter(db, mock, idx, cfg, nil)
 
 	return &webhookTestEnv{db: db, mock: mock, idx: idx, cfg: cfg, mux: mux}
 }
@@ -405,7 +405,7 @@ func TestWebhook_NotRegistered_InPollingMode(t *testing.T) {
 	}
 
 	idx := indexer.New(db, mock, cfg.FactoryAddress)
-	mux := NewRouter(db, mock, idx, cfg)
+	mux := NewRouter(db, mock, idx, cfg, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/cdp", strings.NewReader("{}"))
 	req.Header.Set("Content-Type", "application/json")

@@ -4,6 +4,8 @@ go 1.26
 
 require (
 	github.com/ethereum/go-ethereum v1.17.0
+	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.4.2
 	github.com/modelcontextprotocol/go-sdk v1.3.1
 	modernc.org/sqlite v1.46.1
 )
@@ -24,8 +26,6 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
-	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

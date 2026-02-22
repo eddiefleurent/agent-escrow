@@ -44,6 +44,11 @@ type Config struct {
 	// x402 / AP2 mandate-to-escrow bridge (paper §6: AP2 stake-on-bid + conditional settlement).
 	X402Enabled        bool   // Enable x402 gasless funding path (default false)
 	X402FacilitatorURL string // CDP x402 facilitator endpoint
+
+	// Real-time event subscriptions (paper §4.5: configurable granularity L0-L3).
+	EventsEnabled           bool          // Enable SSE/WebSocket event streaming (default true)
+	EventsBufferSize        int           // Per-subscriber channel buffer size (default 64)
+	EventsHeartbeatInterval time.Duration // Heartbeat interval for L0 liveness (default 30s)
 }
 
 // WebhookMode reports whether CDP webhook mode is enabled (secret is configured).
@@ -164,26 +169,59 @@ func Load() (*Config, error) {
 		x402FacilitatorURL = "https://api.developer.coinbase.com/v2/x402"
 	}
 
+	eventsEnabled := true
+	if raw := os.Getenv("EVENTS_ENABLED"); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid EVENTS_ENABLED: %w", err)
+		}
+		eventsEnabled = v
+	}
+
+	eventsBufferSize := 64
+	if raw := os.Getenv("EVENTS_BUFFER_SIZE"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v <= 0 {
+			return nil, fmt.Errorf("invalid EVENTS_BUFFER_SIZE: must be a positive integer")
+		}
+		eventsBufferSize = v
+	}
+
+	eventsHeartbeatInterval := 30 * time.Second
+	if raw := os.Getenv("EVENTS_HEARTBEAT_INTERVAL"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid EVENTS_HEARTBEAT_INTERVAL: %w", err)
+		}
+		if d <= 0 {
+			return nil, fmt.Errorf("invalid EVENTS_HEARTBEAT_INTERVAL: must be positive")
+		}
+		eventsHeartbeatInterval = d
+	}
+
 	cfg := &Config{
-		RPCURL:             os.Getenv("RPC_URL"),
-		PrivateKey:         os.Getenv("PRIVATE_KEY"),
-		ChainID:            chainID,
-		FactoryAddress:     os.Getenv("FACTORY_ADDRESS"),
-		DatabaseURL:        dbURL,
-		Port:               port,
-		MCPTransport:       os.Getenv("MCP_TRANSPORT"),
-		CORSOrigins:        corsOrigins,
-		RequestTimeout:     requestTimeout,
-		TxTimeout:          txTimeout,
-		LogChunkSize:       logChunkSize,
-		StartBlock:         startBlock,
-		ComplexityFloor:    complexityFloor,
-		CDPWebhookSecret:   os.Getenv("CDP_WEBHOOK_SECRET"),
-		A2AEnabled:         a2aEnabled,
-		A2AAgentName:       a2aAgentName,
-		A2AAgentURL:        a2aAgentURL,
-		X402Enabled:        x402Enabled,
-		X402FacilitatorURL: x402FacilitatorURL,
+		RPCURL:                  os.Getenv("RPC_URL"),
+		PrivateKey:              os.Getenv("PRIVATE_KEY"),
+		ChainID:                 chainID,
+		FactoryAddress:          os.Getenv("FACTORY_ADDRESS"),
+		DatabaseURL:             dbURL,
+		Port:                    port,
+		MCPTransport:            os.Getenv("MCP_TRANSPORT"),
+		CORSOrigins:             corsOrigins,
+		RequestTimeout:          requestTimeout,
+		TxTimeout:               txTimeout,
+		LogChunkSize:            logChunkSize,
+		StartBlock:              startBlock,
+		ComplexityFloor:         complexityFloor,
+		CDPWebhookSecret:        os.Getenv("CDP_WEBHOOK_SECRET"),
+		A2AEnabled:              a2aEnabled,
+		A2AAgentName:            a2aAgentName,
+		A2AAgentURL:             a2aAgentURL,
+		X402Enabled:             x402Enabled,
+		X402FacilitatorURL:      x402FacilitatorURL,
+		EventsEnabled:           eventsEnabled,
+		EventsBufferSize:        eventsBufferSize,
+		EventsHeartbeatInterval: eventsHeartbeatInterval,
 	}
 
 	result := cfg.Validate()

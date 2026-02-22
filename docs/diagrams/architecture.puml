@@ -24,6 +24,7 @@ title System Architecture
 package "AI Agents" as agents #E8EAF6 {
   [MCP Client\n(Claude, GPT, etc.)] as mcp_client #C5CAE9
   [HTTP Client\n(Dashboard, Scripts)] as http_client #C5CAE9
+  [SSE/WS Client\n(Event Subscribers)] as stream_client #C5CAE9
 }
 
 package "Go Server" as server #E3F2FD {
@@ -31,6 +32,8 @@ package "Go Server" as server #E3F2FD {
   [HTTP API\n(JSON REST)] as http_api #BBDEFB
   [Webhook Handler\n(POST /webhooks/cdp)] as webhook #BBDEFB
   [Event Indexer\n(background poller)] as indexer #BBDEFB
+  [Event Bus\n(in-process pub/sub)] as event_bus #BBDEFB
+  [SSE/WS Handlers\n(stream.go)] as stream_handler #BBDEFB
   [AP2 Handler\n(POST /api/v1/ap2/*)] as ap2 #BBDEFB
 
   package "Shared Logic" as shared #E1F5FE {
@@ -40,13 +43,17 @@ package "Go Server" as server #E3F2FD {
 
   mcp_server -down-> chain_client
   mcp_server -down-> storage
+  mcp_server -right-> event_bus : subscribe_events\n(polling)
   http_api -down-> chain_client
   http_api -down-> storage
   ap2 -down-> chain_client
   ap2 -down-> storage
   webhook -down-> storage
+  webhook -right-> event_bus : publish
   indexer -down-> chain_client
   indexer -down-> storage
+  indexer -right-> event_bus : publish
+  event_bus -right-> stream_handler : filtered\nevents
 }
 
 cloud "x402 Facilitator" as x402 #E8EAF6
@@ -63,6 +70,7 @@ cloud "CDP Webhooks" as cdp #FFF3E0
 
 mcp_client -down-> mcp_server : stdio / HTTP
 http_client -down-> http_api : JSON
+stream_client -down-> stream_handler : SSE / WebSocket
 
 chain_client -down-> factory : JSON-RPC
 chain_client -down-> escrow : JSON-RPC
@@ -74,9 +82,16 @@ cdp ..up..> factory : subscribes to\nfactory events
 
 note right of mcp_server
   Primary agent interface.
-  18 tools covering escrow
+  19 tools covering escrow
   lifecycle, bidding, AP2,
-  and reputation.
+  reputation, and events.
+end note
+
+note right of event_bus
+  In-process pub/sub.
+  L0 heartbeat + L1 state
+  transitions. Configurable
+  granularity (paper §4.5).
 end note
 
 note right of webhook

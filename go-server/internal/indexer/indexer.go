@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -75,6 +76,7 @@ type Indexer struct {
 	maxConsecFailures int
 	fatalCh           chan error
 	startBlock        uint64 // initial fromBlock when cursor is 0; overrides defaultLookback
+	bus               *events.EventBus
 }
 
 // Option configures optional Indexer parameters.
@@ -100,6 +102,14 @@ func WithPollInterval(d time.Duration) Option {
 func WithStartBlock(block uint64) Option {
 	return func(idx *Indexer) {
 		idx.startBlock = block
+	}
+}
+
+// WithEventBus attaches an event bus to the indexer so that processed on-chain
+// events are published for real-time streaming to connected clients.
+func WithEventBus(bus *events.EventBus) Option {
+	return func(idx *Indexer) {
+		idx.bus = bus
 	}
 }
 
@@ -137,6 +147,30 @@ func (idx *Indexer) FactoryAddress() common.Address {
 // ChainID returns the chain ID the indexer is configured for.
 func (idx *Indexer) ChainID() int64 {
 	return idx.chainID
+}
+
+// Bus returns the indexer's event bus, if one was configured.
+func (idx *Indexer) Bus() *events.EventBus {
+	return idx.bus
+}
+
+// publishEvent publishes a lifecycle event to the event bus if configured.
+func (idx *Indexer) publishEvent(onChainName string, escrowAddr string, lg types.Log) {
+	if idx.bus == nil {
+		return
+	}
+	streamName, ok := events.OnChainEventName[onChainName]
+	if !ok {
+		return
+	}
+	idx.bus.Publish(events.Event{
+		Name:      streamName,
+		Escrow:    escrowAddr,
+		Level:     events.L1,
+		Block:     lg.BlockNumber,
+		Timestamp: time.Now().UTC(),
+		ID:        fmt.Sprintf("%s-%d", lg.TxHash.Hex(), lg.Index),
+	})
 }
 
 // Err returns a channel that receives a fatal error when the indexer has failed
@@ -277,13 +311,17 @@ func (idx *Indexer) ProcessFactoryLog(lg types.Log) error {
 		return err
 	}
 
+	var handlerErr error
 	switch event.Name {
 	case "EscrowCreated":
-		return idx.handleEscrowCreated(lg)
+		handlerErr = idx.handleEscrowCreated(lg)
 	case "OutcomeRecorded":
-		return idx.handleOutcomeRecorded(lg)
+		handlerErr = idx.handleOutcomeRecorded(lg)
 	}
-	return nil
+	if handlerErr == nil {
+		idx.publishEvent(event.Name, lg.Address.Hex(), lg)
+	}
+	return handlerErr
 }
 
 func (idx *Indexer) handleEscrowCreated(lg types.Log) error {
@@ -472,26 +510,31 @@ func (idx *Indexer) ProcessEscrowLog(lg types.Log, dbEscrowID int64) error {
 	}
 
 	// Handle specific events
+	var handlerErr error
 	switch event.Name {
 	case "SubmissionMade":
-		return idx.handleSubmission(lg, dbEscrowID)
+		handlerErr = idx.handleSubmission(lg, dbEscrowID)
 	case "Disputed", "Rejected", "SilenceEscalated":
-		return idx.handleDispute(lg, dbEscrowID, event.Name)
+		handlerErr = idx.handleDispute(lg, dbEscrowID, event.Name)
 	case "DisputeResolved":
-		return idx.handleDisputeResolved(lg, dbEscrowID)
+		handlerErr = idx.handleDisputeResolved(lg, dbEscrowID)
 	case "MilestoneSubmitted":
-		return idx.handleMilestoneSubmission(lg, dbEscrowID)
+		handlerErr = idx.handleMilestoneSubmission(lg, dbEscrowID)
 	case "MilestoneDisputed", "MilestoneRejected", "MilestoneSilenceEscalated":
-		return idx.handleMilestoneDispute(lg, dbEscrowID, event.Name)
+		handlerErr = idx.handleMilestoneDispute(lg, dbEscrowID, event.Name)
 	case "MilestoneDisputeResolved":
-		return idx.handleMilestoneDisputeResolved(lg, dbEscrowID)
+		handlerErr = idx.handleMilestoneDisputeResolved(lg, dbEscrowID)
 	case "RemainingMilestonesAborted":
-		return idx.handleRemainingMilestonesAborted(lg, dbEscrowID)
+		handlerErr = idx.handleRemainingMilestonesAborted(lg, dbEscrowID)
 	case "BackupActivated":
-		return idx.handleBackupActivated(lg, dbEscrowID)
+		handlerErr = idx.handleBackupActivated(lg, dbEscrowID)
 	}
 
-	return nil
+	if handlerErr == nil {
+		idx.publishEvent(event.Name, lg.Address.Hex(), lg)
+	}
+
+	return handlerErr
 }
 
 func (idx *Indexer) handleSubmission(lg types.Log, dbEscrowID int64) error {
