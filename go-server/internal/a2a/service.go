@@ -180,19 +180,19 @@ func (s *Service) updateExistingTask(existing *storage.A2ATask, params TaskSendP
 		return nil, fmt.Errorf("task %s is in terminal state: %s", existing.A2ATaskID, existing.A2AStatus)
 	}
 
-	slog.Info("a2a task updated",
+	slog.Info("a2a task send idempotent",
 		"a2a_task_id", existing.A2ATaskID,
 		"status", existing.A2AStatus,
 	)
 
-	return buildTaskResponse(existing, "Task updated"), nil
+	return buildTaskResponse(existing, "Task already exists"), nil
 }
 
 // GetTaskStatus returns the current status of an A2A task.
 func (s *Service) GetTaskStatus(taskID string) (*Task, error) {
 	a2aTask, err := s.DB.GetA2ATaskByTaskID(taskID)
 	if err != nil {
-		return nil, fmt.Errorf("task not found: %w", err)
+		return nil, fmt.Errorf("get task %s: %w", taskID, err)
 	}
 
 	statusMsg := "Task status: " + a2aTask.A2AStatus
@@ -211,7 +211,7 @@ func (s *Service) GetTaskStatus(taskID string) (*Task, error) {
 func (s *Service) CancelTask(taskID string) (*Task, error) {
 	a2aTask, err := s.DB.GetA2ATaskByTaskID(taskID)
 	if err != nil {
-		return nil, fmt.Errorf("task not found: %w", err)
+		return nil, fmt.Errorf("get task %s: %w", taskID, err)
 	}
 
 	if a2aTask.A2AStatus == string(TaskStatusCompleted) ||

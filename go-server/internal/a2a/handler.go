@@ -105,7 +105,11 @@ func (h *Handler) handleTasksGet(w http.ResponseWriter, req JSONRPCRequest) {
 
 	task, err := h.svc.GetTaskStatus(params.ID)
 	if err != nil {
-		writeJSONRPCError(w, req.ID, ErrCodeTaskNotFound, err.Error())
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONRPCError(w, req.ID, ErrCodeTaskNotFound, err.Error())
+		} else {
+			writeJSONRPCError(w, req.ID, ErrCodeInternal, err.Error())
+		}
 		return
 	}
 
