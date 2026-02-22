@@ -1438,6 +1438,41 @@ func TestFreezeEscrow_OK(t *testing.T) {
 	}
 }
 
+func TestUnfreezeEscrow_OK(t *testing.T) {
+	env := setupWithEmergency(t)
+	ctx := context.Background()
+
+	task, err := env.db.CreateTask(ctx, "Test", "", "0x123")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
+		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xFactory",
+		EscrowAddress: "0xEscrow1", EscrowID: 1, Buyer: "0xBuyer",
+		Worker: "0xWorker", Verifier: "0xVerifier", Arbitrator: "0xArbitrator",
+		Amount: "1000000000000000000", Status: "funded", Frozen: true,
+		SubmissionDeadline: 1700000000, ReviewPeriodSeconds: 86400,
+		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
+
+	body := `{"escrow_id":1}`
+	rr := env.request(t, "POST", "/api/v1/emergency/unfreeze-escrow", body)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeJSON(t, rr)
+	if resp["tx_hash"] == nil || resp["tx_hash"] == "" {
+		t.Fatal("expected non-empty tx_hash")
+	}
+	if resp["escrow_id"].(float64) != 1 {
+		t.Fatalf("expected escrow_id 1, got %v", resp["escrow_id"])
+	}
+}
+
 func TestEmergencyResolve_OK(t *testing.T) {
 	env := setupWithEmergency(t)
 	ctx := context.Background()
