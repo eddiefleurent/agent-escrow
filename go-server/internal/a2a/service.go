@@ -1,7 +1,9 @@
 package a2a
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -109,11 +111,14 @@ func (s *Service) HandleTaskSend(params TaskSendParams) (*Task, error) {
 	}
 
 	existing, err := s.DB.GetA2ATaskByTaskID(taskID)
-	if err == nil && existing != nil {
-		return s.updateExistingTask(existing, params)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("lookup a2a task: %w", err)
+		}
+		return s.createNewTask(taskID, sessionID, params)
 	}
 
-	return s.createNewTask(taskID, sessionID, params)
+	return s.updateExistingTask(existing, params)
 }
 
 func (s *Service) createNewTask(taskID, sessionID string, params TaskSendParams) (*Task, error) {

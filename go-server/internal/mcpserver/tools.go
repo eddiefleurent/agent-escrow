@@ -208,10 +208,12 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Description: "Accept a bid on an RFQ; triggers on-chain escrow creation with bid parameters. Paper §6.1: bid acceptance formalizes into escrow.",
 	}, s.handleAcceptBid)
 
-	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "get_agent_card",
-		Description: "Get the A2A agent card JSON for this settlement agent. Returns capabilities, skills, and the A2A endpoint URL for agent discovery. Paper §6: A2A settlement adapter.",
-	}, s.handleGetAgentCard)
+	if s.cfg.A2AEnabled {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name:        "get_agent_card",
+			Description: "Get the A2A agent card JSON for this settlement agent. Returns capabilities, skills, and the A2A endpoint URL for agent discovery. Paper §6: A2A settlement adapter.",
+		}, s.handleGetAgentCard)
+	}
 }
 
 func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolRequest, args createEscrowArgs) (*mcp.CallToolResult, any, error) {

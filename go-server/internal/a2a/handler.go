@@ -1,8 +1,11 @@
 package a2a
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
+	"mime"
 	"net/http"
 )
 
@@ -26,7 +29,8 @@ func (h *Handler) ServeAgentCard(w http.ResponseWriter, r *http.Request) {
 
 // HandleJSONRPC handles POST /a2a, dispatching JSON-RPC 2.0 methods.
 func (h *Handler) HandleJSONRPC(w http.ResponseWriter, r *http.Request) {
-	if ct := r.Header.Get("Content-Type"); ct != "application/json" {
+	mediatype, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediatype != "application/json" {
 		writeJSONRPCError(w, nil, ErrCodeInvalidRequest, "Content-Type must be application/json")
 		return
 	}
@@ -128,7 +132,11 @@ func (h *Handler) handleTasksCancel(w http.ResponseWriter, req JSONRPCRequest) {
 
 	task, err := h.svc.CancelTask(params.ID)
 	if err != nil {
-		writeJSONRPCError(w, req.ID, ErrCodeInternal, err.Error())
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONRPCError(w, req.ID, ErrCodeTaskNotFound, err.Error())
+		} else {
+			writeJSONRPCError(w, req.ID, ErrCodeInternal, err.Error())
+		}
 		return
 	}
 
