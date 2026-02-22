@@ -499,12 +499,10 @@ The bidding protocol implements the paper's decentralized market mechanism (§4.
 
 **Flow:**
 1. Buyer broadcasts a **Task_RFQ** with task spec, budget range, deadline, and requirements
-2. Workers discover RFQs via x402 Bazaar or `list_rfqs` / `GET /api/v1/rfqs`
+2. Workers discover RFQs via `list_rfqs` / `GET /api/v1/rfqs`
 3. Workers submit **Bid_Objects** with proposed price, duration, and reputation bond
 4. Buyer evaluates bids (cost, reputation, capability) and accepts one
 5. Acceptance atomically creates an on-chain escrow, closes the RFQ, and rejects remaining bids
-
-**x402 Bazaar Integration:** The `GET /api/v1/rfqs` endpoint includes Bazaar discovery metadata (via `?discovery=true`), making open RFQs discoverable through the x402 facilitator's `/discovery/resources` endpoint. This is additive -- agents can also discover RFQs directly via the API or MCP tools.
 
 **Data model:** Two new tables (`rfqs`, `bids`) with status-based lifecycle management. RFQs have budget ranges enabling competitive bidding within buyer constraints. Both RFQs and bids have expiry timestamps checked at read time (no background cleanup needed).
 
@@ -547,7 +545,7 @@ The bidding protocol implements the paper's decentralized market mechanism (§4.
 | POST | `/api/v1/escrows/{id}/activate-backup` | Activate backup worker (buyer only) |
 | GET | `/api/v1/reputation/{address}` | Get reputation (query: role) |
 | POST | `/api/v1/rfqs` | Create RFQ (Task_RFQ broadcast) |
-| GET | `/api/v1/rfqs` | List RFQs (query: status, buyer; `?discovery=true` for Bazaar metadata) |
+| GET | `/api/v1/rfqs` | List RFQs (query: status, buyer) |
 | GET | `/api/v1/rfqs/{id}` | Get RFQ details with bids |
 | POST | `/api/v1/rfqs/{id}/cancel` | Cancel an open RFQ (buyer only) |
 | POST | `/api/v1/rfqs/{id}/bids` | Place bid on RFQ |

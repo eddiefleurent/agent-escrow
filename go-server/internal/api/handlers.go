@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coinbase/x402/go/extensions/bazaar"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/bidding"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
@@ -955,46 +954,6 @@ func (h *Handlers) CreateRFQ(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, rfq)
 }
 
-// rfqBazaarDiscovery is the x402 Bazaar discovery extension for the RFQ listing
-// endpoint, enabling agents to discover open RFQs via the x402 facilitator's
-// /discovery/resources endpoint (paper §6.1).
-var rfqBazaarDiscovery = func() *bazaar.DiscoveryExtension {
-	ext, err := bazaar.DeclareDiscoveryExtension(
-		bazaar.MethodGET,
-		map[string]interface{}{
-			"status": "open",
-		},
-		bazaar.JSONSchema{
-			"properties": map[string]interface{}{
-				"status": map[string]interface{}{
-					"type":        "string",
-					"enum":        []string{"open", "closed", "cancelled", "expired"},
-					"description": "Filter RFQs by status",
-				},
-				"buyer": map[string]interface{}{
-					"type":        "string",
-					"description": "Filter RFQs by buyer address",
-				},
-			},
-		},
-		"",
-		&bazaar.OutputConfig{
-			Example: map[string]interface{}{
-				"rfqs": []map[string]interface{}{
-					{
-						"id": 1, "title": "Build a widget", "status": "open",
-						"budget_min": "100", "budget_max": "500",
-					},
-				},
-			},
-		},
-	)
-	if err != nil {
-		return nil
-	}
-	return &ext
-}()
-
 func (h *Handlers) ListRFQs(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	buyer := r.URL.Query().Get("buyer")
@@ -1002,16 +961,6 @@ func (h *Handlers) ListRFQs(w http.ResponseWriter, r *http.Request) {
 	rfqs, err := h.db.ListRFQs(status, buyer)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
-	if r.URL.Query().Get("discovery") == "true" && rfqBazaarDiscovery != nil {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"rfqs": rfqs,
-			"extensions": map[string]any{
-				bazaar.BAZAAR: rfqBazaarDiscovery,
-			},
-		})
 		return
 	}
 
@@ -1067,6 +1016,11 @@ func (h *Handlers) CancelRFQ(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.db.RejectPendingBids(id, 0); err != nil {
 		slog.Error("failed to reject pending bids on cancel", "rfq_id", id, "error", err)
+		if rollbackErr := h.db.UpdateRFQStatus(id, "open"); rollbackErr != nil {
+			slog.Error("failed to rollback rfq status after RejectPendingBids failure", "rfq_id", id, "error", rollbackErr)
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("cancel failed: %v", err)})
+		return
 	}
 
 	rfq, _ = h.db.GetRFQ(id)

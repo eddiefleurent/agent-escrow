@@ -1183,7 +1183,7 @@ func TestAcceptBid_Success(t *testing.T) {
 		t.Fatalf("setup bid: %v", err)
 	}
 
-	body := fmt.Sprintf(`{"bid_id": %d}`, bid.ID)
+	body := fmt.Sprintf(`{"bid_id": %d, "caller": "0x1000000000000000000000000000000000000001"}`, bid.ID)
 	rr := env.request(t, "POST", fmt.Sprintf("/api/v1/rfqs/%d/accept", rfq.ID), body)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
@@ -1267,7 +1267,7 @@ func TestAcceptBid_RejectsOtherBids(t *testing.T) {
 		t.Fatalf("setup bid 2: %v", err)
 	}
 
-	body := fmt.Sprintf(`{"bid_id": %d}`, bid1.ID)
+	body := fmt.Sprintf(`{"bid_id": %d, "caller": "0x1000000000000000000000000000000000000001"}`, bid1.ID)
 	rr := env.request(t, "POST", fmt.Sprintf("/api/v1/rfqs/%d/accept", rfq.ID), body)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())

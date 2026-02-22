@@ -32,7 +32,6 @@ title Task_RFQ + Bid_Object Bidding Protocol\n(Paper §6.1: Task_RFQ broadcast +
 actor "Buyer Agent" as Buyer
 participant "Go Server\n(MCP / HTTP)" as Server
 database "SQLite" as DB
-participant "x402 Bazaar" as Bazaar
 actor "Worker Agent A" as WorkerA
 actor "Worker Agent B" as WorkerB
 participant "Base L2\n(Contracts)" as Chain
@@ -43,7 +42,7 @@ Buyer -> Server : create_rfq / POST /api/v1/rfqs\n(title, budget_min/max, deadli
 Server -> DB : INSERT rfq (status=open)
 Server --> Buyer : rfq_id, status=open
 
-note over Bazaar : Workers discover RFQs via\nBazaar /discovery/resources\nor GET /api/v1/rfqs?status=open
+note over Server : Workers discover RFQs via\nlist_rfqs / GET /api/v1/rfqs?status=open
 
 == Bid Submission ==
 
