@@ -49,6 +49,10 @@ linters:
         - G104
         # Structured slog logging with separate key/value fields is used by default.
         - G706
+        # Config struct fields (PrivateKey, etc.) loaded from env, not hardcoded.
+        - G117
+        # x402 client uses baseURL from config (X402FacilitatorURL), not user input.
+        - G704
     govet:
       enable-all: true
       disable:
