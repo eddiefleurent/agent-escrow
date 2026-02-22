@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 )
 
+var ErrInvalidParams = errors.New("invalid params")
+
 // Service encapsulates A2A settlement adapter business logic, mapping A2A task
 // lifecycle to escrow operations. Follows the same shared-logic pattern as bidding.Service.
 type Service struct {
@@ -128,10 +130,10 @@ func (s *Service) createNewTask(taskID, sessionID string, params TaskSendParams)
 
 	if raw, ok := params.Metadata["verification_policy"]; ok {
 		if err := json.Unmarshal([]byte(raw), &vp); err != nil {
-			return nil, fmt.Errorf("invalid verification_policy: %w", err)
+			return nil, fmt.Errorf("%w: invalid verification_policy: %v", ErrInvalidParams, err)
 		}
 		if err := validateVerificationPolicy(vp); err != nil {
-			return nil, fmt.Errorf("verification_policy validation: %w", err)
+			return nil, fmt.Errorf("%w: verification_policy validation: %v", ErrInvalidParams, err)
 		}
 		escrowTrigger = vp.EscrowTrigger
 		vpJSON = raw
@@ -255,6 +257,23 @@ func validateVerificationPolicy(vp VerificationPolicy) error {
 }
 
 func buildTaskResponse(a2aTask *storage.A2ATask, message string) *Task {
+	metadata := make(map[string]string)
+	if a2aTask.MetadataJSON != "" {
+		if err := json.Unmarshal([]byte(a2aTask.MetadataJSON), &metadata); err != nil {
+			slog.Warn("failed to decode task metadata, using derived metadata only",
+				"a2a_task_id", a2aTask.A2ATaskID,
+				"error", err,
+			)
+			metadata = make(map[string]string)
+		}
+	}
+	if metadata == nil {
+		metadata = make(map[string]string)
+	}
+
+	metadata["escrow_trigger"] = fmt.Sprintf("%t", a2aTask.EscrowTrigger)
+	metadata["verification_policy"] = a2aTask.VerificationPolicyJSON
+
 	return &Task{
 		ID:        a2aTask.A2ATaskID,
 		SessionID: a2aTask.SessionID,
@@ -267,9 +286,6 @@ func buildTaskResponse(a2aTask *storage.A2ATask, message string) *Task {
 				},
 			},
 		},
-		Metadata: map[string]string{
-			"escrow_trigger":      fmt.Sprintf("%t", a2aTask.EscrowTrigger),
-			"verification_policy": a2aTask.VerificationPolicyJSON,
-		},
+		Metadata: metadata,
 	}
 }

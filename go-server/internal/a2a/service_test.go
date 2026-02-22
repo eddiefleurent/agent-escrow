@@ -124,6 +124,42 @@ func TestHandleTaskSend_WithEscrowTrigger(t *testing.T) {
 	}
 }
 
+func TestHandleTaskSend_PreservesCallerMetadata(t *testing.T) {
+	svc := setupService(t)
+
+	task, err := svc.HandleTaskSend(TaskSendParams{
+		Message: Message{
+			Role:  "user",
+			Parts: []Part{{Type: "text", Text: "preserve metadata"}},
+		},
+		Metadata: map[string]string{
+			"delegator_agent": "agent-a",
+			"custom_key":      "custom-value",
+			"verification_policy": `{
+				"mode": "manual",
+				"artifacts": [{"type": "manual_review"}],
+				"escrow_trigger": true
+			}`,
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleTaskSend: %v", err)
+	}
+
+	if task.Metadata["custom_key"] != "custom-value" {
+		t.Fatalf("expected custom metadata preserved, got %q", task.Metadata["custom_key"])
+	}
+	if task.Metadata["delegator_agent"] != "agent-a" {
+		t.Fatalf("expected delegator_agent preserved, got %q", task.Metadata["delegator_agent"])
+	}
+	if task.Metadata["escrow_trigger"] != "true" {
+		t.Fatalf("expected derived escrow_trigger true, got %q", task.Metadata["escrow_trigger"])
+	}
+	if task.Metadata["verification_policy"] == "" {
+		t.Fatal("expected derived verification_policy to be set")
+	}
+}
+
 func TestHandleTaskSend_WithExplicitID(t *testing.T) {
 	svc := setupService(t)
 

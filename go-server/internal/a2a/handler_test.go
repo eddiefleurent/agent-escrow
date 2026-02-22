@@ -400,3 +400,39 @@ func TestHandleJSONRPC_WithVerificationPolicy(t *testing.T) {
 		t.Fatalf("unexpected error: %s", resp.Error.Message)
 	}
 }
+
+func TestHandleJSONRPC_TasksSendInvalidVerificationPolicy(t *testing.T) {
+	h, _ := setupHandler(t)
+
+	body := `{
+		"jsonrpc": "2.0",
+		"id": 10,
+		"method": "tasks/send",
+		"params": {
+			"message": {
+				"role": "user",
+				"parts": [{"type": "text", "text": "Escrowed task"}]
+			},
+			"metadata": {
+				"verification_policy": "{\"mode\":\"invalid\",\"escrow_trigger\":true}"
+			}
+		}
+	}`
+
+	req := httptest.NewRequest("POST", "/a2a", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.HandleJSONRPC(rr, req)
+
+	var resp JSONRPCResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if resp.Error == nil {
+		t.Fatal("expected validation error for invalid verification_policy")
+	}
+	if resp.Error.Code != ErrCodeInvalidParams {
+		t.Fatalf("expected error code %d, got %d", ErrCodeInvalidParams, resp.Error.Code)
+	}
+}

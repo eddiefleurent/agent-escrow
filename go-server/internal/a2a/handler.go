@@ -78,7 +78,11 @@ func (h *Handler) handleTasksSend(w http.ResponseWriter, req JSONRPCRequest) {
 
 	task, err := h.svc.HandleTaskSend(params)
 	if err != nil {
-		writeJSONRPCError(w, req.ID, ErrCodeInternal, err.Error())
+		if errors.Is(err, ErrInvalidParams) {
+			writeJSONRPCError(w, req.ID, ErrCodeInvalidParams, err.Error())
+		} else {
+			writeJSONRPCError(w, req.ID, ErrCodeInternal, err.Error())
+		}
 		return
 	}
 
