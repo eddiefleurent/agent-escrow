@@ -223,7 +223,11 @@ All divisions floor toward zero (Solidity default). Remainders stay with the buy
 
 These must hold for every escrow at all times:
 
-1. **Balance conservation**: escrow balance is always `0` at terminal completion; otherwise it equals remaining undistributed escrow principal plus any still-held worker stake. In single-shot escrows this is `amount` (or `amount + workerStake` when staked). In milestone escrows, approved/resolved partial payouts reduce the remaining principal before terminal state.
+1. **Balance conservation**:
+   - At terminal completion, escrow balance is always `0`.
+   - Before terminal completion, escrow balance equals remaining undistributed escrow principal plus any still-held worker stake.
+   - For single-shot escrows, this is `amount` (or `amount + workerStake` when staked).
+   - For milestone escrows, each approved/resolved partial payout reduces the remaining principal before terminal completion.
 2. **Terminal exclusivity**: Settled, Refunded, and Cancelled are mutually exclusive. No function can transition from a terminal state to a non-terminal state.
 3. **Fund conservation**: total funds distributed never exceeds `amount + workerStake`.
 4. **Fee bound**: protocol fee never exceeds worker gross award.
@@ -246,7 +250,7 @@ The factory owner can freeze or unfreeze individual escrows via `freezeEscrow(es
 
 ### Emergency Resolution
 
-The factory owner can force-settle a frozen escrow via `emergencyResolve(escrowId, workerAwardBps)`. For non-terminal states other than `Created`, this uses dispute-equivalent proportional settlement math. `Created` is a special case: it transitions directly to `Cancelled` (no settlement transfer) because no funds have been deposited yet. The escrow must be frozen first; otherwise the call reverts with `EscrowNotFrozen`.
+The factory owner can force-settle a frozen escrow via `emergencyResolve(escrowId, workerAwardBps)`. If the escrow is in any non-terminal state other than `Created`, settlement uses the same dispute-equivalent proportional math. `Created` is the only special case: it transitions directly to `Cancelled` (no settlement transfer), since no funds have been deposited yet. The escrow must already be frozen; otherwise `emergencyResolve` reverts with `EscrowNotFrozen`.
 
 ### Events
 
