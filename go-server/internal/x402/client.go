@@ -39,7 +39,7 @@ func (c *Client) Verify(ctx context.Context, payload PaymentPayload) (*VerifyRes
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) // #nosec G704 -- baseURL is server configuration, not user input.
 	if err != nil {
 		return nil, fmt.Errorf("verify request: %w", err)
 	}
@@ -74,7 +74,7 @@ func (c *Client) Settle(ctx context.Context, payload PaymentPayload) (*SettleRes
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) // #nosec G704 -- baseURL is server configuration, not user input.
 	if err != nil {
 		return nil, fmt.Errorf("settle request: %w", err)
 	}

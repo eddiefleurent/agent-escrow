@@ -12,7 +12,8 @@ import (
 )
 
 type Config struct {
-	RPCURL         string
+	RPCURL string
+	// #nosec G117 -- Field name matches env var PRIVATE_KEY; value is loaded at runtime and validated in Validate().
 	PrivateKey     string
 	ChainID        int64
 	FactoryAddress string
