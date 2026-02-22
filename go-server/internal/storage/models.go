@@ -128,6 +128,22 @@ type Bid struct {
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
+// A2ATask represents an A2A protocol task linked to an escrow (paper §6: A2A Task object extension).
+type A2ATask struct {
+	ID                     int64
+	A2ATaskID              string
+	SessionID              string
+	EscrowID               *int64
+	DelegatorAgent         string
+	DelegateeAgent         string
+	VerificationPolicyJSON string
+	EscrowTrigger          bool
+	A2AStatus              string // submitted, working, input-required, completed, failed, canceled
+	MetadataJSON           string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+}
+
 type ChainLog struct {
 	ID              int64
 	TxHash          string

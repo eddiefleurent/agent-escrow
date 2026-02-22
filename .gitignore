@@ -17,3 +17,4 @@ node_modules/
 .venv/
 .python-version
 .claude/settings.local.json
+.codex-runs/

@@ -960,6 +960,129 @@ func boolToInt(b bool) int {
 	return 0
 }
 
+// A2A task queries
+
+const a2aTaskColumns = `id, a2a_task_id, session_id, escrow_id, delegator_agent, delegatee_agent,
+	verification_policy_json, escrow_trigger, a2a_status, metadata_json, created_at, updated_at`
+
+func scanA2ATask(scanner interface{ Scan(...any) error }) (*A2ATask, error) {
+	t := &A2ATask{}
+	var createdAt, updatedAt string
+	var escrowID sql.NullInt64
+	var escrowTriggerInt int
+	err := scanner.Scan(&t.ID, &t.A2ATaskID, &t.SessionID, &escrowID, &t.DelegatorAgent, &t.DelegateeAgent,
+		&t.VerificationPolicyJSON, &escrowTriggerInt, &t.A2AStatus, &t.MetadataJSON, &createdAt, &updatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if escrowID.Valid {
+		v := escrowID.Int64
+		t.EscrowID = &v
+	}
+	t.EscrowTrigger = escrowTriggerInt != 0
+	t.CreatedAt, err = parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse a2a_task created_at: %w", err)
+	}
+	t.UpdatedAt, err = parseSQLiteTime(updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse a2a_task updated_at: %w", err)
+	}
+	return t, nil
+}
+
+func (d *DB) CreateA2ATask(t *A2ATask) (*A2ATask, error) {
+	res, err := d.db.Exec(
+		`INSERT INTO a2a_tasks (a2a_task_id, session_id, escrow_id, delegator_agent, delegatee_agent,
+			verification_policy_json, escrow_trigger, a2a_status, metadata_json)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.A2ATaskID, t.SessionID, t.EscrowID, t.DelegatorAgent, t.DelegateeAgent,
+		t.VerificationPolicyJSON, boolToInt(t.EscrowTrigger), t.A2AStatus, t.MetadataJSON,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert a2a_task: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("last insert id: %w", err)
+	}
+	return d.GetA2ATask(id)
+}
+
+func (d *DB) GetA2ATask(id int64) (*A2ATask, error) {
+	row := d.db.QueryRow(`SELECT `+a2aTaskColumns+` FROM a2a_tasks WHERE id = ?`, id)
+	t, err := scanA2ATask(row)
+	if err != nil {
+		return nil, fmt.Errorf("get a2a_task: %w", err)
+	}
+	return t, nil
+}
+
+func (d *DB) GetA2ATaskByTaskID(a2aTaskID string) (*A2ATask, error) {
+	row := d.db.QueryRow(`SELECT `+a2aTaskColumns+` FROM a2a_tasks WHERE a2a_task_id = ?`, a2aTaskID)
+	t, err := scanA2ATask(row)
+	if err != nil {
+		return nil, fmt.Errorf("get a2a_task by task_id: %w", err)
+	}
+	return t, nil
+}
+
+func (d *DB) UpdateA2ATaskStatus(id int64, status string) error {
+	res, err := d.db.Exec(
+		`UPDATE a2a_tasks SET a2a_status = ?, updated_at = datetime('now') WHERE id = ?`,
+		status, id,
+	)
+	if err != nil {
+		return fmt.Errorf("UpdateA2ATaskStatus: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("UpdateA2ATaskStatus rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("UpdateA2ATaskStatus id=%d: %w", id, sql.ErrNoRows)
+	}
+	return nil
+}
+
+func (d *DB) UpdateA2ATaskEscrow(id int64, escrowID int64) error {
+	res, err := d.db.Exec(
+		`UPDATE a2a_tasks SET escrow_id = ?, updated_at = datetime('now') WHERE id = ?`,
+		escrowID, id,
+	)
+	if err != nil {
+		return fmt.Errorf("UpdateA2ATaskEscrow: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("UpdateA2ATaskEscrow rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("UpdateA2ATaskEscrow id=%d: %w", id, sql.ErrNoRows)
+	}
+	return nil
+}
+
+func (d *DB) ListA2ATasksBySession(sessionID string) ([]*A2ATask, error) {
+	rows, err := d.db.Query(
+		`SELECT `+a2aTaskColumns+` FROM a2a_tasks WHERE session_id = ? ORDER BY id DESC`, sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list a2a_tasks by session: %w", err)
+	}
+	defer rows.Close()
+
+	var tasks []*A2ATask
+	for rows.Next() {
+		t, err := scanA2ATask(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan a2a_task: %w", err)
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, rows.Err()
+}
+
 // parseSQLiteTime handles the two timestamp formats that SQLite / modernc.org/sqlite
 // can produce: datetime('now') returns "2006-01-02 15:04:05" while
 // CURRENT_TIMESTAMP can return "2006-01-02T15:04:05Z" (ISO 8601).
