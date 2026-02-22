@@ -47,7 +47,7 @@ The foundation: specification, contracts, off-chain server, and production harde
 
 - **Specification**: state machine, role semantics, threat model, invariant checklist, paper traceability
 - **Contracts**: `TaskEscrowFactory` + `TaskEscrow` with the full 9-state machine, immutable roles, protocol fee snapshotting, arbitrator timeout; Foundry unit, edge case, fuzz, and invariant test suites
-- **Off-chain server**: single Go binary -- MCP server + HTTP JSON API + SQLite event indexer; eight MCP tools, nine HTTP endpoints, go-ethereum chain client with ABI bindings
+- **Off-chain server**: single Go binary -- MCP server + HTTP JSON API + SQLite event indexer; initial V1 release exposed eight MCP tools and nine HTTP endpoints, with V2 expanding this surface (bidding, AP2, events, A2A, emergency); go-ethereum chain client with ABI bindings
 - **Hardening**: receipt parsing, `ChainClient` interface + `MockClient`, health check with RPC verification, structured logging, input validation, CORS, route-aware timeouts, config validation, indexer error propagation, contract reentrancy optimization, role distinctness, two-step ownership transfer
 
 ### V2 -- Market Primitives (Current)
@@ -144,7 +144,7 @@ How each version maps to the five pillars from ["Intelligent AI Delegation"](htt
 
 **V1**: Role-gated actions enforce least privilege per escrow. Reentrancy guard. Factory pause for emergencies. Arbitrator timeout prevents permanent fund lock.
 
-**V2**: DCT integration -- MCP tool permissions scoped to active escrow lifecycle, invalidated on settlement/refund. Emergency response protocol with credential revocation propagation. AP2 stake-on-bid for Sybil resistance.
+**V2**: Emergency response protocol with credential revocation propagation. AP2 stake-on-bid for Sybil resistance.
 
 **V3**: Tiered service levels (low-assurance vs high-assurance). Restriction chaining across delegation chains via DCT attenuation. DID-based identity layer.
 
@@ -166,7 +166,7 @@ How each version maps to the five pillars from ["Intelligent AI Delegation"](htt
 
 | Protocol | Gap (per paper) | Integration | Version |
 |---|---|---|---|
-| **MCP** | No liability, reputation, trust, or conditional settlement | MCP server with 8 escrow tools; future: monitoring stream (L0-L3), DCT-scoped tool permissions | V1 (complete), V2-V3 |
+| **MCP** | No liability, reputation, trust, or conditional settlement | MCP server with escrow lifecycle tools, plus V2 extensions for bidding, AP2 funding, event subscription, A2A card discovery, and emergency controls; future: DCT-scoped tool permissions | V1 (complete), V2-V3 |
 | **x402** | Stateless payment; no conditionality, dispute resolution, or verification | Gasless escrow funding rail (EIP-3009 via facilitator); AP2 mandate funding mechanism; complexity floor calibration | V2 |
 | **x402 Bazaar** | Discovery only; no bidding, negotiation, or capability matching | Service discovery substrate for Task_RFQ; credential metadata via Bazaar extensions | V2-V3 |
 | **A2A** | No verification slots, no escrow, assumes trust | Settlement adapter agent card; `verification_policy` + `escrow_trigger` on A2A Task objects; Bazaar-discoverable | V2 |
