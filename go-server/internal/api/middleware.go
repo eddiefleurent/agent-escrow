@@ -45,6 +45,7 @@ func recoveryMiddleware(next http.Handler) http.Handler {
 				slog.Error("panic recovered", "error", err, "method", r.Method, "path", r.URL.Path)
 				if !rw.written {
 					http.Error(rw, "internal server error", http.StatusInternalServerError)
+					return
 				}
 			}
 		}()

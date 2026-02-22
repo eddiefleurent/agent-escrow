@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/big"
 	"strings"
 	"time"
@@ -267,7 +268,10 @@ func (idx *Indexer) RunOnce(ctx context.Context) error {
 		}
 	}
 
-	// Update cursor
+	// Update cursor (block numbers fit in int64 for foreseeable chain heights)
+	if currentBlock > math.MaxInt64 {
+		return fmt.Errorf("block number %d exceeds int64 max", currentBlock)
+	}
 	if err := idx.db.SetCursor(ctx, idx.chainID, cursorKey, int64(currentBlock)); err != nil {
 		return fmt.Errorf("set cursor: %w", err)
 	}

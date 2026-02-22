@@ -24,10 +24,16 @@ func main() {
 		Level: slog.LevelInfo,
 	})))
 
+	if err := run(); err != nil {
+		slog.Error("startup failed", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	cfg, err := config.Load()
 	if err != nil {
-		slog.Error("failed to load config", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	// Load() already runs Validate() and rejects fatal errors. This second call
@@ -40,8 +46,7 @@ func main() {
 
 	db, err := storage.Open(cfg.DatabaseURL)
 	if err != nil {
-		slog.Error("failed to open storage", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("open storage: %w", err)
 	}
 	defer db.Close()
 
@@ -49,8 +54,7 @@ func main() {
 		chain.WithLogChunkSize(cfg.LogChunkSize),
 	)
 	if err != nil {
-		slog.Error("failed to create chain client", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("create chain client: %w", err)
 	}
 
 	// Event bus for real-time event streaming (paper §4.5: configurable granularity L0-L3).
@@ -128,4 +132,5 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("http shutdown error", "error", err)
 	}
+	return nil
 }
