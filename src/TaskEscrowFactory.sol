@@ -15,6 +15,8 @@ contract TaskEscrowFactory {
     error NoPendingTransfer();
     error NotRegisteredEscrow();
     error InvalidOutcome();
+    error FrozenAddress();
+    error EscrowNotFrozen();
 
     event EscrowCreated(
         uint256 indexed escrowId,
@@ -35,6 +37,11 @@ contract TaskEscrowFactory {
     event FactoryPaused();
     event FactoryUnpaused();
     event OutcomeRecorded(uint256 indexed escrowId, address indexed participant, string role, string outcome);
+    event AddressFrozen(address indexed target);
+    event AddressUnfrozen(address indexed target);
+    event EscrowFrozen(uint256 indexed escrowId);
+    event EscrowUnfrozen(uint256 indexed escrowId);
+    event EmergencyResolved(uint256 indexed escrowId, uint16 workerAwardBps);
 
     // Outcome enum values passed by escrow contracts via recordOutcome().
     uint8 public constant OUTCOME_COMPLETED = 1;
@@ -62,6 +69,7 @@ contract TaskEscrowFactory {
     mapping(address => uint256) internal escrowToId;
     mapping(uint256 => address) internal escrowBuyer;
     mapping(uint256 => address) internal escrowWorker;
+    mapping(address => bool) public frozenAddresses;
 
     constructor(uint16 _protocolFeeBps, address _treasury, address _owner) {
         if (_protocolFeeBps > 10_000) revert InvalidFeeBps();
@@ -109,6 +117,10 @@ contract TaskEscrowFactory {
         if (p.amount == 0) revert InvalidAmount();
         if (complexityFloor > 0 && p.amount < complexityFloor) revert BelowComplexityFloor();
         if (p.submissionDeadline <= block.timestamp) revert InvalidDeadline();
+        if (
+            frozenAddresses[p.buyer] || frozenAddresses[p.worker] || frozenAddresses[p.verifier]
+                || frozenAddresses[p.arbitrator]
+        ) revert FrozenAddress();
 
         TaskEscrow.CreateMilestoneParams[] memory escrowMilestones =
             new TaskEscrow.CreateMilestoneParams[](p.milestones.length);
@@ -234,6 +246,42 @@ contract TaskEscrowFactory {
             workerReputation[workerAddr].failed++;
             emit OutcomeRecorded(escrowId, workerAddr, "worker", "failed");
         }
+    }
+
+    // ── Emergency response protocol (paper §4.9) ──
+
+    function freezeAddress(address target) external onlyOwner {
+        if (target == address(0)) revert InvalidAddress();
+        frozenAddresses[target] = true;
+        emit AddressFrozen(target);
+    }
+
+    function unfreezeAddress(address target) external onlyOwner {
+        if (target == address(0)) revert InvalidAddress();
+        frozenAddresses[target] = false;
+        emit AddressUnfrozen(target);
+    }
+
+    function freezeEscrow(uint256 escrowId) external onlyOwner {
+        address escrow = escrowById[escrowId];
+        if (escrow == address(0)) revert InvalidAddress();
+        TaskEscrow(escrow).setFrozen(true);
+        emit EscrowFrozen(escrowId);
+    }
+
+    function unfreezeEscrow(uint256 escrowId) external onlyOwner {
+        address escrow = escrowById[escrowId];
+        if (escrow == address(0)) revert InvalidAddress();
+        TaskEscrow(escrow).setFrozen(false);
+        emit EscrowUnfrozen(escrowId);
+    }
+
+    function emergencyResolve(uint256 escrowId, uint16 workerAwardBps) external onlyOwner {
+        address escrow = escrowById[escrowId];
+        if (escrow == address(0)) revert InvalidAddress();
+        if (!TaskEscrow(escrow).frozen()) revert EscrowNotFrozen();
+        TaskEscrow(escrow).emergencyResolve(workerAwardBps);
+        emit EmergencyResolved(escrowId, workerAwardBps);
     }
 
     function getWorkerReputation(address addr)

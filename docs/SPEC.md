@@ -34,6 +34,7 @@ Implements ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) (Toma
 | Partial compensation | §6.1 | Per-milestone payouts enable compensation proportional to verified completion |
 | Backup agent re-allocation | §4.4 | Pre-designated fallback worker activated by buyer on primary default; deadline extension and stake forfeiture |
 | Privilege attenuation | §4.7 | Role-gated actions enforce least privilege per escrow |
+| Emergency response | §4.9 | Credential revocation (freeze addresses), contract freeze, emergency resolve |
 
 ### Explicitly Deferred
 
@@ -231,7 +232,32 @@ These must hold for every escrow at all times:
 7. **Milestone ordering**: milestones are processed sequentially; `milestoneIndex` must equal `currentMilestone`.
 8. **Milestone fund conservation**: sum of all milestone payouts + refunds + fees + remaining stake = `amount + workerStake`.
 
-## 7) Reputation Recording
+## 7) Emergency Response Protocol (Paper §4.9)
+
+The factory owner can respond to compromised credentials or malicious behavior by freezing participation and, when necessary, force-settling escrows. This implements the paper's emergency response provisions (§4.9).
+
+### Credential Revocation
+
+The factory owner can freeze or unfreeze individual addresses via `freezeAddress(target)` / `unfreezeAddress(target)`. Frozen addresses cannot be used as buyer, worker, verifier, or arbitrator in new escrow creation; `createEscrow` checks the `frozenAddresses` mapping and reverts if any role is frozen.
+
+### Contract Freeze
+
+The factory owner can freeze or unfreeze individual escrows via `freezeEscrow(escrowId)` / `unfreezeEscrow(escrowId)`. A frozen escrow blocks all participant-callable state-changing functions (fund, submit, approve, dispute, resolve, cancel, claim, deposit stake, activate backup). The `whenNotFrozen` modifier on TaskEscrow enforces this.
+
+### Emergency Resolution
+
+The factory owner can force-settle a frozen escrow via `emergencyResolve(escrowId, workerAwardBps)`. This performs the same proportional settlement as dispute resolution but from any non-terminal state. The escrow must be frozen first; otherwise the call reverts with `EscrowNotFrozen`.
+
+### Events
+
+- Factory: `AddressFrozen`, `AddressUnfrozen`, `EscrowFrozen`, `EscrowUnfrozen`
+- Escrow: `EmergencyFrozen`, `EmergencyUnfrozen`, `EmergencyResolved`
+
+### Invariant
+
+Emergency resolve preserves the same settlement math as normal dispute resolution: proportional split of payment and stake based on `workerAwardBps`, with fee and remainder handling identical to `resolveDispute`.
+
+## 8) Reputation Recording
 
 The factory records per-address outcome counters on-chain, implementing the paper's immutable ledger approach for reputation (§4.6, Table 3). This provides a tamper-proof, auditable record of task outcomes that other contracts and protocols can read without trusting the off-chain server.
 
@@ -261,7 +287,7 @@ Only addresses registered via `createEscrow` can call `recordOutcome`. The facto
 
 V2 records raw outcome counts only. The paper warns that naive implementations are susceptible to gaming (e.g., inflating reputation by only accepting simple, low-risk tasks). Weighted scoring, anti-gaming measures, and behavioral metrics are deferred to V3.
 
-## 8) Economic Parameters
+## 9) Economic Parameters
 
 Global (factory-level):
 - `protocolFeeBps` (0-10000) -- snapshotted at escrow creation to prevent governance race conditions mid-task.
@@ -280,7 +306,7 @@ Default values: review = 86,400s (24h), dispute = 172,800s (48h).
 
 Rationale (paper §4.3, §4.4): 24h/48h windows balance oversight with capital efficiency. Explicit reject avoids passive acceptance under ambiguity (criticality and accountability). Silence-escalation prevents indefinite lock under asymmetric power/inattention (monitoring and authority gradients).
 
-## 9) Edge Cases
+## 10) Edge Cases
 
 - **Late submission**: reverts if `block.timestamp > submissionDeadline`.
 - **Approval/dispute race**: first confirmed transition wins; subsequent calls revert by status guard.
@@ -291,7 +317,7 @@ Rationale (paper §4.3, §4.4): 24h/48h windows balance oversight with capital e
 - **Below complexity floor**: `createEscrow` reverts with `BelowComplexityFloor()` if `complexityFloor > 0` and `p.amount < complexityFloor`. The check applies to the total escrow amount, not individual milestone amounts. A floor of `0` disables the check entirely.
 - **Abort eligibility**: `abortRemainingMilestones()` requires the current milestone to be in a terminal failure state (Resolved or Cancelled). Cannot abort while a milestone is actively in progress with time remaining.
 
-## 10) Security Model
+## 11) Security Model
 
 - `nonReentrant` on payable state-changing functions that transfer ETH.
 - Checks-effects-interactions ordering throughout.

@@ -79,13 +79,13 @@ func createEscrowOn(ctx context.Context, q dbExecer, e *Escrow) (*Escrow, error)
 		activeWorker = e.Worker
 	}
 	res, err := q.ExecContext(ctx,
-		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.TaskID, e.ChainID, e.FactoryAddress, e.EscrowAddress, e.EscrowID,
 		e.Buyer, e.Worker, e.Verifier, e.Arbitrator, e.Amount, e.WorkerStake, e.Token, e.Status,
 		e.SubmissionDeadline, e.ReviewPeriodSeconds, e.DisputePeriodSeconds, e.ArbitratorTimeoutSeconds,
 		msCount, e.CurrentMilestone,
-		e.BackupWorker, e.BackupDeadlineExtension, activeWorker, boolToInt(e.BackupActivated),
+		e.BackupWorker, e.BackupDeadlineExtension, activeWorker, boolToInt(e.BackupActivated), boolToInt(e.Frozen),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert escrow: %w", err)
@@ -110,22 +110,23 @@ func (d *DB) CreateEscrowTx(ctx context.Context, tx *sql.Tx, e *Escrow) (*Escrow
 	return createEscrowOn(ctx, tx, e)
 }
 
-const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, created_at, updated_at`
+const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, created_at, updated_at`
 
 func scanEscrow(scanner interface{ Scan(...any) error }) (*Escrow, error) {
 	e := &Escrow{}
 	var createdAt, updatedAt string
-	var backupActivatedInt int
+	var backupActivatedInt, frozenInt int
 	err := scanner.Scan(&e.ID, &e.TaskID, &e.ChainID, &e.FactoryAddress, &e.EscrowAddress, &e.EscrowID,
 		&e.Buyer, &e.Worker, &e.Verifier, &e.Arbitrator, &e.Amount, &e.WorkerStake, &e.Token, &e.Status,
 		&e.SubmissionDeadline, &e.ReviewPeriodSeconds, &e.DisputePeriodSeconds, &e.ArbitratorTimeoutSeconds,
 		&e.MilestoneCount, &e.CurrentMilestone,
-		&e.BackupWorker, &e.BackupDeadlineExtension, &e.ActiveWorker, &backupActivatedInt,
+		&e.BackupWorker, &e.BackupDeadlineExtension, &e.ActiveWorker, &backupActivatedInt, &frozenInt,
 		&createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
 	e.BackupActivated = backupActivatedInt != 0
+	e.Frozen = frozenInt != 0
 	e.CreatedAt, err = parseSQLiteTime(createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("parse created_at: %w", err)
@@ -151,6 +152,17 @@ func (d *DB) GetEscrowByAddress(ctx context.Context, addr string) (*Escrow, erro
 	e, err := scanEscrow(row)
 	if err != nil {
 		return nil, fmt.Errorf("get escrow by address: %w", err)
+	}
+	return e, nil
+}
+
+func (d *DB) GetEscrowByOnChainID(ctx context.Context, chainID, escrowID int64) (*Escrow, error) {
+	row := d.db.QueryRowContext(ctx,
+		`SELECT `+escrowColumns+` FROM escrows WHERE chain_id = ? AND escrow_id = ?`,
+		chainID, escrowID)
+	e, err := scanEscrow(row)
+	if err != nil {
+		return nil, fmt.Errorf("get escrow by on-chain ID: %w", err)
 	}
 	return e, nil
 }
@@ -1193,4 +1205,93 @@ func parseNullTime(ns sql.NullString) (*time.Time, error) {
 		return nil, err
 	}
 	return &t, nil
+}
+
+// ── Emergency response protocol queries ──
+
+func (d *DB) UpsertFrozenAddress(ctx context.Context, address, reason, frozenBy string) error {
+	_, err := d.db.ExecContext(ctx,
+		`INSERT INTO frozen_addresses (address, reason, frozen_by) VALUES (?, ?, ?)
+		 ON CONFLICT(address) DO UPDATE SET frozen_at = datetime('now'), reason = excluded.reason, frozen_by = excluded.frozen_by`,
+		address, reason, frozenBy)
+	return err
+}
+
+func (d *DB) DeleteFrozenAddress(ctx context.Context, address string) error {
+	_, err := d.db.ExecContext(ctx, `DELETE FROM frozen_addresses WHERE address = ?`, address)
+	return err
+}
+
+func (d *DB) ListFrozenAddresses(ctx context.Context) ([]*FrozenAddress, error) {
+	rows, err := d.db.QueryContext(ctx, `SELECT address, frozen_at, reason, frozen_by FROM frozen_addresses ORDER BY frozen_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list frozen addresses: %w", err)
+	}
+	defer rows.Close()
+
+	var addrs []*FrozenAddress
+	for rows.Next() {
+		a := &FrozenAddress{}
+		var frozenAt string
+		if err := rows.Scan(&a.Address, &frozenAt, &a.Reason, &a.FrozenBy); err != nil {
+			return nil, fmt.Errorf("scan frozen address: %w", err)
+		}
+		a.FrozenAt, err = parseSQLiteTime(frozenAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse frozen_at: %w", err)
+		}
+		addrs = append(addrs, a)
+	}
+	return addrs, rows.Err()
+}
+
+func (d *DB) IsFrozenAddress(ctx context.Context, address string) (bool, error) {
+	var count int
+	err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM frozen_addresses WHERE address = ?`, address).Scan(&count)
+	return count > 0, err
+}
+
+func (d *DB) UpdateEscrowFrozen(ctx context.Context, id int64, frozen bool) error {
+	_, err := d.db.ExecContext(ctx,
+		`UPDATE escrows SET frozen = ?, updated_at = datetime('now') WHERE id = ?`,
+		boolToInt(frozen), id)
+	return err
+}
+
+func (d *DB) CreateEmergencyAction(ctx context.Context, action, target, escrowID, reason, txHash string) error {
+	_, err := d.db.ExecContext(ctx,
+		`INSERT INTO emergency_actions (action, target, escrow_id, reason, tx_hash) VALUES (?, ?, ?, ?, ?)`,
+		action, target, escrowID, reason, txHash)
+	return err
+}
+
+func (d *DB) ListEmergencyActions(ctx context.Context, limit, offset int) ([]*EmergencyAction, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT id, action, target, escrow_id, reason, created_at, tx_hash FROM emergency_actions ORDER BY id DESC LIMIT ? OFFSET ?`,
+		limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list emergency actions: %w", err)
+	}
+	defer rows.Close()
+
+	var actions []*EmergencyAction
+	for rows.Next() {
+		a := &EmergencyAction{}
+		var createdAt string
+		if err := rows.Scan(&a.ID, &a.Action, &a.Target, &a.EscrowID, &a.Reason, &createdAt, &a.TxHash); err != nil {
+			return nil, fmt.Errorf("scan emergency action: %w", err)
+		}
+		a.CreatedAt, err = parseSQLiteTime(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+		actions = append(actions, a)
+	}
+	return actions, rows.Err()
 }

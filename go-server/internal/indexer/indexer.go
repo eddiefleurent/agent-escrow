@@ -45,6 +45,7 @@ var eventStatusMap = map[string]string{
 	"Refunded":                 "refunded",
 	"Cancelled":                "cancelled",
 	"ArbitratorTimeoutClaimed": "refunded",
+	"EmergencyResolved":        "resolved",
 }
 
 // milestoneStatusMap maps milestone event names to milestone-level status strings.
@@ -280,9 +281,16 @@ func (idx *Indexer) RunOnce(ctx context.Context) error {
 }
 
 func (idx *Indexer) indexFactoryEvents(ctx context.Context, from, to uint64) error {
-	escrowCreatedID := chain.FactoryABI.Events["EscrowCreated"].ID
-	outcomeRecordedID := chain.FactoryABI.Events["OutcomeRecorded"].ID
-	logs, err := idx.chain.FilterLogs(ctx, []common.Address{idx.factoryAddress}, [][]common.Hash{{escrowCreatedID, outcomeRecordedID}}, from, to)
+	topicIDs := []common.Hash{
+		chain.FactoryABI.Events["EscrowCreated"].ID,
+		chain.FactoryABI.Events["OutcomeRecorded"].ID,
+		chain.FactoryABI.Events["AddressFrozen"].ID,
+		chain.FactoryABI.Events["AddressUnfrozen"].ID,
+		chain.FactoryABI.Events["EscrowFrozen"].ID,
+		chain.FactoryABI.Events["EscrowUnfrozen"].ID,
+		chain.FactoryABI.Events["EmergencyResolved"].ID,
+	}
+	logs, err := idx.chain.FilterLogs(ctx, []common.Address{idx.factoryAddress}, [][]common.Hash{topicIDs}, from, to)
 	if err != nil {
 		return fmt.Errorf("filter factory logs: %w", err)
 	}
@@ -333,6 +341,16 @@ func (idx *Indexer) ProcessFactoryLog(ctx context.Context, lg types.Log) error {
 		handlerErr = idx.handleEscrowCreated(ctx, lg)
 	case "OutcomeRecorded":
 		handlerErr = idx.handleOutcomeRecorded(ctx, lg)
+	case "AddressFrozen":
+		handlerErr = idx.handleAddressFrozen(ctx, lg, true)
+	case "AddressUnfrozen":
+		handlerErr = idx.handleAddressFrozen(ctx, lg, false)
+	case "EscrowFrozen":
+		handlerErr = idx.handleEscrowFrozenFactory(ctx, lg, true)
+	case "EscrowUnfrozen":
+		handlerErr = idx.handleEscrowFrozenFactory(ctx, lg, false)
+	case "EmergencyResolved":
+		handlerErr = idx.handleEmergencyResolvedFactory(ctx, lg)
 	}
 	if handlerErr == nil {
 		escrowAddr := ""
@@ -556,6 +574,12 @@ func (idx *Indexer) ProcessEscrowLog(ctx context.Context, lg types.Log, dbEscrow
 		handlerErr = idx.handleRemainingMilestonesAborted(ctx, lg, dbEscrowID)
 	case "BackupActivated":
 		handlerErr = idx.handleBackupActivated(ctx, lg, dbEscrowID)
+	case "EmergencyFrozen":
+		handlerErr = idx.handleEscrowFrozenEscrow(ctx, dbEscrowID, true)
+	case "EmergencyUnfrozen":
+		handlerErr = idx.handleEscrowFrozenEscrow(ctx, dbEscrowID, false)
+	case "EmergencyResolved":
+		handlerErr = idx.handleEmergencyResolvedEscrow(ctx, lg, dbEscrowID)
 	}
 
 	if handlerErr == nil {
@@ -798,6 +822,114 @@ func (idx *Indexer) handleMilestoneDisputeResolved(ctx context.Context, lg types
 	}
 
 	return idx.db.UpdateDispute(ctx, dispute.ID, resolutionURI, int(workerAwardBps))
+}
+
+// --- Emergency response handlers ---
+
+func (idx *Indexer) handleAddressFrozen(ctx context.Context, lg types.Log, frozen bool) error {
+	// AddressFrozen(address indexed target) / AddressUnfrozen(address indexed target)
+	if len(lg.Topics) < 2 {
+		return errors.New("AddressFrozen/Unfrozen: insufficient topics")
+	}
+	target := common.BytesToAddress(lg.Topics[1].Bytes())
+	addr := strings.ToLower(target.Hex())
+
+	if frozen {
+		slog.Info("address frozen", "target", addr)
+		return idx.db.UpsertFrozenAddress(ctx, addr, "", "indexer")
+	}
+	slog.Info("address unfrozen", "target", addr)
+	return idx.db.DeleteFrozenAddress(ctx, addr)
+}
+
+func (idx *Indexer) handleEscrowFrozenFactory(ctx context.Context, lg types.Log, frozen bool) error {
+	// EscrowFrozen(uint256 indexed escrowId) / EscrowUnfrozen(uint256 indexed escrowId)
+	if len(lg.Topics) < 2 {
+		return errors.New("EscrowFrozen/Unfrozen: insufficient topics")
+	}
+	escrowIDBig := new(big.Int).SetBytes(lg.Topics[1].Bytes())
+	if !escrowIDBig.IsInt64() {
+		return fmt.Errorf("escrowID overflows int64: %s", escrowIDBig.String())
+	}
+
+	e, err := idx.db.GetEscrowByOnChainID(ctx, idx.chainID, escrowIDBig.Int64())
+	if err != nil {
+		return fmt.Errorf("lookup escrow for freeze: %w", err)
+	}
+
+	action := "freeze_escrow"
+	if !frozen {
+		action = "unfreeze_escrow"
+	}
+	slog.Info("escrow emergency "+action, "escrow_id", e.ID, "on_chain_id", escrowIDBig.Int64())
+
+	if err := idx.db.UpdateEscrowFrozen(ctx, e.ID, frozen); err != nil {
+		return err
+	}
+	return idx.db.CreateEmergencyAction(ctx, action, e.EscrowAddress, "", "", "")
+}
+
+func (idx *Indexer) handleEmergencyResolvedFactory(ctx context.Context, lg types.Log) error {
+	// EmergencyResolved(uint256 indexed escrowId, uint16 workerAwardBps)
+	if len(lg.Topics) < 2 {
+		return errors.New("EmergencyResolved: insufficient topics")
+	}
+	escrowIDBig := new(big.Int).SetBytes(lg.Topics[1].Bytes())
+	if !escrowIDBig.IsInt64() {
+		return fmt.Errorf("escrowID overflows int64: %s", escrowIDBig.String())
+	}
+
+	values, err := chain.FactoryABI.Events["EmergencyResolved"].Inputs.NonIndexed().Unpack(lg.Data)
+	if err != nil {
+		return fmt.Errorf("unpack EmergencyResolved: %w", err)
+	}
+	if len(values) < 1 {
+		return errors.New("EmergencyResolved: missing workerAwardBps")
+	}
+	bps, ok := values[0].(uint16)
+	if !ok {
+		return fmt.Errorf("EmergencyResolved: unexpected type for workerAwardBps: %T", values[0])
+	}
+
+	e, err := idx.db.GetEscrowByOnChainID(ctx, idx.chainID, escrowIDBig.Int64())
+	if err != nil {
+		return fmt.Errorf("lookup escrow for emergency resolve: %w", err)
+	}
+
+	slog.Info("emergency resolved (factory)", "escrow_id", e.ID, "worker_award_bps", bps)
+
+	if err := idx.db.UpdateEscrowStatus(ctx, e.ID, "resolved"); err != nil {
+		return err
+	}
+	return idx.db.CreateEmergencyAction(ctx, "emergency_resolve", e.EscrowAddress, "",
+		fmt.Sprintf("workerAwardBps=%d", bps), "")
+}
+
+func (idx *Indexer) handleEscrowFrozenEscrow(ctx context.Context, dbEscrowID int64, frozen bool) error {
+	action := "freeze_escrow"
+	if !frozen {
+		action = "unfreeze_escrow"
+	}
+	slog.Info("escrow emergency "+action+" (escrow event)", "escrow_id", dbEscrowID)
+	return idx.db.UpdateEscrowFrozen(ctx, dbEscrowID, frozen)
+}
+
+func (idx *Indexer) handleEmergencyResolvedEscrow(ctx context.Context, lg types.Log, dbEscrowID int64) error {
+	// EmergencyResolved(uint16 workerAwardBps) -- escrow-level event
+	values, err := chain.EscrowABI.Events["EmergencyResolved"].Inputs.NonIndexed().Unpack(lg.Data)
+	if err != nil {
+		return fmt.Errorf("unpack escrow EmergencyResolved: %w", err)
+	}
+	if len(values) < 1 {
+		return errors.New("escrow EmergencyResolved: missing workerAwardBps")
+	}
+	bps, ok := values[0].(uint16)
+	if !ok {
+		return fmt.Errorf("escrow EmergencyResolved: unexpected type for workerAwardBps: %T", values[0])
+	}
+
+	slog.Info("emergency resolved (escrow event)", "escrow_id", dbEscrowID, "worker_award_bps", bps)
+	return idx.db.UpdateEscrowStatus(ctx, dbEscrowID, "resolved")
 }
 
 func (idx *Indexer) handleRemainingMilestonesAborted(ctx context.Context, lg types.Log, dbEscrowID int64) error {

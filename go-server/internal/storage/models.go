@@ -35,6 +35,7 @@ type Escrow struct {
 	BackupDeadlineExtension  int64  `json:"backup_deadline_extension"`
 	ActiveWorker             string `json:"active_worker"`
 	BackupActivated          bool   `json:"backup_activated"`
+	Frozen                   bool   `json:"frozen"`
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
 }
@@ -159,6 +160,25 @@ type AP2Mandate struct {
 	Status         string    `json:"status"`
 	RawPayload     string    `json:"raw_payload"`
 	CreatedAt      time.Time `json:"created_at"`
+}
+
+// FrozenAddress represents a frozen address in the emergency protocol.
+type FrozenAddress struct {
+	Address  string    `json:"address"`
+	FrozenAt time.Time `json:"frozen_at"`
+	Reason   string    `json:"reason"`
+	FrozenBy string    `json:"frozen_by"`
+}
+
+// EmergencyAction represents an audit log entry for emergency actions.
+type EmergencyAction struct {
+	ID        int64     `json:"id"`
+	Action    string    `json:"action"`
+	Target    string    `json:"target"`
+	EscrowID  string    `json:"escrow_id"`
+	Reason    string    `json:"reason"`
+	CreatedAt time.Time `json:"created_at"`
+	TxHash    string    `json:"tx_hash"`
 }
 
 type ChainLog struct {

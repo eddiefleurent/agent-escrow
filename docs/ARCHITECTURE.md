@@ -445,6 +445,8 @@ SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 | `a2a_tasks` | A2A protocol tasks linked to escrows (paper §6: A2A Task object extension) |
 | `chain_logs` | Raw chain event log (idempotent by tx_hash + log_index) |
 | `chain_cursors` | Indexer block cursor per chain |
+| `frozen_addresses` | Addresses frozen via emergency protocol (paper §4.9) |
+| `emergency_actions` | Audit log of emergency actions (freeze, unfreeze, emergency resolve) |
 
 ![Reputation Seed Sequence](diagrams/reputation-seed-sequence.png)
 
@@ -552,6 +554,16 @@ The AP2 mandate bridge enables gasless ERC20 escrow funding via the [x402](https
 
 **Flow:** Validate mandate → Bind mandate to escrow → Fund escrow via `fundWithAuthorization` (EIP-3009). Bids may include an optional `stake_mandate_id` for worker stake funding, providing Sybil resistance via the same gasless rail.
 
+### Emergency Response Protocol (Paper §4.9)
+
+The emergency protocol spans on-chain (factory + escrow contracts) and off-chain (Go server) components, implementing the paper's rapid incident response (§4.9).
+
+**On-chain:** Address freezing, escrow freezing, and emergency resolution are owner-only operations on the factory. Frozen addresses cannot participate in new escrows; frozen escrows block all participant actions until emergency resolve or unfreeze. `emergencyResolve()` force-settles a frozen escrow with a specified worker award (basis points), enabling fund recovery without normal approval/dispute flows.
+
+**Off-chain:** Seven MCP tools (`freeze_address`, `unfreeze_address`, `freeze_escrow`, `unfreeze_escrow`, `emergency_resolve`, `list_frozen_addresses`, `list_emergency_actions`) and seven HTTP API endpoints (`POST /api/v1/emergency/freeze-address`, `unfreeze-address`, `freeze-escrow`, `unfreeze-escrow`, `resolve`; `GET /api/v1/emergency/frozen-addresses`, `actions`). The event indexer ingests emergency events (`AddressFrozen`, `AddressUnfrozen`, `EscrowFrozen`, `EscrowUnfrozen`, `EmergencyResolved`) and reconciles them into SQLite. Storage includes `frozen_addresses` and `emergency_actions` tables for audit and monitoring.
+
+**Config:** `EMERGENCY_ENABLED` env var controls whether emergency endpoints are registered (default: true).
+
 ### MCP Tools (Primary Interface)
 
 | Tool | Inputs | Chain Method |
@@ -575,6 +587,13 @@ The AP2 mandate bridge enables gasless ERC20 escrow funding via the [x402](https
 | `fund_via_mandate` | escrow_id, mandate_id, authorization params | x402 validate + `Escrow.fundWithAuthorization` |
 | `subscribe_events` | escrow_id (optional), since_id, granularity, limit | EventBus polling (cursor-based) |
 | `get_agent_card` | (none) | Returns A2A agent card JSON |
+| `freeze_address` | address | `Factory.freezeAddress` (owner-only) |
+| `unfreeze_address` | address | `Factory.unfreezeAddress` (owner-only) |
+| `freeze_escrow` | escrow_id | `Factory.freezeEscrow` (owner-only) |
+| `unfreeze_escrow` | escrow_id | `Factory.unfreezeEscrow` (owner-only) |
+| `emergency_resolve` | escrow_id, worker_award_bps | `Factory.emergencyResolve` (owner-only) |
+| `list_frozen_addresses` | (none) | DB read |
+| `list_emergency_actions` | limit, offset (optional) | DB read |
 
 ### HTTP API (Secondary Interface)
 
@@ -609,6 +628,13 @@ The AP2 mandate bridge enables gasless ERC20 escrow funding via the [x402](https
 | POST | `/webhooks/cdp` | CDP webhook receiver (factory events; requires `CDP_WEBHOOK_SECRET`) |
 | GET | `/.well-known/agent.json` | A2A agent card (capabilities, skills, endpoint URL) |
 | POST | `/a2a` | A2A JSON-RPC 2.0 endpoint (`tasks/send`, `tasks/get`, `tasks/cancel`) |
+| POST | `/api/v1/emergency/freeze-address` | Freeze address (owner-only; body: address) |
+| POST | `/api/v1/emergency/unfreeze-address` | Unfreeze address (owner-only; body: address) |
+| POST | `/api/v1/emergency/freeze-escrow` | Freeze escrow (owner-only; body: escrow_id) |
+| POST | `/api/v1/emergency/unfreeze-escrow` | Unfreeze escrow (owner-only; body: escrow_id) |
+| POST | `/api/v1/emergency/resolve` | Emergency resolve frozen escrow (owner-only; body: escrow_id, worker_award_bps) |
+| GET | `/api/v1/emergency/frozen-addresses` | List frozen addresses |
+| GET | `/api/v1/emergency/actions` | List emergency action audit log (query: limit, offset) |
 
 ### Configuration
 
@@ -634,6 +660,7 @@ The AP2 mandate bridge enables gasless ERC20 escrow funding via the [x402](https
 | `EVENTS_ENABLED` | No | `true` | Enable SSE/WebSocket event streaming and `subscribe_events` MCP tool |
 | `EVENTS_BUFFER_SIZE` | No | `64` | Per-subscriber channel buffer size |
 | `EVENTS_HEARTBEAT_INTERVAL` | No | `30s` | L0 heartbeat interval for liveness signals |
+| `EMERGENCY_ENABLED` | No | `true` | Enable emergency response protocol endpoints (freeze/unfreeze address/escrow, emergency resolve, audit log) |
 
 ### Design Decisions
 

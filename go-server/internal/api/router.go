@@ -48,6 +48,17 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	mux.HandleFunc("GET /api/v1/rfqs/{id}/bids", h.ListBids)
 	mux.HandleFunc("POST /api/v1/rfqs/{id}/accept", h.AcceptBid)
 
+	// Emergency response protocol endpoints (paper §4.9)
+	if cfg.EmergencyEnabled {
+		mux.HandleFunc("POST /api/v1/emergency/freeze-address", h.FreezeAddress)
+		mux.HandleFunc("POST /api/v1/emergency/unfreeze-address", h.UnfreezeAddress)
+		mux.HandleFunc("POST /api/v1/emergency/freeze-escrow", h.FreezeEscrow)
+		mux.HandleFunc("POST /api/v1/emergency/unfreeze-escrow", h.UnfreezeEscrow)
+		mux.HandleFunc("POST /api/v1/emergency/resolve", h.EmergencyResolve)
+		mux.HandleFunc("GET /api/v1/emergency/frozen-addresses", h.ListFrozenAddresses)
+		mux.HandleFunc("GET /api/v1/emergency/actions", h.ListEmergencyActions)
+	}
+
 	if cfg.WebhookMode() {
 		wh := NewWebhookHandler(idx, cfg.CDPWebhookSecret, bus)
 		mux.HandleFunc("POST /webhooks/cdp", wh.HandleCDPWebhook)

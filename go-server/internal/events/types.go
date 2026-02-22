@@ -114,6 +114,11 @@ const (
 	EventMilestoneAborted     = "milestone.aborted"
 	EventOutcomeRecorded      = "reputation.outcome_recorded"
 	EventWorkerStakeDeposited = "escrow.stake_deposited"
+	EventAddressFrozen        = "emergency.address_frozen"
+	EventAddressUnfrozen      = "emergency.address_unfrozen"
+	EventEscrowEmergFrozen    = "emergency.escrow_frozen"
+	EventEscrowEmergUnfrozen  = "emergency.escrow_unfrozen"
+	EventEmergencyResolved    = "emergency.resolved"
 )
 
 // OnChainEventName maps Solidity event names to stream event names.
@@ -140,4 +145,11 @@ var OnChainEventName = map[string]string{
 	"OutcomeRecorded":            EventOutcomeRecorded,
 	"WorkerStakeDeposited":       EventWorkerStakeDeposited,
 	"ArbitratorTimeoutClaimed":   EventEscrowRefunded,
+	"AddressFrozen":              EventAddressFrozen,
+	"AddressUnfrozen":            EventAddressUnfrozen,
+	"EscrowFrozen":               EventEscrowEmergFrozen,
+	"EscrowUnfrozen":             EventEscrowEmergUnfrozen,
+	"EmergencyResolved":          EventEmergencyResolved,
+	"EmergencyFrozen":            EventEscrowEmergFrozen,
+	"EmergencyUnfrozen":          EventEscrowEmergUnfrozen,
 }
