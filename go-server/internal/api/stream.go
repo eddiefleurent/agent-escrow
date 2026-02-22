@@ -120,8 +120,11 @@ func (sh *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request)
 	sub := sh.bus.Subscribe(granularity, msg.Escrow)
 	defer sh.bus.Unsubscribe(sub.ID)
 
-	// Send confirmation
-	conn.WriteJSON(map[string]string{"status": "subscribed", "sub_id": sub.ID})
+	// Send confirmation; abort if the client can't receive it.
+	if err := conn.WriteJSON(map[string]string{"status": "subscribed", "sub_id": sub.ID}); err != nil {
+		slog.Warn("ws: failed to send subscription confirmation", "sub_id", sub.ID, "error", err)
+		return
+	}
 
 	ctx := r.Context()
 
