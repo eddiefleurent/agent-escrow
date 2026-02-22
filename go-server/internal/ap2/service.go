@@ -111,7 +111,7 @@ func (s *Service) ValidateMandate(_ context.Context, env MandateEnvelope) error 
 
 // BindToEscrow links a validated mandate to an escrow, verifying amount constraints.
 func (s *Service) BindToEscrow(ctx context.Context, env MandateEnvelope, escrowID int64) (*EscrowBinding, error) {
-	escrow, err := s.DB.GetEscrow(escrowID)
+	escrow, err := s.DB.GetEscrow(ctx, escrowID)
 	if err != nil {
 		return nil, fmt.Errorf("escrow not found: %w", err)
 	}
@@ -195,7 +195,7 @@ func (s *Service) FundViaMandate(ctx context.Context, escrowID int64, env Mandat
 		return nil, fmt.Errorf("bind to escrow: %w", err)
 	}
 
-	escrow, err := s.DB.GetEscrow(escrowID)
+	escrow, err := s.DB.GetEscrow(ctx, escrowID)
 	if err != nil {
 		return nil, fmt.Errorf("get escrow: %w", err)
 	}

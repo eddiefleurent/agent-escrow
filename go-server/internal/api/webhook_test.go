@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -159,7 +160,7 @@ func TestWebhook_ValidSignature_EscrowCreated(t *testing.T) {
 
 	// Verify escrow was created in DB (use checksummed form from common.HexToAddress)
 	checksummed := common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12").Hex()
-	escrow, err := env.db.GetEscrowByAddress(checksummed)
+	escrow, err := env.db.GetEscrowByAddress(context.Background(), checksummed)
 	if err != nil {
 		t.Fatalf("get escrow by address: %v", err)
 	}
@@ -275,6 +276,7 @@ func TestWebhook_OutcomeRecorded_Processed(t *testing.T) {
 
 	// Verify reputation was upserted
 	rep, err := env.db.GetReputation(
+		context.Background(),
 		strings.ToLower("0x1000000000000000000000000000000000000001"),
 		"worker",
 	)
@@ -314,14 +316,15 @@ func TestWebhook_DuplicateEvent_Idempotent(t *testing.T) {
 
 func TestWebhook_ExistingEscrow_Skipped(t *testing.T) {
 	env := setupWebhookTest(t)
+	ctx := context.Background()
 
 	// Pre-create the escrow in the DB (simulates API/MCP creation)
-	task, err := env.db.CreateTask("Existing", "desc", "0xabc")
+	task, err := env.db.CreateTask(ctx, "Existing", "desc", "0xabc")
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
 	escrowAddr := "0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE1"
-	_, err = env.db.CreateEscrow(&storage.Escrow{
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: env.cfg.FactoryAddress,
 		EscrowAddress: escrowAddr, EscrowID: 42,
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",

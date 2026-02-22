@@ -10,14 +10,14 @@ import (
 // dbExecer is satisfied by both *sql.DB and *sql.Tx, allowing shared query helpers
 // to run inside or outside a transaction.
 type dbExecer interface {
-	Exec(string, ...any) (sql.Result, error)
-	QueryRow(string, ...any) *sql.Row
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
 // Task queries
 
-func createTaskOn(q dbExecer, title, description, specHash string) (*Task, error) {
-	res, err := q.Exec(
+func createTaskOn(ctx context.Context, q dbExecer, title, description, specHash string) (*Task, error) {
+	res, err := q.ExecContext(ctx,
 		`INSERT INTO tasks (title, description, spec_hash) VALUES (?, ?, ?)`,
 		title, description, specHash,
 	)
@@ -30,7 +30,7 @@ func createTaskOn(q dbExecer, title, description, specHash string) (*Task, error
 	}
 	t := &Task{}
 	var createdAt string
-	err = q.QueryRow(
+	err = q.QueryRowContext(ctx,
 		`SELECT id, title, description, spec_hash, created_at FROM tasks WHERE id = ?`, id,
 	).Scan(&t.ID, &t.Title, &t.Description, &t.SpecHash, &createdAt)
 	if err != nil {
@@ -43,18 +43,18 @@ func createTaskOn(q dbExecer, title, description, specHash string) (*Task, error
 	return t, nil
 }
 
-func (d *DB) CreateTask(title, description, specHash string) (*Task, error) {
-	return createTaskOn(d.db, title, description, specHash)
+func (d *DB) CreateTask(ctx context.Context, title, description, specHash string) (*Task, error) {
+	return createTaskOn(ctx, d.db, title, description, specHash)
 }
 
-func (d *DB) CreateTaskTx(tx *sql.Tx, title, description, specHash string) (*Task, error) {
-	return createTaskOn(tx, title, description, specHash)
+func (d *DB) CreateTaskTx(ctx context.Context, tx *sql.Tx, title, description, specHash string) (*Task, error) {
+	return createTaskOn(ctx, tx, title, description, specHash)
 }
 
-func (d *DB) GetTask(id int64) (*Task, error) {
+func (d *DB) GetTask(ctx context.Context, id int64) (*Task, error) {
 	t := &Task{}
 	var createdAt string
-	err := d.db.QueryRow(
+	err := d.db.QueryRowContext(ctx,
 		`SELECT id, title, description, spec_hash, created_at FROM tasks WHERE id = ?`, id,
 	).Scan(&t.ID, &t.Title, &t.Description, &t.SpecHash, &createdAt)
 	if err != nil {
@@ -69,7 +69,7 @@ func (d *DB) GetTask(id int64) (*Task, error) {
 
 // Escrow queries
 
-func createEscrowOn(q dbExecer, e *Escrow) (*Escrow, error) {
+func createEscrowOn(ctx context.Context, q dbExecer, e *Escrow) (*Escrow, error) {
 	msCount := e.MilestoneCount
 	if msCount == 0 {
 		msCount = 1
@@ -78,7 +78,7 @@ func createEscrowOn(q dbExecer, e *Escrow) (*Escrow, error) {
 	if activeWorker == "" {
 		activeWorker = e.Worker
 	}
-	res, err := q.Exec(
+	res, err := q.ExecContext(ctx,
 		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.TaskID, e.ChainID, e.FactoryAddress, e.EscrowAddress, e.EscrowID,
@@ -94,7 +94,7 @@ func createEscrowOn(q dbExecer, e *Escrow) (*Escrow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("last insert id: %w", err)
 	}
-	row := q.QueryRow(`SELECT `+escrowColumns+` FROM escrows WHERE id = ?`, id)
+	row := q.QueryRowContext(ctx, `SELECT `+escrowColumns+` FROM escrows WHERE id = ?`, id)
 	out, err := scanEscrow(row)
 	if err != nil {
 		return nil, fmt.Errorf("get escrow: %w", err)
@@ -102,12 +102,12 @@ func createEscrowOn(q dbExecer, e *Escrow) (*Escrow, error) {
 	return out, nil
 }
 
-func (d *DB) CreateEscrow(e *Escrow) (*Escrow, error) {
-	return createEscrowOn(d.db, e)
+func (d *DB) CreateEscrow(ctx context.Context, e *Escrow) (*Escrow, error) {
+	return createEscrowOn(ctx, d.db, e)
 }
 
-func (d *DB) CreateEscrowTx(tx *sql.Tx, e *Escrow) (*Escrow, error) {
-	return createEscrowOn(tx, e)
+func (d *DB) CreateEscrowTx(ctx context.Context, tx *sql.Tx, e *Escrow) (*Escrow, error) {
+	return createEscrowOn(ctx, tx, e)
 }
 
 const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, created_at, updated_at`
@@ -137,8 +137,8 @@ func scanEscrow(scanner interface{ Scan(...any) error }) (*Escrow, error) {
 	return e, nil
 }
 
-func (d *DB) GetEscrow(id int64) (*Escrow, error) {
-	row := d.db.QueryRow(`SELECT `+escrowColumns+` FROM escrows WHERE id = ?`, id)
+func (d *DB) GetEscrow(ctx context.Context, id int64) (*Escrow, error) {
+	row := d.db.QueryRowContext(ctx, `SELECT `+escrowColumns+` FROM escrows WHERE id = ?`, id)
 	e, err := scanEscrow(row)
 	if err != nil {
 		return nil, fmt.Errorf("get escrow: %w", err)
@@ -146,8 +146,8 @@ func (d *DB) GetEscrow(id int64) (*Escrow, error) {
 	return e, nil
 }
 
-func (d *DB) GetEscrowByAddress(addr string) (*Escrow, error) {
-	row := d.db.QueryRow(`SELECT `+escrowColumns+` FROM escrows WHERE escrow_address = ?`, addr)
+func (d *DB) GetEscrowByAddress(ctx context.Context, addr string) (*Escrow, error) {
+	row := d.db.QueryRowContext(ctx, `SELECT `+escrowColumns+` FROM escrows WHERE escrow_address = ?`, addr)
 	e, err := scanEscrow(row)
 	if err != nil {
 		return nil, fmt.Errorf("get escrow by address: %w", err)
@@ -155,8 +155,8 @@ func (d *DB) GetEscrowByAddress(addr string) (*Escrow, error) {
 	return e, nil
 }
 
-func (d *DB) UpdateEscrowStatus(id int64, status string) error {
-	_, err := d.db.Exec(
+func (d *DB) UpdateEscrowStatus(ctx context.Context, id int64, status string) error {
+	_, err := d.db.ExecContext(ctx,
 		`UPDATE escrows SET status = ?, updated_at = datetime('now') WHERE id = ?`,
 		status, id,
 	)
@@ -167,8 +167,8 @@ func (d *DB) UpdateEscrowStatus(id int64, status string) error {
 }
 
 // UpdateEscrowOnChainFields sets the on-chain address and ID after the creation tx is mined.
-func (d *DB) UpdateEscrowOnChainFields(id int64, escrowAddress string, escrowID int64) error {
-	_, err := d.db.Exec(
+func (d *DB) UpdateEscrowOnChainFields(ctx context.Context, id int64, escrowAddress string, escrowID int64) error {
+	_, err := d.db.ExecContext(ctx,
 		`UPDATE escrows SET escrow_address = ?, escrow_id = ?, updated_at = datetime('now') WHERE id = ?`,
 		escrowAddress, escrowID, id,
 	)
@@ -178,7 +178,7 @@ func (d *DB) UpdateEscrowOnChainFields(id int64, escrowAddress string, escrowID 
 	return nil
 }
 
-func (d *DB) ListEscrows(role, address, status string) ([]*Escrow, error) {
+func (d *DB) ListEscrows(ctx context.Context, role, address, status string) ([]*Escrow, error) {
 	query := `SELECT ` + escrowColumns + ` FROM escrows WHERE 1=1`
 	var args []any
 
@@ -204,15 +204,15 @@ func (d *DB) ListEscrows(role, address, status string) ([]*Escrow, error) {
 	}
 
 	query += ` ORDER BY id DESC`
-	return d.queryEscrows(query, args...)
+	return d.queryEscrows(ctx, query, args...)
 }
 
-func (d *DB) ListEscrowsByChainID(chainID int64) ([]*Escrow, error) {
-	return d.queryEscrows(`SELECT `+escrowColumns+` FROM escrows WHERE chain_id = ? ORDER BY id DESC`, chainID)
+func (d *DB) ListEscrowsByChainID(ctx context.Context, chainID int64) ([]*Escrow, error) {
+	return d.queryEscrows(ctx, `SELECT `+escrowColumns+` FROM escrows WHERE chain_id = ? ORDER BY id DESC`, chainID)
 }
 
-func (d *DB) queryEscrows(query string, args ...any) ([]*Escrow, error) {
-	rows, err := d.db.Query(query, args...)
+func (d *DB) queryEscrows(ctx context.Context, query string, args ...any) ([]*Escrow, error) {
+	rows, err := d.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query escrows: %w", err)
 	}
@@ -232,8 +232,8 @@ func (d *DB) queryEscrows(query string, args ...any) ([]*Escrow, error) {
 	return escrows, nil
 }
 
-func (d *DB) UpdateEscrowMilestoneProgress(id int64, currentMilestone int) error {
-	res, err := d.db.Exec(
+func (d *DB) UpdateEscrowMilestoneProgress(ctx context.Context, id int64, currentMilestone int) error {
+	res, err := d.db.ExecContext(ctx,
 		`UPDATE escrows SET current_milestone = ?, updated_at = datetime('now') WHERE id = ?`,
 		currentMilestone, id,
 	)
@@ -252,8 +252,8 @@ func (d *DB) UpdateEscrowMilestoneProgress(id int64, currentMilestone int) error
 
 // Submission queries
 
-func (d *DB) CreateSubmission(escrowID int64, submissionHash, submissionURI string) (*Submission, error) {
-	res, err := d.db.Exec(
+func (d *DB) CreateSubmission(ctx context.Context, escrowID int64, submissionHash, submissionURI string) (*Submission, error) {
+	res, err := d.db.ExecContext(ctx,
 		`INSERT INTO submissions (escrow_id, submission_hash, submission_uri) VALUES (?, ?, ?)`,
 		escrowID, submissionHash, submissionURI,
 	)
@@ -266,7 +266,7 @@ func (d *DB) CreateSubmission(escrowID int64, submissionHash, submissionURI stri
 	}
 	s := &Submission{}
 	var submittedAt string
-	err = d.db.QueryRow(
+	err = d.db.QueryRowContext(ctx,
 		`SELECT id, escrow_id, submission_hash, submission_uri, submitted_at FROM submissions WHERE id = ?`, id,
 	).Scan(&s.ID, &s.EscrowID, &s.SubmissionHash, &s.SubmissionURI, &submittedAt)
 	if err != nil {
@@ -279,8 +279,8 @@ func (d *DB) CreateSubmission(escrowID int64, submissionHash, submissionURI stri
 	return s, nil
 }
 
-func (d *DB) GetSubmissionsByEscrow(escrowID int64) ([]*Submission, error) {
-	rows, err := d.db.Query(
+func (d *DB) GetSubmissionsByEscrow(ctx context.Context, escrowID int64) ([]*Submission, error) {
+	rows, err := d.db.QueryContext(ctx,
 		`SELECT id, escrow_id, submission_hash, submission_uri, submitted_at FROM submissions WHERE escrow_id = ? ORDER BY id`, escrowID,
 	)
 	if err != nil {
@@ -309,8 +309,8 @@ func (d *DB) GetSubmissionsByEscrow(escrowID int64) ([]*Submission, error) {
 
 // Dispute queries
 
-func (d *DB) CreateDispute(escrowID int64, raisedBy, reasonURI string) (*Dispute, error) {
-	res, err := d.db.Exec(
+func (d *DB) CreateDispute(ctx context.Context, escrowID int64, raisedBy, reasonURI string) (*Dispute, error) {
+	res, err := d.db.ExecContext(ctx,
 		`INSERT INTO disputes (escrow_id, raised_by, reason_uri) VALUES (?, ?, ?)`,
 		escrowID, raisedBy, reasonURI,
 	)
@@ -321,39 +321,39 @@ func (d *DB) CreateDispute(escrowID int64, raisedBy, reasonURI string) (*Dispute
 	if err != nil {
 		return nil, fmt.Errorf("last insert id: %w", err)
 	}
-	return d.getDispute(id)
+	return d.getDispute(ctx, id)
 }
 
-func (d *DB) UpdateDispute(id int64, resolutionURI string, workerAwardBps int) error {
-	_, err := d.db.Exec(
+func (d *DB) UpdateDispute(ctx context.Context, id int64, resolutionURI string, workerAwardBps int) error {
+	_, err := d.db.ExecContext(ctx,
 		`UPDATE disputes SET resolution_uri = ?, worker_award_bps = ?, status = 'resolved', resolved_at = datetime('now') WHERE id = ?`,
 		resolutionURI, workerAwardBps, id,
 	)
 	return err
 }
 
-func (d *DB) GetDispute(id int64) (*Dispute, error) {
-	return d.getDispute(id)
+func (d *DB) GetDispute(ctx context.Context, id int64) (*Dispute, error) {
+	return d.getDispute(ctx, id)
 }
 
 // GetDisputeByEscrowID returns the most recent open (non-resolved) dispute for the given escrow.
-func (d *DB) GetDisputeByEscrowID(escrowID int64) (*Dispute, error) {
+func (d *DB) GetDisputeByEscrowID(ctx context.Context, escrowID int64) (*Dispute, error) {
 	var disputeID int64
-	err := d.db.QueryRow(
+	err := d.db.QueryRowContext(ctx,
 		`SELECT id FROM disputes WHERE escrow_id = ? AND status != 'resolved' ORDER BY id DESC LIMIT 1`, escrowID,
 	).Scan(&disputeID)
 	if err != nil {
 		return nil, fmt.Errorf("get dispute by escrow id: %w", err)
 	}
-	return d.getDispute(disputeID)
+	return d.getDispute(ctx, disputeID)
 }
 
-func (d *DB) getDispute(id int64) (*Dispute, error) {
+func (d *DB) getDispute(ctx context.Context, id int64) (*Dispute, error) {
 	disp := &Dispute{}
 	var createdAt string
 	var resolvedAt sql.NullString
 	var nullBps sql.NullInt64
-	err := d.db.QueryRow(
+	err := d.db.QueryRowContext(ctx,
 		`SELECT id, escrow_id, raised_by, reason_uri, resolution_uri, worker_award_bps, status, created_at, resolved_at FROM disputes WHERE id = ?`, id,
 	).Scan(&disp.ID, &disp.EscrowID, &disp.RaisedBy, &disp.ReasonURI, &disp.ResolutionURI, &nullBps, &disp.Status, &createdAt, &resolvedAt)
 	if err != nil {
@@ -379,10 +379,10 @@ func (d *DB) getDispute(id int64) (*Dispute, error) {
 
 // Reputation queries
 
-func (d *DB) GetReputation(address, role string) (*Reputation, error) {
+func (d *DB) GetReputation(ctx context.Context, address, role string) (*Reputation, error) {
 	r := &Reputation{}
 	var updatedAt string
-	err := d.db.QueryRow(
+	err := d.db.QueryRowContext(ctx,
 		`SELECT id, address, role, completed, disputed, failed, updated_at FROM reputation WHERE address = ? AND role = ?`,
 		address, role,
 	).Scan(&r.ID, &r.Address, &r.Role, &r.Completed, &r.Disputed, &r.Failed, &updatedAt)
@@ -396,8 +396,8 @@ func (d *DB) GetReputation(address, role string) (*Reputation, error) {
 	return r, nil
 }
 
-func (d *DB) GetReputationByAddress(address string) ([]*Reputation, error) {
-	rows, err := d.db.Query(
+func (d *DB) GetReputationByAddress(ctx context.Context, address string) ([]*Reputation, error) {
+	rows, err := d.db.QueryContext(ctx,
 		`SELECT id, address, role, completed, disputed, failed, updated_at FROM reputation WHERE address = ?`,
 		address,
 	)
@@ -423,7 +423,7 @@ func (d *DB) GetReputationByAddress(address string) ([]*Reputation, error) {
 	return reps, rows.Err()
 }
 
-func (d *DB) UpsertReputation(address, role, outcome string) error {
+func (d *DB) UpsertReputation(ctx context.Context, address, role, outcome string) error {
 	var col string
 	switch outcome {
 	case "completed":
@@ -442,15 +442,15 @@ func (d *DB) UpsertReputation(address, role, outcome string) error {
 		 DO UPDATE SET %s = %s + 1, updated_at = datetime('now')`,
 		col, col, col,
 	)
-	_, err := d.db.Exec(query, address, role)
+	_, err := d.db.ExecContext(ctx, query, address, role)
 	if err != nil {
 		return fmt.Errorf("upsert reputation: %w", err)
 	}
 	return nil
 }
 
-func (d *DB) ListReputations(minCompleted int) ([]*Reputation, error) {
-	rows, err := d.db.Query(
+func (d *DB) ListReputations(ctx context.Context, minCompleted int) ([]*Reputation, error) {
+	rows, err := d.db.QueryContext(ctx,
 		`SELECT id, address, role, completed, disputed, failed, updated_at FROM reputation WHERE completed >= ? ORDER BY completed DESC`,
 		minCompleted,
 	)
@@ -505,8 +505,8 @@ func scanRFQ(scanner interface{ Scan(...any) error }) (*RFQ, error) {
 	return r, nil
 }
 
-func (d *DB) CreateRFQ(r *RFQ) (*RFQ, error) {
-	res, err := d.db.Exec(
+func (d *DB) CreateRFQ(ctx context.Context, r *RFQ) (*RFQ, error) {
+	res, err := d.db.ExecContext(ctx,
 		`INSERT INTO rfqs (title, description, spec_hash, buyer, token, budget_min, budget_max,
 			deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds,
 			verifier, arbitrator, worker_stake, milestones_json, requirements_json,
@@ -524,11 +524,11 @@ func (d *DB) CreateRFQ(r *RFQ) (*RFQ, error) {
 	if err != nil {
 		return nil, fmt.Errorf("last insert id: %w", err)
 	}
-	return d.GetRFQ(id)
+	return d.GetRFQ(ctx, id)
 }
 
-func (d *DB) GetRFQ(id int64) (*RFQ, error) {
-	row := d.db.QueryRow(`SELECT `+rfqColumns+` FROM rfqs WHERE id = ?`, id)
+func (d *DB) GetRFQ(ctx context.Context, id int64) (*RFQ, error) {
+	row := d.db.QueryRowContext(ctx, `SELECT `+rfqColumns+` FROM rfqs WHERE id = ?`, id)
 	r, err := scanRFQ(row)
 	if err != nil {
 		return nil, fmt.Errorf("get rfq: %w", err)
@@ -536,7 +536,7 @@ func (d *DB) GetRFQ(id int64) (*RFQ, error) {
 	return r, nil
 }
 
-func (d *DB) ListRFQs(status, buyer string) ([]*RFQ, error) {
+func (d *DB) ListRFQs(ctx context.Context, status, buyer string) ([]*RFQ, error) {
 	query := `SELECT ` + rfqColumns + ` FROM rfqs WHERE 1=1`
 	var args []any
 
@@ -551,7 +551,7 @@ func (d *DB) ListRFQs(status, buyer string) ([]*RFQ, error) {
 
 	query += ` ORDER BY id DESC`
 
-	rows, err := d.db.Query(query, args...)
+	rows, err := d.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list rfqs: %w", err)
 	}
@@ -568,8 +568,8 @@ func (d *DB) ListRFQs(status, buyer string) ([]*RFQ, error) {
 	return rfqs, rows.Err()
 }
 
-func updateRFQStatusOn(q dbExecer, id int64, status string) error {
-	res, err := q.Exec(
+func updateRFQStatusOn(ctx context.Context, q dbExecer, id int64, status string) error {
+	res, err := q.ExecContext(ctx,
 		`UPDATE rfqs SET status = ?, updated_at = datetime('now') WHERE id = ?`,
 		status, id,
 	)
@@ -586,12 +586,12 @@ func updateRFQStatusOn(q dbExecer, id int64, status string) error {
 	return nil
 }
 
-func (d *DB) UpdateRFQStatus(id int64, status string) error {
-	return updateRFQStatusOn(d.db, id, status)
+func (d *DB) UpdateRFQStatus(ctx context.Context, id int64, status string) error {
+	return updateRFQStatusOn(ctx, d.db, id, status)
 }
 
-func (d *DB) UpdateRFQStatusTx(tx *sql.Tx, id int64, status string) error {
-	return updateRFQStatusOn(tx, id, status)
+func (d *DB) UpdateRFQStatusTx(ctx context.Context, tx *sql.Tx, id int64, status string) error {
+	return updateRFQStatusOn(ctx, tx, id, status)
 }
 
 // Bid queries
@@ -628,8 +628,8 @@ func scanBid(scanner interface{ Scan(...any) error }) (*Bid, error) {
 	return b, nil
 }
 
-func (d *DB) CreateBid(b *Bid) (*Bid, error) {
-	res, err := d.db.Exec(
+func (d *DB) CreateBid(ctx context.Context, b *Bid) (*Bid, error) {
+	res, err := d.db.ExecContext(ctx,
 		`INSERT INTO bids (rfq_id, bidder, amount, estimated_duration, reputation_bond,
 			milestones_json, message, status, expires_at, stake_mandate_id)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -643,11 +643,11 @@ func (d *DB) CreateBid(b *Bid) (*Bid, error) {
 	if err != nil {
 		return nil, fmt.Errorf("last insert id: %w", err)
 	}
-	return d.GetBid(id)
+	return d.GetBid(ctx, id)
 }
 
-func (d *DB) GetBid(id int64) (*Bid, error) {
-	row := d.db.QueryRow(`SELECT `+bidColumns+` FROM bids WHERE id = ?`, id)
+func (d *DB) GetBid(ctx context.Context, id int64) (*Bid, error) {
+	row := d.db.QueryRowContext(ctx, `SELECT `+bidColumns+` FROM bids WHERE id = ?`, id)
 	b, err := scanBid(row)
 	if err != nil {
 		return nil, fmt.Errorf("get bid: %w", err)
@@ -655,8 +655,8 @@ func (d *DB) GetBid(id int64) (*Bid, error) {
 	return b, nil
 }
 
-func (d *DB) ListBidsByRFQ(rfqID int64) ([]*Bid, error) {
-	rows, err := d.db.Query(
+func (d *DB) ListBidsByRFQ(ctx context.Context, rfqID int64) ([]*Bid, error) {
+	rows, err := d.db.QueryContext(ctx,
 		`SELECT `+bidColumns+` FROM bids WHERE rfq_id = ? ORDER BY id DESC`, rfqID,
 	)
 	if err != nil {
@@ -675,8 +675,8 @@ func (d *DB) ListBidsByRFQ(rfqID int64) ([]*Bid, error) {
 	return bids, rows.Err()
 }
 
-func (d *DB) ListBidsByBidder(bidder string) ([]*Bid, error) {
-	rows, err := d.db.Query(
+func (d *DB) ListBidsByBidder(ctx context.Context, bidder string) ([]*Bid, error) {
+	rows, err := d.db.QueryContext(ctx,
 		`SELECT `+bidColumns+` FROM bids WHERE bidder = ? ORDER BY id DESC`, bidder,
 	)
 	if err != nil {
@@ -695,8 +695,8 @@ func (d *DB) ListBidsByBidder(bidder string) ([]*Bid, error) {
 	return bids, rows.Err()
 }
 
-func (d *DB) UpdateBidStatus(id int64, status string) error {
-	res, err := d.db.Exec(
+func (d *DB) UpdateBidStatus(ctx context.Context, id int64, status string) error {
+	res, err := d.db.ExecContext(ctx,
 		`UPDATE bids SET status = ?, updated_at = datetime('now') WHERE id = ?`,
 		status, id,
 	)
@@ -713,8 +713,8 @@ func (d *DB) UpdateBidStatus(id int64, status string) error {
 	return nil
 }
 
-func acceptBidOn(q dbExecer, bidID, escrowID int64) error {
-	res, err := q.Exec(
+func acceptBidOn(ctx context.Context, q dbExecer, bidID, escrowID int64) error {
+	res, err := q.ExecContext(ctx,
 		`UPDATE bids SET status = 'accepted', escrow_id = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending'`,
 		escrowID, bidID,
 	)
@@ -731,17 +731,17 @@ func acceptBidOn(q dbExecer, bidID, escrowID int64) error {
 	return nil
 }
 
-func (d *DB) AcceptBid(bidID, escrowID int64) error {
-	return acceptBidOn(d.db, bidID, escrowID)
+func (d *DB) AcceptBid(ctx context.Context, bidID, escrowID int64) error {
+	return acceptBidOn(ctx, d.db, bidID, escrowID)
 }
 
-func (d *DB) AcceptBidTx(tx *sql.Tx, bidID, escrowID int64) error {
-	return acceptBidOn(tx, bidID, escrowID)
+func (d *DB) AcceptBidTx(ctx context.Context, tx *sql.Tx, bidID, escrowID int64) error {
+	return acceptBidOn(ctx, tx, bidID, escrowID)
 }
 
 // RejectPendingBids sets all pending bids on an RFQ to rejected, except the given bid.
-func rejectPendingBidsOn(q dbExecer, rfqID, exceptBidID int64) error {
-	_, err := q.Exec(
+func rejectPendingBidsOn(ctx context.Context, q dbExecer, rfqID, exceptBidID int64) error {
+	_, err := q.ExecContext(ctx,
 		`UPDATE bids SET status = 'rejected', updated_at = datetime('now')
 		 WHERE rfq_id = ? AND id != ? AND status = 'pending'`,
 		rfqID, exceptBidID,
@@ -752,27 +752,27 @@ func rejectPendingBidsOn(q dbExecer, rfqID, exceptBidID int64) error {
 	return nil
 }
 
-func (d *DB) RejectPendingBids(rfqID, exceptBidID int64) error {
-	return rejectPendingBidsOn(d.db, rfqID, exceptBidID)
+func (d *DB) RejectPendingBids(ctx context.Context, rfqID, exceptBidID int64) error {
+	return rejectPendingBidsOn(ctx, d.db, rfqID, exceptBidID)
 }
 
-func (d *DB) RejectPendingBidsTx(tx *sql.Tx, rfqID, exceptBidID int64) error {
-	return rejectPendingBidsOn(tx, rfqID, exceptBidID)
+func (d *DB) RejectPendingBidsTx(ctx context.Context, tx *sql.Tx, rfqID, exceptBidID int64) error {
+	return rejectPendingBidsOn(ctx, tx, rfqID, exceptBidID)
 }
 
 // Chain log queries
 
-func (d *DB) CreateChainLog(txHash string, logIndex int, blockNumber int64, eventName, contractAddress, rawData string) error {
-	_, err := d.db.Exec(
+func (d *DB) CreateChainLog(ctx context.Context, txHash string, logIndex int, blockNumber int64, eventName, contractAddress, rawData string) error {
+	_, err := d.db.ExecContext(ctx,
 		`INSERT OR IGNORE INTO chain_logs (tx_hash, log_index, block_number, event_name, contract_address, raw_data) VALUES (?, ?, ?, ?, ?, ?)`,
 		txHash, logIndex, blockNumber, eventName, contractAddress, rawData,
 	)
 	return err
 }
 
-func (d *DB) ChainLogExists(txHash string, logIndex int) (bool, error) {
+func (d *DB) ChainLogExists(ctx context.Context, txHash string, logIndex int) (bool, error) {
 	var count int
-	err := d.db.QueryRow(
+	err := d.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM chain_logs WHERE tx_hash = ? AND log_index = ?`, txHash, logIndex,
 	).Scan(&count)
 	return count > 0, err
@@ -780,9 +780,9 @@ func (d *DB) ChainLogExists(txHash string, logIndex int) (bool, error) {
 
 // Cursor queries
 
-func (d *DB) GetCursor(chainID int64, cursorKey string) (int64, error) {
+func (d *DB) GetCursor(ctx context.Context, chainID int64, cursorKey string) (int64, error) {
 	var blockNumber int64
-	err := d.db.QueryRow(
+	err := d.db.QueryRowContext(ctx,
 		`SELECT block_number FROM chain_cursors WHERE chain_id = ? AND cursor_key = ?`, chainID, cursorKey,
 	).Scan(&blockNumber)
 	if err == sql.ErrNoRows {
@@ -791,8 +791,8 @@ func (d *DB) GetCursor(chainID int64, cursorKey string) (int64, error) {
 	return blockNumber, err
 }
 
-func (d *DB) SetCursor(chainID int64, cursorKey string, blockNumber int64) error {
-	_, err := d.db.Exec(
+func (d *DB) SetCursor(ctx context.Context, chainID int64, cursorKey string, blockNumber int64) error {
+	_, err := d.db.ExecContext(ctx,
 		`INSERT INTO chain_cursors (chain_id, cursor_key, block_number)
 		 VALUES (?, ?, ?)
 		 ON CONFLICT(chain_id, cursor_key)
@@ -804,8 +804,8 @@ func (d *DB) SetCursor(chainID int64, cursorKey string, blockNumber int64) error
 
 // Milestone queries
 
-func createMilestoneOn(q dbExecer, m *MilestoneRecord) (*MilestoneRecord, error) {
-	res, err := q.Exec(
+func createMilestoneOn(ctx context.Context, q dbExecer, m *MilestoneRecord) (*MilestoneRecord, error) {
+	res, err := q.ExecContext(ctx,
 		`INSERT INTO milestones (escrow_id, milestone_index, amount, submission_deadline, status)
 		 VALUES (?, ?, ?, ?, ?)`,
 		m.EscrowID, m.MilestoneIndex, m.Amount, m.SubmissionDeadline, m.Status,
@@ -817,7 +817,7 @@ func createMilestoneOn(q dbExecer, m *MilestoneRecord) (*MilestoneRecord, error)
 	if err != nil {
 		return nil, fmt.Errorf("last insert id: %w", err)
 	}
-	row := q.QueryRow(`SELECT `+milestoneColumns+` FROM milestones WHERE id = ?`, id)
+	row := q.QueryRowContext(ctx, `SELECT `+milestoneColumns+` FROM milestones WHERE id = ?`, id)
 	out, err := scanMilestone(row)
 	if err != nil {
 		return nil, fmt.Errorf("get milestone: %w", err)
@@ -825,12 +825,12 @@ func createMilestoneOn(q dbExecer, m *MilestoneRecord) (*MilestoneRecord, error)
 	return out, nil
 }
 
-func (d *DB) CreateMilestone(m *MilestoneRecord) (*MilestoneRecord, error) {
-	return createMilestoneOn(d.db, m)
+func (d *DB) CreateMilestone(ctx context.Context, m *MilestoneRecord) (*MilestoneRecord, error) {
+	return createMilestoneOn(ctx, d.db, m)
 }
 
-func (d *DB) CreateMilestoneTx(tx *sql.Tx, m *MilestoneRecord) (*MilestoneRecord, error) {
-	return createMilestoneOn(tx, m)
+func (d *DB) CreateMilestoneTx(ctx context.Context, tx *sql.Tx, m *MilestoneRecord) (*MilestoneRecord, error) {
+	return createMilestoneOn(ctx, tx, m)
 }
 
 const milestoneColumns = `id, escrow_id, milestone_index, amount, submission_deadline, status,
@@ -870,8 +870,8 @@ func scanMilestone(scanner interface{ Scan(...any) error }) (*MilestoneRecord, e
 	return m, nil
 }
 
-func (d *DB) GetMilestone(id int64) (*MilestoneRecord, error) {
-	row := d.db.QueryRow(`SELECT `+milestoneColumns+` FROM milestones WHERE id = ?`, id)
+func (d *DB) GetMilestone(ctx context.Context, id int64) (*MilestoneRecord, error) {
+	row := d.db.QueryRowContext(ctx, `SELECT `+milestoneColumns+` FROM milestones WHERE id = ?`, id)
 	m, err := scanMilestone(row)
 	if err != nil {
 		return nil, fmt.Errorf("get milestone: %w", err)
@@ -879,8 +879,8 @@ func (d *DB) GetMilestone(id int64) (*MilestoneRecord, error) {
 	return m, nil
 }
 
-func (d *DB) GetMilestonesByEscrow(escrowID int64) ([]*MilestoneRecord, error) {
-	rows, err := d.db.Query(
+func (d *DB) GetMilestonesByEscrow(ctx context.Context, escrowID int64) ([]*MilestoneRecord, error) {
+	rows, err := d.db.QueryContext(ctx,
 		`SELECT `+milestoneColumns+` FROM milestones WHERE escrow_id = ? ORDER BY milestone_index`, escrowID,
 	)
 	if err != nil {
@@ -902,8 +902,8 @@ func (d *DB) GetMilestonesByEscrow(escrowID int64) ([]*MilestoneRecord, error) {
 	return milestones, nil
 }
 
-func (d *DB) UpdateMilestoneStatus(escrowID int64, milestoneIndex int, status string) error {
-	res, err := d.db.Exec(
+func (d *DB) UpdateMilestoneStatus(ctx context.Context, escrowID int64, milestoneIndex int, status string) error {
+	res, err := d.db.ExecContext(ctx,
 		`UPDATE milestones SET status = ?, updated_at = datetime('now') WHERE escrow_id = ? AND milestone_index = ?`,
 		status, escrowID, milestoneIndex,
 	)
@@ -920,8 +920,8 @@ func (d *DB) UpdateMilestoneStatus(escrowID int64, milestoneIndex int, status st
 	return nil
 }
 
-func (d *DB) UpdateMilestoneSubmission(escrowID int64, milestoneIndex int, hash, uri string) error {
-	res, err := d.db.Exec(
+func (d *DB) UpdateMilestoneSubmission(ctx context.Context, escrowID int64, milestoneIndex int, hash, uri string) error {
+	res, err := d.db.ExecContext(ctx,
 		`UPDATE milestones SET submission_hash = ?, submission_uri = ?, submitted_at = datetime('now'),
 		        status = 'submitted', updated_at = datetime('now')
 		 WHERE escrow_id = ? AND milestone_index = ?`,
@@ -940,8 +940,8 @@ func (d *DB) UpdateMilestoneSubmission(escrowID int64, milestoneIndex int, hash,
 	return nil
 }
 
-func (d *DB) UpdateEscrowBackupActivated(id int64, activeWorker string, newDeadline uint64) error {
-	res, err := d.db.Exec(
+func (d *DB) UpdateEscrowBackupActivated(ctx context.Context, id int64, activeWorker string, newDeadline uint64) error {
+	res, err := d.db.ExecContext(ctx,
 		`UPDATE escrows SET active_worker = ?, backup_activated = 1, submission_deadline = ?, updated_at = datetime('now') WHERE id = ?`,
 		activeWorker, newDeadline, id,
 	)
@@ -996,8 +996,8 @@ func scanA2ATask(scanner interface{ Scan(...any) error }) (*A2ATask, error) {
 	return t, nil
 }
 
-func (d *DB) CreateA2ATask(t *A2ATask) (*A2ATask, error) {
-	res, err := d.db.Exec(
+func (d *DB) CreateA2ATask(ctx context.Context, t *A2ATask) (*A2ATask, error) {
+	res, err := d.db.ExecContext(ctx,
 		`INSERT INTO a2a_tasks (a2a_task_id, session_id, escrow_id, delegator_agent, delegatee_agent,
 			verification_policy_json, escrow_trigger, a2a_status, metadata_json)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1011,11 +1011,11 @@ func (d *DB) CreateA2ATask(t *A2ATask) (*A2ATask, error) {
 	if err != nil {
 		return nil, fmt.Errorf("last insert id: %w", err)
 	}
-	return d.GetA2ATask(id)
+	return d.GetA2ATask(ctx, id)
 }
 
-func (d *DB) GetA2ATask(id int64) (*A2ATask, error) {
-	row := d.db.QueryRow(`SELECT `+a2aTaskColumns+` FROM a2a_tasks WHERE id = ?`, id)
+func (d *DB) GetA2ATask(ctx context.Context, id int64) (*A2ATask, error) {
+	row := d.db.QueryRowContext(ctx, `SELECT `+a2aTaskColumns+` FROM a2a_tasks WHERE id = ?`, id)
 	t, err := scanA2ATask(row)
 	if err != nil {
 		return nil, fmt.Errorf("get a2a_task: %w", err)
@@ -1023,8 +1023,8 @@ func (d *DB) GetA2ATask(id int64) (*A2ATask, error) {
 	return t, nil
 }
 
-func (d *DB) GetA2ATaskByTaskID(a2aTaskID string) (*A2ATask, error) {
-	row := d.db.QueryRow(`SELECT `+a2aTaskColumns+` FROM a2a_tasks WHERE a2a_task_id = ?`, a2aTaskID)
+func (d *DB) GetA2ATaskByTaskID(ctx context.Context, a2aTaskID string) (*A2ATask, error) {
+	row := d.db.QueryRowContext(ctx, `SELECT `+a2aTaskColumns+` FROM a2a_tasks WHERE a2a_task_id = ?`, a2aTaskID)
 	t, err := scanA2ATask(row)
 	if err != nil {
 		return nil, fmt.Errorf("get a2a_task by task_id: %w", err)
@@ -1032,8 +1032,8 @@ func (d *DB) GetA2ATaskByTaskID(a2aTaskID string) (*A2ATask, error) {
 	return t, nil
 }
 
-func (d *DB) UpdateA2ATaskStatus(id int64, status string) error {
-	res, err := d.db.Exec(
+func (d *DB) UpdateA2ATaskStatus(ctx context.Context, id int64, status string) error {
+	res, err := d.db.ExecContext(ctx,
 		`UPDATE a2a_tasks SET a2a_status = ?, updated_at = datetime('now') WHERE id = ?`,
 		status, id,
 	)
@@ -1050,8 +1050,8 @@ func (d *DB) UpdateA2ATaskStatus(id int64, status string) error {
 	return nil
 }
 
-func (d *DB) UpdateA2ATaskEscrow(id int64, escrowID int64) error {
-	res, err := d.db.Exec(
+func (d *DB) UpdateA2ATaskEscrow(ctx context.Context, id int64, escrowID int64) error {
+	res, err := d.db.ExecContext(ctx,
 		`UPDATE a2a_tasks SET escrow_id = ?, updated_at = datetime('now') WHERE id = ?`,
 		escrowID, id,
 	)
@@ -1068,8 +1068,8 @@ func (d *DB) UpdateA2ATaskEscrow(id int64, escrowID int64) error {
 	return nil
 }
 
-func (d *DB) ListA2ATasksBySession(sessionID string) ([]*A2ATask, error) {
-	rows, err := d.db.Query(
+func (d *DB) ListA2ATasksBySession(ctx context.Context, sessionID string) ([]*A2ATask, error) {
+	rows, err := d.db.QueryContext(ctx,
 		`SELECT `+a2aTaskColumns+` FROM a2a_tasks WHERE session_id = ? ORDER BY id DESC`, sessionID,
 	)
 	if err != nil {

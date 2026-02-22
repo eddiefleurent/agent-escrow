@@ -189,6 +189,42 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		backupDeadlineExt = bde
 	}
 
+	// Validate all uint64→int64 conversions before any on-chain or DB side effects.
+	submissionDeadline, err := numconv.Uint64ToInt64(deadline, "submission_deadline")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	reviewPeriod, err := numconv.Uint64ToInt64(review, "review_period_seconds")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	disputePeriod, err := numconv.Uint64ToInt64(dispute, "dispute_period_seconds")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	arbitratorTimeout, err := numconv.Uint64ToInt64(arbTimeout, "arbitrator_timeout_seconds")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	backupDeadline, err := numconv.Uint64ToInt64(backupDeadlineExt, "backup_deadline_extension")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	msDeadlinesInt64 := make([]int64, len(milestones))
+	for i, m := range milestones {
+		msDeadlinesInt64[i], err = numconv.Uint64ToInt64(m.SubmissionDeadline, fmt.Sprintf("milestones[%d].submission_deadline", i))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+
 	factory := common.HexToAddress(h.cfg.FactoryAddress)
 	params := chain.CreateEscrowParams{
 		Buyer:                    common.HexToAddress(req.Buyer),
@@ -220,7 +256,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := h.db.CreateTask(req.Title, req.Description, specHash.Hex())
+	task, err := h.db.CreateTask(r.Context(), req.Title, req.Description, specHash.Hex())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("db: %v", err)})
 		return
@@ -230,33 +266,8 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 	if len(milestones) > 0 {
 		milestoneCount = len(milestones)
 	}
-	submissionDeadline, err := numconv.Uint64ToInt64(deadline, "submission_deadline")
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	reviewPeriod, err := numconv.Uint64ToInt64(review, "review_period_seconds")
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	disputePeriod, err := numconv.Uint64ToInt64(dispute, "dispute_period_seconds")
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	arbitratorTimeout, err := numconv.Uint64ToInt64(arbTimeout, "arbitrator_timeout_seconds")
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	backupDeadline, err := numconv.Uint64ToInt64(backupDeadlineExt, "backup_deadline_extension")
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
 
-	escrow, err := h.db.CreateEscrow(&storage.Escrow{
+	escrow, err := h.db.CreateEscrow(r.Context(), &storage.Escrow{
 		TaskID:                   task.ID,
 		ChainID:                  h.cfg.ChainID,
 		FactoryAddress:           h.cfg.FactoryAddress,
@@ -286,16 +297,11 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for i, m := range milestones {
-		msDeadline, convErr := numconv.Uint64ToInt64(m.SubmissionDeadline, fmt.Sprintf("milestones[%d].submission_deadline", i))
-		if convErr != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": convErr.Error()})
-			return
-		}
-		_, err := h.db.CreateMilestone(&storage.MilestoneRecord{
+		_, err := h.db.CreateMilestone(r.Context(), &storage.MilestoneRecord{
 			EscrowID:           escrow.ID,
 			MilestoneIndex:     i,
 			Amount:             m.Amount.String(),
-			SubmissionDeadline: msDeadline,
+			SubmissionDeadline: msDeadlinesInt64[i],
 			Status:             "pending",
 		})
 		if err != nil {
@@ -323,7 +329,7 @@ func (h *Handlers) GetEscrow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	escrow, err := h.db.GetEscrow(id)
+	escrow, err := h.db.GetEscrow(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
@@ -332,7 +338,7 @@ func (h *Handlers) GetEscrow(w http.ResponseWriter, r *http.Request) {
 	result := map[string]any{"escrow": escrow}
 
 	if escrow.MilestoneCount > 1 {
-		milestones, err := h.db.GetMilestonesByEscrow(id)
+		milestones, err := h.db.GetMilestonesByEscrow(r.Context(), id)
 		if err != nil {
 			slog.Error("failed to fetch milestones", "escrow_id", id, "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch milestones"})
@@ -349,7 +355,7 @@ func (h *Handlers) ListEscrows(w http.ResponseWriter, r *http.Request) {
 	address := r.URL.Query().Get("address")
 	status := r.URL.Query().Get("status")
 
-	escrows, err := h.db.ListEscrows(role, address, status)
+	escrows, err := h.db.ListEscrows(r.Context(), role, address, status)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -365,7 +371,7 @@ func (h *Handlers) FundEscrow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	escrow, err := h.db.GetEscrow(id)
+	escrow, err := h.db.GetEscrow(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
@@ -423,7 +429,7 @@ func (h *Handlers) DepositStake(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	escrow, err := h.db.GetEscrow(id)
+	escrow, err := h.db.GetEscrow(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
@@ -492,7 +498,7 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	escrow, err := h.db.GetEscrow(id)
+	escrow, err := h.db.GetEscrow(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
@@ -557,7 +563,7 @@ func (h *Handlers) ApproveWork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	escrow, err := h.db.GetEscrow(id)
+	escrow, err := h.db.GetEscrow(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
@@ -649,7 +655,7 @@ func (h *Handlers) DisputeWork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	escrow, err := h.db.GetEscrow(id)
+	escrow, err := h.db.GetEscrow(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
@@ -761,7 +767,7 @@ func (h *Handlers) ResolveDispute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	escrow, err := h.db.GetEscrow(id)
+	escrow, err := h.db.GetEscrow(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
@@ -811,7 +817,7 @@ func (h *Handlers) AbortRemainingMilestones(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	escrow, err := h.db.GetEscrow(id)
+	escrow, err := h.db.GetEscrow(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
@@ -839,7 +845,7 @@ func (h *Handlers) ActivateBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	escrow, err := h.db.GetEscrow(id)
+	escrow, err := h.db.GetEscrow(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
@@ -880,7 +886,7 @@ func (h *Handlers) GetReputation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if role != "" {
-		rep, err := h.db.GetReputation(addr, role)
+		rep, err := h.db.GetReputation(r.Context(), addr, role)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				writeJSON(w, http.StatusOK, map[string]any{
@@ -897,7 +903,7 @@ func (h *Handlers) GetReputation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reps, err := h.db.GetReputationByAddress(addr)
+	reps, err := h.db.GetReputationByAddress(r.Context(), addr)
 	if err != nil {
 		slog.Error("GetReputationByAddress DB error", "address", addr, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
@@ -977,7 +983,7 @@ func (h *Handlers) CreateRFQ(w http.ResponseWriter, r *http.Request) {
 	}
 
 	svc := h.biddingService()
-	rfq, err := svc.CreateRFQ(bidding.CreateRFQParams{
+	rfq, err := svc.CreateRFQ(r.Context(), bidding.CreateRFQParams{
 		Title:                    req.Title,
 		Description:              req.Description,
 		Buyer:                    req.Buyer,
@@ -1007,7 +1013,7 @@ func (h *Handlers) ListRFQs(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	buyer := r.URL.Query().Get("buyer")
 
-	rfqs, err := h.db.ListRFQs(status, buyer)
+	rfqs, err := h.db.ListRFQs(r.Context(), status, buyer)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -1023,13 +1029,13 @@ func (h *Handlers) GetRFQ(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rfq, err := h.db.GetRFQ(id)
+	rfq, err := h.db.GetRFQ(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
 
-	bids, err := h.db.ListBidsByRFQ(id)
+	bids, err := h.db.ListBidsByRFQ(r.Context(), id)
 	if err != nil {
 		slog.Error("failed to fetch bids for rfq", "rfq_id", id, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch bids"})
@@ -1049,7 +1055,7 @@ func (h *Handlers) CancelRFQ(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rfq, err := h.db.GetRFQ(id)
+	rfq, err := h.db.GetRFQ(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
@@ -1059,20 +1065,20 @@ func (h *Handlers) CancelRFQ(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.db.UpdateRFQStatus(id, "cancelled"); err != nil {
+	if err := h.db.UpdateRFQStatus(r.Context(), id, "cancelled"); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := h.db.RejectPendingBids(id, 0); err != nil {
+	if err := h.db.RejectPendingBids(r.Context(), id, 0); err != nil {
 		slog.Error("failed to reject pending bids on cancel", "rfq_id", id, "error", err)
-		if rollbackErr := h.db.UpdateRFQStatus(id, "open"); rollbackErr != nil {
+		if rollbackErr := h.db.UpdateRFQStatus(r.Context(), id, "open"); rollbackErr != nil {
 			slog.Error("failed to rollback rfq status after RejectPendingBids failure", "rfq_id", id, "error", rollbackErr)
 		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("cancel failed: %v", err)})
 		return
 	}
 
-	rfq, _ = h.db.GetRFQ(id)
+	rfq, _ = h.db.GetRFQ(r.Context(), id)
 	writeJSON(w, http.StatusOK, rfq)
 }
 
@@ -1106,7 +1112,7 @@ func (h *Handlers) PlaceBid(w http.ResponseWriter, r *http.Request) {
 	}
 
 	svc := h.biddingService()
-	bid, err := svc.PlaceBid(bidding.PlaceBidParams{
+	bid, err := svc.PlaceBid(r.Context(), bidding.PlaceBidParams{
 		RFQID:             rfqID,
 		Bidder:            req.Bidder,
 		Amount:            req.Amount,
@@ -1131,7 +1137,7 @@ func (h *Handlers) ListBids(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bids, err := h.db.ListBidsByRFQ(rfqID)
+	bids, err := h.db.ListBidsByRFQ(r.Context(), rfqID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

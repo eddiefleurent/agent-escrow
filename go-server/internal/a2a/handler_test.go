@@ -1,6 +1,7 @@
 package a2a
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -110,8 +111,9 @@ func TestHandleJSONRPC_TasksSend(t *testing.T) {
 
 func TestHandleJSONRPC_TasksGet(t *testing.T) {
 	h, svc := setupHandler(t)
+	ctx := context.Background()
 
-	_, err := svc.HandleTaskSend(TaskSendParams{
+	_, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		ID: "get-test-task",
 		Message: Message{
 			Role:  "user",
@@ -146,8 +148,9 @@ func TestHandleJSONRPC_TasksGet(t *testing.T) {
 
 func TestHandleJSONRPC_TasksCancel(t *testing.T) {
 	h, svc := setupHandler(t)
+	ctx := context.Background()
 
-	_, err := svc.HandleTaskSend(TaskSendParams{
+	_, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		ID: "cancel-test-task",
 		Message: Message{
 			Role:  "user",

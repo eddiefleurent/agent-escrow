@@ -10,15 +10,21 @@ linters:
     - dupword
     - durationcheck
     - errcheck
+    - errname
     - errorlint
     - fatcontext
+    - forcetypeassert
+    - gocritic
     - gosec
     - govet
     - ineffassign
     - misspell
     - nilerr
     - nilnesserr
+    - noctx
+    - nolintlint
     - perfsprint
+    - reassign
     - revive
     - sloglint
     - sqlclosecheck
@@ -31,6 +37,12 @@ linters:
       check-type-assertions: true
       exclude-functions:
         - (*database/sql.Tx).Rollback
+    gocritic:
+      enabled-tags:
+        - diagnostic
+    nolintlint:
+      require-explanation: true
+      require-specific: true
     gosec:
       excludes:
         # Rollback/Close in error-cleanup paths -- standard Go pattern.
@@ -78,6 +90,7 @@ linters:
           - bodyclose
           - dupl
           - errcheck
+          - forcetypeassert
           - gosec
       - path: abi/embed\.go
         linters:

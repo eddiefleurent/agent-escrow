@@ -41,148 +41,63 @@ func Open(dsn string) (*DB, error) {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 
+	ctx := context.Background()
+
 	// Enable WAL mode for better concurrent read performance
-	if _, err := sqlDB.Exec("PRAGMA journal_mode=WAL"); err != nil {
+	if _, err := sqlDB.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("enable WAL: %w", err)
 	}
-	if _, err := sqlDB.Exec("PRAGMA foreign_keys=ON"); err != nil {
+	if _, err := sqlDB.ExecContext(ctx, "PRAGMA foreign_keys=ON"); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
-	if _, err := sqlDB.Exec(migrationSQL); err != nil {
+	if _, err := sqlDB.ExecContext(ctx, migrationSQL); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)
 	}
 
-	// Run migration 002 idempotently inside a transaction for atomicity
-	tx, err := sqlDB.Begin()
-	if err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("begin migration 002 tx: %w", err)
+	migrations := []struct {
+		name string
+		sql  string
+	}{
+		{"002", migration002SQL},
+		{"003", migration003SQL},
+		{"004", migration004SQL},
+		{"005", migration005SQL},
+		{"006", migration006SQL},
+		{"007", migration007SQL},
 	}
-	for _, stmt := range splitStatements(migration002SQL) {
-		if _, err := tx.Exec(stmt); err != nil {
-			if !isDuplicateColumnError(err) {
+
+	for _, m := range migrations {
+		if err := runIdempotentMigration(ctx, sqlDB, m.name, m.sql); err != nil {
+			sqlDB.Close()
+			return nil, err
+		}
+	}
+
+	return &DB{db: sqlDB}, nil
+}
+
+func runIdempotentMigration(ctx context.Context, sqlDB *sql.DB, name, migrationSQL string) error {
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin migration %s tx: %w", name, err)
+	}
+	for _, stmt := range splitStatements(migrationSQL) {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			if !isDuplicateColumnError(err) && !isAlreadyExistsError(err) {
 				tx.Rollback()
-				sqlDB.Close()
-				return nil, fmt.Errorf("run migration 002: %w", err)
+				return fmt.Errorf("run migration %s: %w", name, err)
 			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		tx.Rollback()
-		sqlDB.Close()
-		return nil, fmt.Errorf("commit migration 002: %w", err)
+		return fmt.Errorf("commit migration %s: %w", name, err)
 	}
-
-	// Run migration 003 (backup agent) idempotently
-	tx3, err := sqlDB.Begin()
-	if err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("begin migration 003 tx: %w", err)
-	}
-	for _, stmt := range splitStatements(migration003SQL) {
-		if _, err := tx3.Exec(stmt); err != nil {
-			if !isDuplicateColumnError(err) {
-				tx3.Rollback()
-				sqlDB.Close()
-				return nil, fmt.Errorf("run migration 003: %w", err)
-			}
-		}
-	}
-	if err := tx3.Commit(); err != nil {
-		tx3.Rollback()
-		sqlDB.Close()
-		return nil, fmt.Errorf("commit migration 003: %w", err)
-	}
-
-	// Run migration 004 (reputation) idempotently
-	tx4, err := sqlDB.Begin()
-	if err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("begin migration 004 tx: %w", err)
-	}
-	for _, stmt := range splitStatements(migration004SQL) {
-		if _, err := tx4.Exec(stmt); err != nil {
-			if !isDuplicateColumnError(err) {
-				tx4.Rollback()
-				sqlDB.Close()
-				return nil, fmt.Errorf("run migration 004: %w", err)
-			}
-		}
-	}
-	if err := tx4.Commit(); err != nil {
-		tx4.Rollback()
-		sqlDB.Close()
-		return nil, fmt.Errorf("commit migration 004: %w", err)
-	}
-
-	// Run migration 005 (bidding) idempotently
-	tx5, err := sqlDB.Begin()
-	if err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("begin migration 005 tx: %w", err)
-	}
-	for _, stmt := range splitStatements(migration005SQL) {
-		if _, err := tx5.Exec(stmt); err != nil {
-			if !isDuplicateColumnError(err) && !isAlreadyExistsError(err) {
-				tx5.Rollback()
-				sqlDB.Close()
-				return nil, fmt.Errorf("run migration 005: %w", err)
-			}
-		}
-	}
-	if err := tx5.Commit(); err != nil {
-		tx5.Rollback()
-		sqlDB.Close()
-		return nil, fmt.Errorf("commit migration 005: %w", err)
-	}
-
-	// Run migration 006 (A2A tasks) idempotently
-	tx6, err := sqlDB.Begin()
-	if err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("begin migration 006 tx: %w", err)
-	}
-	for _, stmt := range splitStatements(migration006SQL) {
-		if _, err := tx6.Exec(stmt); err != nil {
-			if !isDuplicateColumnError(err) && !isAlreadyExistsError(err) {
-				tx6.Rollback()
-				sqlDB.Close()
-				return nil, fmt.Errorf("run migration 006: %w", err)
-			}
-		}
-	}
-	if err := tx6.Commit(); err != nil {
-		tx6.Rollback()
-		sqlDB.Close()
-		return nil, fmt.Errorf("commit migration 006: %w", err)
-	}
-
-	// Run migration 007 (AP2 mandates) idempotently
-	tx7, err := sqlDB.Begin()
-	if err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("begin migration 007 tx: %w", err)
-	}
-	for _, stmt := range splitStatements(migration007SQL) {
-		if _, err := tx7.Exec(stmt); err != nil {
-			if !isDuplicateColumnError(err) && !isAlreadyExistsError(err) {
-				tx7.Rollback()
-				sqlDB.Close()
-				return nil, fmt.Errorf("run migration 007: %w", err)
-			}
-		}
-	}
-	if err := tx7.Commit(); err != nil {
-		tx7.Rollback()
-		sqlDB.Close()
-		return nil, fmt.Errorf("commit migration 007: %w", err)
-	}
-
-	return &DB{db: sqlDB}, nil
+	return nil
 }
 
 func (d *DB) Close() error {

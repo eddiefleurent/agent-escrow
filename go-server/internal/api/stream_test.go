@@ -2,9 +2,11 @@ package api
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +22,11 @@ func TestSSEHandler_ReceivesEvents(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(sh.HandleSSE))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "?granularity=L1")
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"?granularity=L1", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("SSE connect: %v", err)
 	}
@@ -99,7 +105,11 @@ func TestSSEHandler_EscrowFiltered(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/escrows/0xABC/events?granularity=L1")
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/api/v1/escrows/0xABC/events?granularity=L1", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("SSE connect: %v", err)
 	}
@@ -255,7 +265,11 @@ func TestSSEHandler_IntegrationWithRouter(t *testing.T) {
 	srv := httptest.NewServer(env.mux)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/events?granularity=L1")
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/api/v1/events?granularity=L1", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("SSE connect: %v", err)
 	}
@@ -278,7 +292,7 @@ func TestMCPSubscribeEvents(t *testing.T) {
 			Name:   events.EventEscrowFunded,
 			Escrow: "0xABC",
 			Level:  events.L1,
-			ID:     events.EventEscrowFunded + "-" + itoa(uint64(i)),
+			ID:     events.EventEscrowFunded + "-" + strconv.FormatUint(uint64(i), 10),
 			Block:  uint64(100 + i),
 		})
 	}
@@ -308,18 +322,4 @@ func TestMCPSubscribeEvents(t *testing.T) {
 	if len(data) == 0 {
 		t.Error("expected non-empty JSON output")
 	}
-}
-
-func itoa(n uint64) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
 }

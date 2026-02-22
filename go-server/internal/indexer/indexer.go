@@ -227,7 +227,7 @@ func (idx *Indexer) RunOnce(ctx context.Context) error {
 		return fmt.Errorf("get block number: %w", err)
 	}
 
-	cursor, err := idx.db.GetCursor(idx.chainID, cursorKey)
+	cursor, err := idx.db.GetCursor(ctx, idx.chainID, cursorKey)
 	if err != nil {
 		return fmt.Errorf("get cursor: %w", err)
 	}
@@ -256,7 +256,7 @@ func (idx *Indexer) RunOnce(ctx context.Context) error {
 	}
 
 	// Index escrow events for escrows on this chain only
-	escrows, err := idx.db.ListEscrowsByChainID(idx.chainID)
+	escrows, err := idx.db.ListEscrowsByChainID(ctx, idx.chainID)
 	if err != nil {
 		return fmt.Errorf("list escrows: %w", err)
 	}
@@ -268,7 +268,7 @@ func (idx *Indexer) RunOnce(ctx context.Context) error {
 	}
 
 	// Update cursor
-	if err := idx.db.SetCursor(idx.chainID, cursorKey, int64(currentBlock)); err != nil {
+	if err := idx.db.SetCursor(ctx, idx.chainID, cursorKey, int64(currentBlock)); err != nil {
 		return fmt.Errorf("set cursor: %w", err)
 	}
 
@@ -284,7 +284,7 @@ func (idx *Indexer) indexFactoryEvents(ctx context.Context, from, to uint64) err
 	}
 
 	for _, lg := range logs {
-		if err := idx.ProcessFactoryLog(lg); err != nil {
+		if err := idx.ProcessFactoryLog(ctx, lg); err != nil {
 			slog.Warn("factory log processing failed", "tx_hash", lg.TxHash.Hex(), "log_index", lg.Index, "error", err)
 		}
 	}
@@ -293,12 +293,12 @@ func (idx *Indexer) indexFactoryEvents(ctx context.Context, from, to uint64) err
 
 // ProcessFactoryLog deduplicates, stores, and dispatches a single factory event log.
 // Exported so the CDP webhook handler can reuse the same processing pipeline.
-func (idx *Indexer) ProcessFactoryLog(lg types.Log) error {
+func (idx *Indexer) ProcessFactoryLog(ctx context.Context, lg types.Log) error {
 	logIndex, err := numconv.UintToInt(lg.Index, "log index")
 	if err != nil {
 		return err
 	}
-	exists, err := idx.db.ChainLogExists(lg.TxHash.Hex(), logIndex)
+	exists, err := idx.db.ChainLogExists(ctx, lg.TxHash.Hex(), logIndex)
 	if err != nil {
 		return err
 	}
@@ -319,16 +319,16 @@ func (idx *Indexer) ProcessFactoryLog(lg types.Log) error {
 	if err != nil {
 		return err
 	}
-	if err := idx.db.CreateChainLog(lg.TxHash.Hex(), logIndex, blockNumber, event.Name, lg.Address.Hex(), string(rawData)); err != nil {
+	if err := idx.db.CreateChainLog(ctx, lg.TxHash.Hex(), logIndex, blockNumber, event.Name, lg.Address.Hex(), string(rawData)); err != nil {
 		return err
 	}
 
 	var handlerErr error
 	switch event.Name {
 	case "EscrowCreated":
-		handlerErr = idx.handleEscrowCreated(lg)
+		handlerErr = idx.handleEscrowCreated(ctx, lg)
 	case "OutcomeRecorded":
-		handlerErr = idx.handleOutcomeRecorded(lg)
+		handlerErr = idx.handleOutcomeRecorded(ctx, lg)
 	}
 	if handlerErr == nil {
 		escrowAddr := ""
@@ -340,7 +340,7 @@ func (idx *Indexer) ProcessFactoryLog(lg types.Log) error {
 	return handlerErr
 }
 
-func (idx *Indexer) handleEscrowCreated(lg types.Log) error {
+func (idx *Indexer) handleEscrowCreated(ctx context.Context, lg types.Log) error {
 	// EscrowCreated(uint256 indexed escrowId, address indexed escrow, address indexed buyer, address worker, address verifier, address arbitrator, bytes32 taskSpecHash, address token)
 	if len(lg.Topics) < 4 {
 		return errors.New("insufficient topics")
@@ -386,7 +386,7 @@ func (idx *Indexer) handleEscrowCreated(lg types.Log) error {
 	buyer := common.BytesToAddress(lg.Topics[3].Bytes())
 
 	// Check if escrow already exists (e.g. created via API/MCP handler with on-chain fields already set)
-	_, err = idx.db.GetEscrowByAddress(escrowAddr.Hex())
+	_, err = idx.db.GetEscrowByAddress(ctx, escrowAddr.Hex())
 	if err == nil {
 		return nil
 	}
@@ -394,12 +394,12 @@ func (idx *Indexer) handleEscrowCreated(lg types.Log) error {
 		return fmt.Errorf("check existing escrow %s: %w", escrowAddr.Hex(), err)
 	}
 
-	task, err := idx.db.CreateTask("Indexed task", "", fmt.Sprintf("0x%x", taskSpecHash))
+	task, err := idx.db.CreateTask(ctx, "Indexed task", "", fmt.Sprintf("0x%x", taskSpecHash))
 	if err != nil {
 		return fmt.Errorf("create task: %w", err)
 	}
 
-	_, err = idx.db.CreateEscrow(&storage.Escrow{
+	_, err = idx.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID:             task.ID,
 		ChainID:            idx.chainID,
 		FactoryAddress:     idx.factoryAddress.Hex(),
@@ -417,7 +417,7 @@ func (idx *Indexer) handleEscrowCreated(lg types.Log) error {
 	return err
 }
 
-func (idx *Indexer) handleOutcomeRecorded(lg types.Log) error {
+func (idx *Indexer) handleOutcomeRecorded(ctx context.Context, lg types.Log) error {
 	// OutcomeRecorded(uint256 indexed escrowId, address indexed participant, string role, string outcome)
 	if len(lg.Topics) < 3 {
 		return fmt.Errorf("OutcomeRecorded: insufficient topics (got %d, need >= 3)", len(lg.Topics))
@@ -448,7 +448,7 @@ func (idx *Indexer) handleOutcomeRecorded(lg types.Log) error {
 		"outcome", outcome,
 	)
 
-	return idx.db.UpsertReputation(strings.ToLower(participant.Hex()), role, outcome)
+	return idx.db.UpsertReputation(ctx, strings.ToLower(participant.Hex()), role, outcome)
 }
 
 func (idx *Indexer) indexEscrowEvents(ctx context.Context, escrowAddr common.Address, dbEscrowID int64, from, to uint64) error {
@@ -458,15 +458,15 @@ func (idx *Indexer) indexEscrowEvents(ctx context.Context, escrowAddr common.Add
 	}
 
 	for _, lg := range logs {
-		if err := idx.ProcessEscrowLog(lg, dbEscrowID); err != nil {
+		if err := idx.ProcessEscrowLog(ctx, lg, dbEscrowID); err != nil {
 			slog.Warn("escrow log processing failed", "tx_hash", lg.TxHash.Hex(), "log_index", lg.Index, "error", err)
 		}
 	}
 	return nil
 }
 
-func (idx *Indexer) isTerminalStatus(dbEscrowID int64) bool {
-	e, err := idx.db.GetEscrow(dbEscrowID)
+func (idx *Indexer) isTerminalStatus(ctx context.Context, dbEscrowID int64) bool {
+	e, err := idx.db.GetEscrow(ctx, dbEscrowID)
 	if err != nil {
 		return false
 	}
@@ -475,12 +475,12 @@ func (idx *Indexer) isTerminalStatus(dbEscrowID int64) bool {
 
 // ProcessEscrowLog deduplicates, stores, and dispatches a single escrow event log.
 // Exported so the CDP webhook handler can reuse the same processing pipeline.
-func (idx *Indexer) ProcessEscrowLog(lg types.Log, dbEscrowID int64) error {
+func (idx *Indexer) ProcessEscrowLog(ctx context.Context, lg types.Log, dbEscrowID int64) error {
 	logIndex, err := numconv.UintToInt(lg.Index, "log index")
 	if err != nil {
 		return err
 	}
-	exists, err := idx.db.ChainLogExists(lg.TxHash.Hex(), logIndex)
+	exists, err := idx.db.ChainLogExists(ctx, lg.TxHash.Hex(), logIndex)
 	if err != nil {
 		return err
 	}
@@ -501,7 +501,7 @@ func (idx *Indexer) ProcessEscrowLog(lg types.Log, dbEscrowID int64) error {
 	if err != nil {
 		return err
 	}
-	if err := idx.db.CreateChainLog(lg.TxHash.Hex(), logIndex, blockNumber, event.Name, lg.Address.Hex(), string(rawData)); err != nil {
+	if err := idx.db.CreateChainLog(ctx, lg.TxHash.Hex(), logIndex, blockNumber, event.Name, lg.Address.Hex(), string(rawData)); err != nil {
 		return err
 	}
 
@@ -510,8 +510,8 @@ func (idx *Indexer) ProcessEscrowLog(lg types.Log, dbEscrowID int64) error {
 	// abortRemainingMilestones) to prevent the subsequent Settled event emitted
 	// by _settleWorkerStake from incorrectly overwriting it to "settled".
 	if newStatus, ok := eventStatusMap[event.Name]; ok {
-		if !idx.isTerminalStatus(dbEscrowID) {
-			if err := idx.db.UpdateEscrowStatus(dbEscrowID, newStatus); err != nil {
+		if !idx.isTerminalStatus(ctx, dbEscrowID) {
+			if err := idx.db.UpdateEscrowStatus(ctx, dbEscrowID, newStatus); err != nil {
 				return fmt.Errorf("update status to %s: %w", newStatus, err)
 			}
 		}
@@ -523,10 +523,10 @@ func (idx *Indexer) ProcessEscrowLog(lg types.Log, dbEscrowID int64) error {
 		if err != nil {
 			slog.Warn("failed to extract milestone index", "event", event.Name, "error", err)
 		} else {
-			if err := idx.db.UpdateMilestoneStatus(dbEscrowID, msIdx, msStatus); err != nil {
+			if err := idx.db.UpdateMilestoneStatus(ctx, dbEscrowID, msIdx, msStatus); err != nil {
 				slog.Warn("failed to update milestone status", "escrow_id", dbEscrowID, "milestone", msIdx, "status", msStatus, "error", err)
 			} else if msStatus == "approved" || msStatus == "resolved" || msStatus == "settled" || msStatus == "cancelled" {
-				if err := idx.db.UpdateEscrowMilestoneProgress(dbEscrowID, msIdx+1); err != nil {
+				if err := idx.db.UpdateEscrowMilestoneProgress(ctx, dbEscrowID, msIdx+1); err != nil {
 					slog.Warn("failed to advance current_milestone", "escrow_id", dbEscrowID, "next_milestone", msIdx+1, "error", err)
 				}
 			}
@@ -537,21 +537,21 @@ func (idx *Indexer) ProcessEscrowLog(lg types.Log, dbEscrowID int64) error {
 	var handlerErr error
 	switch event.Name {
 	case "SubmissionMade":
-		handlerErr = idx.handleSubmission(lg, dbEscrowID)
+		handlerErr = idx.handleSubmission(ctx, lg, dbEscrowID)
 	case "Disputed", "Rejected", "SilenceEscalated":
-		handlerErr = idx.handleDispute(lg, dbEscrowID, event.Name)
+		handlerErr = idx.handleDispute(ctx, lg, dbEscrowID, event.Name)
 	case "DisputeResolved":
-		handlerErr = idx.handleDisputeResolved(lg, dbEscrowID)
+		handlerErr = idx.handleDisputeResolved(ctx, lg, dbEscrowID)
 	case "MilestoneSubmitted":
-		handlerErr = idx.handleMilestoneSubmission(lg, dbEscrowID)
+		handlerErr = idx.handleMilestoneSubmission(ctx, lg, dbEscrowID)
 	case "MilestoneDisputed", "MilestoneRejected", "MilestoneSilenceEscalated":
-		handlerErr = idx.handleMilestoneDispute(lg, dbEscrowID, event.Name)
+		handlerErr = idx.handleMilestoneDispute(ctx, lg, dbEscrowID, event.Name)
 	case "MilestoneDisputeResolved":
-		handlerErr = idx.handleMilestoneDisputeResolved(lg, dbEscrowID)
+		handlerErr = idx.handleMilestoneDisputeResolved(ctx, lg, dbEscrowID)
 	case "RemainingMilestonesAborted":
-		handlerErr = idx.handleRemainingMilestonesAborted(lg, dbEscrowID)
+		handlerErr = idx.handleRemainingMilestonesAborted(ctx, lg, dbEscrowID)
 	case "BackupActivated":
-		handlerErr = idx.handleBackupActivated(lg, dbEscrowID)
+		handlerErr = idx.handleBackupActivated(ctx, lg, dbEscrowID)
 	}
 
 	if handlerErr == nil {
@@ -561,7 +561,7 @@ func (idx *Indexer) ProcessEscrowLog(lg types.Log, dbEscrowID int64) error {
 	return handlerErr
 }
 
-func (idx *Indexer) handleSubmission(lg types.Log, dbEscrowID int64) error {
+func (idx *Indexer) handleSubmission(ctx context.Context, lg types.Log, dbEscrowID int64) error {
 	values, err := chain.EscrowABI.Events["SubmissionMade"].Inputs.NonIndexed().Unpack(lg.Data)
 	if err != nil {
 		return fmt.Errorf("unpack SubmissionMade: %w", err)
@@ -580,11 +580,11 @@ func (idx *Indexer) handleSubmission(lg types.Log, dbEscrowID int64) error {
 	}
 
 	submissionHash := fmt.Sprintf("0x%x", hashBytes)
-	_, err = idx.db.CreateSubmission(dbEscrowID, submissionHash, submissionURI)
+	_, err = idx.db.CreateSubmission(ctx, dbEscrowID, submissionHash, submissionURI)
 	return err
 }
 
-func (idx *Indexer) handleDispute(lg types.Log, dbEscrowID int64, eventName string) error {
+func (idx *Indexer) handleDispute(ctx context.Context, lg types.Log, dbEscrowID int64, eventName string) error {
 	if len(lg.Topics) < 2 {
 		return fmt.Errorf("handleDispute: insufficient topics (got %d, need >= 2)", len(lg.Topics))
 	}
@@ -607,11 +607,11 @@ func (idx *Indexer) handleDispute(lg types.Log, dbEscrowID int64, eventName stri
 		}
 	}
 
-	_, err := idx.db.CreateDispute(dbEscrowID, raisedBy, reasonURI)
+	_, err := idx.db.CreateDispute(ctx, dbEscrowID, raisedBy, reasonURI)
 	return err
 }
 
-func (idx *Indexer) handleDisputeResolved(lg types.Log, dbEscrowID int64) error {
+func (idx *Indexer) handleDisputeResolved(ctx context.Context, lg types.Log, dbEscrowID int64) error {
 	values, err := chain.EscrowABI.Events["DisputeResolved"].Inputs.NonIndexed().Unpack(lg.Data)
 	if err != nil {
 		return fmt.Errorf("unpack DisputeResolved: %w", err)
@@ -629,25 +629,25 @@ func (idx *Indexer) handleDisputeResolved(lg types.Log, dbEscrowID int64) error 
 		return fmt.Errorf("DisputeResolved: unexpected type for resolutionURI: %T", values[1])
 	}
 
-	dispute, err := idx.db.GetDisputeByEscrowID(dbEscrowID)
+	dispute, err := idx.db.GetDisputeByEscrowID(ctx, dbEscrowID)
 	if err != nil {
 		slog.Warn("no existing dispute found for resolution, creating new record",
 			"escrow_id", dbEscrowID, "error", err)
-		_, createErr := idx.db.CreateDispute(dbEscrowID, "arbitrator", resolutionURI)
+		_, createErr := idx.db.CreateDispute(ctx, dbEscrowID, "arbitrator", resolutionURI)
 		if createErr != nil {
 			return createErr
 		}
 		// Re-fetch to get the ID for the update call
-		dispute, err = idx.db.GetDisputeByEscrowID(dbEscrowID)
+		dispute, err = idx.db.GetDisputeByEscrowID(ctx, dbEscrowID)
 		if err != nil {
 			return fmt.Errorf("get newly created dispute: %w", err)
 		}
 	}
 
-	return idx.db.UpdateDispute(dispute.ID, resolutionURI, int(workerAwardBps))
+	return idx.db.UpdateDispute(ctx, dispute.ID, resolutionURI, int(workerAwardBps))
 }
 
-func (idx *Indexer) handleBackupActivated(lg types.Log, dbEscrowID int64) error {
+func (idx *Indexer) handleBackupActivated(ctx context.Context, lg types.Log, dbEscrowID int64) error {
 	// BackupActivated(address indexed previousWorker, address indexed newWorker, uint64 newDeadline)
 	if len(lg.Topics) < 3 {
 		return fmt.Errorf("BackupActivated: insufficient topics (got %d, need >= 3)", len(lg.Topics))
@@ -674,7 +674,7 @@ func (idx *Indexer) handleBackupActivated(lg types.Log, dbEscrowID int64) error 
 		"new_deadline", newDeadline,
 	)
 
-	return idx.db.UpdateEscrowBackupActivated(dbEscrowID, newWorker.Hex(), newDeadline)
+	return idx.db.UpdateEscrowBackupActivated(ctx, dbEscrowID, newWorker.Hex(), newDeadline)
 }
 
 // extractMilestoneIndex reads the milestone index from the first indexed topic
@@ -690,7 +690,7 @@ func (idx *Indexer) extractMilestoneIndex(lg types.Log) (int, error) {
 	return int(msIdx.Int64()), nil
 }
 
-func (idx *Indexer) handleMilestoneSubmission(lg types.Log, dbEscrowID int64) error {
+func (idx *Indexer) handleMilestoneSubmission(ctx context.Context, lg types.Log, dbEscrowID int64) error {
 	msIdx, err := idx.extractMilestoneIndex(lg)
 	if err != nil {
 		return err
@@ -714,10 +714,10 @@ func (idx *Indexer) handleMilestoneSubmission(lg types.Log, dbEscrowID int64) er
 	}
 
 	submissionHash := fmt.Sprintf("0x%x", hashBytes)
-	return idx.db.UpdateMilestoneSubmission(dbEscrowID, msIdx, submissionHash, submissionURI)
+	return idx.db.UpdateMilestoneSubmission(ctx, dbEscrowID, msIdx, submissionHash, submissionURI)
 }
 
-func (idx *Indexer) handleMilestoneDispute(lg types.Log, dbEscrowID int64, eventName string) error {
+func (idx *Indexer) handleMilestoneDispute(ctx context.Context, lg types.Log, dbEscrowID int64, eventName string) error {
 	msIdx, err := idx.extractMilestoneIndex(lg)
 	if err != nil {
 		return err
@@ -749,11 +749,11 @@ func (idx *Indexer) handleMilestoneDispute(lg types.Log, dbEscrowID int64, event
 		"escrow_id", dbEscrowID, "milestone", msIdx,
 		"event", eventName, "raised_by", raisedBy, "reason_uri", reasonURI)
 
-	_, err = idx.db.CreateDispute(dbEscrowID, raisedBy, reasonURI)
+	_, err = idx.db.CreateDispute(ctx, dbEscrowID, raisedBy, reasonURI)
 	return err
 }
 
-func (idx *Indexer) handleMilestoneDisputeResolved(lg types.Log, dbEscrowID int64) error {
+func (idx *Indexer) handleMilestoneDisputeResolved(ctx context.Context, lg types.Log, dbEscrowID int64) error {
 	msIdx, err := idx.extractMilestoneIndex(lg)
 	if err != nil {
 		return err
@@ -781,22 +781,22 @@ func (idx *Indexer) handleMilestoneDisputeResolved(lg types.Log, dbEscrowID int6
 		"worker_award_bps", workerAwardBps, "resolution_uri", resolutionURI)
 
 	// Update the most recent dispute for this escrow
-	dispute, err := idx.db.GetDisputeByEscrowID(dbEscrowID)
+	dispute, err := idx.db.GetDisputeByEscrowID(ctx, dbEscrowID)
 	if err != nil {
-		_, createErr := idx.db.CreateDispute(dbEscrowID, "arbitrator", resolutionURI)
+		_, createErr := idx.db.CreateDispute(ctx, dbEscrowID, "arbitrator", resolutionURI)
 		if createErr != nil {
 			return createErr
 		}
-		dispute, err = idx.db.GetDisputeByEscrowID(dbEscrowID)
+		dispute, err = idx.db.GetDisputeByEscrowID(ctx, dbEscrowID)
 		if err != nil {
 			return fmt.Errorf("get newly created dispute: %w", err)
 		}
 	}
 
-	return idx.db.UpdateDispute(dispute.ID, resolutionURI, int(workerAwardBps))
+	return idx.db.UpdateDispute(ctx, dispute.ID, resolutionURI, int(workerAwardBps))
 }
 
-func (idx *Indexer) handleRemainingMilestonesAborted(lg types.Log, dbEscrowID int64) error {
+func (idx *Indexer) handleRemainingMilestonesAborted(ctx context.Context, lg types.Log, dbEscrowID int64) error {
 	values, err := chain.EscrowABI.Events["RemainingMilestonesAborted"].Inputs.Unpack(lg.Data)
 	if err != nil {
 		return fmt.Errorf("unpack RemainingMilestonesAborted: %w", err)
@@ -813,13 +813,13 @@ func (idx *Indexer) handleRemainingMilestonesAborted(lg types.Log, dbEscrowID in
 	slog.Info("remaining milestones aborted", "escrow_id", dbEscrowID, "from_index", fromIndex)
 
 	// Mark all milestones from fromIndex onward as cancelled
-	milestones, err := idx.db.GetMilestonesByEscrow(dbEscrowID)
+	milestones, err := idx.db.GetMilestonesByEscrow(ctx, dbEscrowID)
 	if err != nil {
 		return fmt.Errorf("get milestones: %w", err)
 	}
 	for _, ms := range milestones {
 		if ms.MilestoneIndex >= int(fromIndex) {
-			if err := idx.db.UpdateMilestoneStatus(dbEscrowID, ms.MilestoneIndex, "cancelled"); err != nil {
+			if err := idx.db.UpdateMilestoneStatus(ctx, dbEscrowID, ms.MilestoneIndex, "cancelled"); err != nil {
 				slog.Warn("failed to cancel milestone", "escrow_id", dbEscrowID, "milestone", ms.MilestoneIndex, "error", err)
 			}
 		}
@@ -828,7 +828,7 @@ func (idx *Indexer) handleRemainingMilestonesAborted(lg types.Log, dbEscrowID in
 	// The contract sets status = Status.Refunded after abort. Set this before
 	// the subsequent Settled event (from _settleWorkerStake) is processed, so
 	// the terminal-state guard in processEscrowLog prevents overwrite.
-	if err := idx.db.UpdateEscrowStatus(dbEscrowID, "refunded"); err != nil {
+	if err := idx.db.UpdateEscrowStatus(ctx, dbEscrowID, "refunded"); err != nil {
 		return fmt.Errorf("set escrow refunded after abort: %w", err)
 	}
 

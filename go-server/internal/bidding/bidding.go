@@ -104,7 +104,7 @@ type AcceptBidResult struct {
 	TxHash string
 }
 
-func (s *Service) CreateRFQ(p CreateRFQParams) (*storage.RFQ, error) {
+func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RFQ, error) {
 	budgetMin, ok := new(big.Int).SetString(p.BudgetMin, 10)
 	if !ok || budgetMin.Sign() < 0 {
 		return nil, errors.New("invalid budget_min")
@@ -159,7 +159,7 @@ func (s *Service) CreateRFQ(p CreateRFQParams) (*storage.RFQ, error) {
 
 	specHash := crypto.Keccak256Hash([]byte(p.Title + p.Description))
 
-	rfq, err := s.DB.CreateRFQ(&storage.RFQ{
+	rfq, err := s.DB.CreateRFQ(ctx, &storage.RFQ{
 		Title:                    p.Title,
 		Description:              p.Description,
 		SpecHash:                 specHash.Hex(),
@@ -185,8 +185,8 @@ func (s *Service) CreateRFQ(p CreateRFQParams) (*storage.RFQ, error) {
 	return rfq, nil
 }
 
-func (s *Service) PlaceBid(p PlaceBidParams) (*storage.Bid, error) {
-	rfq, err := s.DB.GetRFQ(p.RFQID)
+func (s *Service) PlaceBid(ctx context.Context, p PlaceBidParams) (*storage.Bid, error) {
+	rfq, err := s.DB.GetRFQ(ctx, p.RFQID)
 	if err != nil {
 		return nil, fmt.Errorf("rfq not found: %w", err)
 	}
@@ -244,7 +244,7 @@ func (s *Service) PlaceBid(p PlaceBidParams) (*storage.Bid, error) {
 		p.MilestonesJSON = "[]"
 	}
 
-	bid, err := s.DB.CreateBid(&storage.Bid{
+	bid, err := s.DB.CreateBid(ctx, &storage.Bid{
 		RFQID:             p.RFQID,
 		Bidder:            p.Bidder,
 		Amount:            p.Amount,
@@ -264,7 +264,7 @@ func (s *Service) PlaceBid(p PlaceBidParams) (*storage.Bid, error) {
 
 // AcceptBid accepts a bid, creates an on-chain escrow, and updates the database.
 func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidResult, error) {
-	rfq, err := s.DB.GetRFQ(p.RFQID)
+	rfq, err := s.DB.GetRFQ(ctx, p.RFQID)
 	if err != nil {
 		return nil, fmt.Errorf("rfq not found: %w", err)
 	}
@@ -282,7 +282,7 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 		return nil, errors.New("only the rfq buyer can accept bids")
 	}
 
-	bid, err := s.DB.GetBid(p.BidID)
+	bid, err := s.DB.GetBid(ctx, p.BidID)
 	if err != nil {
 		return nil, fmt.Errorf("bid not found: %w", err)
 	}
@@ -381,13 +381,13 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 		return nil, fmt.Errorf("begin db tx: %w", err)
 	}
 
-	task, err := s.DB.CreateTaskTx(dbTx, rfq.Title, rfq.Description, specHash.Hex())
+	task, err := s.DB.CreateTaskTx(ctx, dbTx, rfq.Title, rfq.Description, specHash.Hex())
 	if err != nil {
 		dbTx.Rollback()
 		return nil, fmt.Errorf("db CreateTask: %w", err)
 	}
 
-	escrow, err := s.DB.CreateEscrowTx(dbTx, &storage.Escrow{
+	escrow, err := s.DB.CreateEscrowTx(ctx, dbTx, &storage.Escrow{
 		TaskID:                   task.ID,
 		ChainID:                  s.Cfg.ChainID,
 		FactoryAddress:           s.Cfg.FactoryAddress,
@@ -420,7 +420,7 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 			dbTx.Rollback()
 			return nil, convErr
 		}
-		_, err := s.DB.CreateMilestoneTx(dbTx, &storage.MilestoneRecord{
+		_, err := s.DB.CreateMilestoneTx(ctx, dbTx, &storage.MilestoneRecord{
 			EscrowID:           escrow.ID,
 			MilestoneIndex:     i,
 			Amount:             m.Amount.String(),
@@ -433,15 +433,15 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 		}
 	}
 
-	if err := s.DB.AcceptBidTx(dbTx, bid.ID, escrow.ID); err != nil {
+	if err := s.DB.AcceptBidTx(ctx, dbTx, bid.ID, escrow.ID); err != nil {
 		dbTx.Rollback()
 		return nil, fmt.Errorf("db AcceptBid: %w", err)
 	}
-	if err := s.DB.UpdateRFQStatusTx(dbTx, rfq.ID, "closed"); err != nil {
+	if err := s.DB.UpdateRFQStatusTx(ctx, dbTx, rfq.ID, "closed"); err != nil {
 		dbTx.Rollback()
 		return nil, fmt.Errorf("db UpdateRFQStatus: %w", err)
 	}
-	if err := s.DB.RejectPendingBidsTx(dbTx, rfq.ID, bid.ID); err != nil {
+	if err := s.DB.RejectPendingBidsTx(ctx, dbTx, rfq.ID, bid.ID); err != nil {
 		dbTx.Rollback()
 		return nil, fmt.Errorf("db RejectPendingBids: %w", err)
 	}
@@ -454,7 +454,7 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 		slog.Warn("post-accept indexer run failed", "rfq_id", rfq.ID, "error", err)
 	}
 
-	updatedBid, err := s.DB.GetBid(bid.ID)
+	updatedBid, err := s.DB.GetBid(ctx, bid.ID)
 	if err != nil {
 		return nil, fmt.Errorf("db GetBid after accept: %w", err)
 	}
