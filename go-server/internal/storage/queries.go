@@ -1112,11 +1112,11 @@ func (d *DB) UpdateAP2MandateFunding(ctx context.Context, mandateID, txHash stri
 		`UPDATE ap2_mandates SET funding_tx_hash = ?, status = 'funded' WHERE id = ?`,
 		txHash, mandateID)
 	if err != nil {
-		return err
+		return fmt.Errorf("UpdateAP2MandateFunding: %w", err)
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {
-		return err
+		return fmt.Errorf("UpdateAP2MandateFunding rows affected: %w", err)
 	}
 	if rows == 0 {
 		return fmt.Errorf("UpdateAP2MandateFunding id=%s: %w", mandateID, sql.ErrNoRows)
@@ -1137,7 +1137,7 @@ func (d *DB) GetAP2Mandate(ctx context.Context, id string) (*AP2Mandate, error) 
 	err := row.Scan(&m.ID, &m.MandateType, &m.MandateHash, &m.SignerAddress,
 		&budgetAmt, &budgetCur, &expiresAt, &escrowID, &fundingTx, &m.Status, &m.RawPayload, &createdAt)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get ap2 mandate: %w", err)
 	}
 
 	m.BudgetAmount = budgetAmt.String
