@@ -72,9 +72,10 @@ func (sh *StreamHandler) HandleSSE(w http.ResponseWriter, r *http.Request) {
 				slog.Error("sse: marshal event", "error", err)
 				continue
 			}
-			fmt.Fprintf(w, "event: %s\n", event.Name)
-			fmt.Fprintf(w, "id: %s\n", event.ID)
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			if _, err = fmt.Fprintf(w, "event: %s\nid: %s\ndata: %s\n\n", event.Name, event.ID, data); err != nil {
+				slog.Error("sse: write failed", "error", err)
+				return
+			}
 			flusher.Flush()
 		}
 	}
