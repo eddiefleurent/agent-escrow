@@ -32,6 +32,7 @@ title Escrow Lifecycle
 actor "Buyer" as buyer
 actor "Worker" as worker
 participant "Factory" as factory
+participant "x402 Facilitator" as facilitator #E8EAF6
 
 == Task Creation ==
 
@@ -41,7 +42,12 @@ factory --> buyer : escrow id + address
 
 == Funding ==
 
-buyer -> escrow : fund
+alt #E3F2FD Standard funding
+  buyer -> escrow : fund
+else #E8EAF6 EIP-3009 / AP2 mandate (ERC20, gasless)
+  buyer -> facilitator : sign authorization
+  facilitator -> escrow : fundWithAuthorization (relayer submits)
+end
 note over escrow #E3F2FD : **Funded** — ETH/ERC20 held
 
 == Worker Stake (optional) ==

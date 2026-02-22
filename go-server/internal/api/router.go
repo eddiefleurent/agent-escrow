@@ -4,10 +4,12 @@ import (
 	"net/http"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/a2a"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/ap2"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/x402"
 )
 
 func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Indexer, cfg *config.Config) http.Handler {
@@ -46,6 +48,25 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	if cfg.WebhookMode() {
 		wh := NewWebhookHandler(idx, cfg.CDPWebhookSecret)
 		mux.HandleFunc("POST /webhooks/cdp", wh.HandleCDPWebhook)
+	}
+
+	// AP2 mandate-to-escrow bridge (paper §6: AP2 stake-on-bid + conditional settlement)
+	{
+		var x402Client *x402.Client
+		if cfg.X402Enabled {
+			x402Client = x402.NewClient(cfg.X402FacilitatorURL)
+		}
+		ap2Svc := &ap2.Service{
+			DB:    db,
+			Chain: chainClient,
+			Idx:   idx,
+			Cfg:   cfg,
+			X402:  x402Client,
+		}
+		ap2Handler := ap2.NewHandler(ap2Svc)
+		mux.HandleFunc("POST /api/v1/ap2/fund", ap2Handler.FundViaMandate)
+		mux.HandleFunc("POST /api/v1/ap2/validate", ap2Handler.ValidateMandate)
+		mux.HandleFunc("GET /api/v1/ap2/mandates/{id}", ap2Handler.GetMandate)
 	}
 
 	// A2A settlement adapter routes (paper §6: A2A Task object extension)

@@ -124,6 +124,7 @@ type Bid struct {
 	Status            string    `json:"status"`
 	EscrowID          *int64    `json:"escrow_id"`
 	ExpiresAt         int64     `json:"expires_at"`
+	StakeMandateID    string    `json:"stake_mandate_id,omitempty"` // AP2 mandate for Sybil-resistant stake-on-bid (paper §6)
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
@@ -142,6 +143,22 @@ type A2ATask struct {
 	MetadataJSON           string
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
+}
+
+// AP2Mandate represents an AP2 mandate linked to an escrow (paper §6: AP2 stake-on-bid).
+type AP2Mandate struct {
+	ID             string    `json:"id"`
+	MandateType    string    `json:"mandate_type"`
+	MandateHash    string    `json:"mandate_hash"`
+	SignerAddress  string    `json:"signer_address"`
+	BudgetAmount   string    `json:"budget_amount,omitempty"`
+	BudgetCurrency string    `json:"budget_currency,omitempty"`
+	ExpiresAt      string    `json:"expires_at,omitempty"`
+	EscrowID       *int64    `json:"escrow_id,omitempty"`
+	FundingTxHash  string    `json:"funding_tx_hash,omitempty"`
+	Status         string    `json:"status"`
+	RawPayload     string    `json:"raw_payload"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type ChainLog struct {

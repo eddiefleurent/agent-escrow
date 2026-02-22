@@ -40,6 +40,10 @@ type Config struct {
 	A2AEnabled   bool   // Enable A2A adapter routes (default true)
 	A2AAgentName string // Agent card display name
 	A2AAgentURL  string // Agent card URL (default derived from PORT)
+
+	// x402 / AP2 mandate-to-escrow bridge (paper §6: AP2 stake-on-bid + conditional settlement).
+	X402Enabled        bool   // Enable x402 gasless funding path (default false)
+	X402FacilitatorURL string // CDP x402 facilitator endpoint
 }
 
 // WebhookMode reports whether CDP webhook mode is enabled (secret is configured).
@@ -146,24 +150,40 @@ func Load() (*Config, error) {
 		a2aAgentURL = fmt.Sprintf("http://localhost:%d", port)
 	}
 
+	x402Enabled := false
+	if raw := os.Getenv("X402_ENABLED"); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid X402_ENABLED: %w", err)
+		}
+		x402Enabled = v
+	}
+
+	x402FacilitatorURL := os.Getenv("X402_FACILITATOR_URL")
+	if x402FacilitatorURL == "" {
+		x402FacilitatorURL = "https://api.developer.coinbase.com/v2/x402"
+	}
+
 	cfg := &Config{
-		RPCURL:           os.Getenv("RPC_URL"),
-		PrivateKey:       os.Getenv("PRIVATE_KEY"),
-		ChainID:          chainID,
-		FactoryAddress:   os.Getenv("FACTORY_ADDRESS"),
-		DatabaseURL:      dbURL,
-		Port:             port,
-		MCPTransport:     os.Getenv("MCP_TRANSPORT"),
-		CORSOrigins:      corsOrigins,
-		RequestTimeout:   requestTimeout,
-		TxTimeout:        txTimeout,
-		LogChunkSize:     logChunkSize,
-		StartBlock:       startBlock,
-		ComplexityFloor:  complexityFloor,
-		CDPWebhookSecret: os.Getenv("CDP_WEBHOOK_SECRET"),
-		A2AEnabled:       a2aEnabled,
-		A2AAgentName:     a2aAgentName,
-		A2AAgentURL:      a2aAgentURL,
+		RPCURL:             os.Getenv("RPC_URL"),
+		PrivateKey:         os.Getenv("PRIVATE_KEY"),
+		ChainID:            chainID,
+		FactoryAddress:     os.Getenv("FACTORY_ADDRESS"),
+		DatabaseURL:        dbURL,
+		Port:               port,
+		MCPTransport:       os.Getenv("MCP_TRANSPORT"),
+		CORSOrigins:        corsOrigins,
+		RequestTimeout:     requestTimeout,
+		TxTimeout:          txTimeout,
+		LogChunkSize:       logChunkSize,
+		StartBlock:         startBlock,
+		ComplexityFloor:    complexityFloor,
+		CDPWebhookSecret:   os.Getenv("CDP_WEBHOOK_SECRET"),
+		A2AEnabled:         a2aEnabled,
+		A2AAgentName:       a2aAgentName,
+		A2AAgentURL:        a2aAgentURL,
+		X402Enabled:        x402Enabled,
+		X402FacilitatorURL: x402FacilitatorURL,
 	}
 
 	result := cfg.Validate()

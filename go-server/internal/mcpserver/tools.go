@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/a2a"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/ap2"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/bidding"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
@@ -107,6 +108,7 @@ type placeBidArgs struct {
 	MilestonesJSON    string `json:"milestones_json,omitempty" jsonschema:"JSON: proposed milestone breakdown"`
 	Message           string `json:"message,omitempty" jsonschema:"Free-form bid justification"`
 	ExpiresAt         string `json:"expires_at" jsonschema:"Unix timestamp: bid expiry"`
+	StakeMandateID    string `json:"stake_mandate_id,omitempty" jsonschema:"Optional AP2 mandate ID for Sybil-resistant stake-on-bid (paper §6)"`
 }
 
 type listBidsArgs struct {
@@ -123,6 +125,21 @@ type acceptBidArgs struct {
 type reputationArgs struct {
 	Address string `json:"address" jsonschema:"Ethereum address to look up reputation for"`
 	Role    string `json:"role,omitempty" jsonschema:"Optional: 'worker' or 'buyer'. Omit to return both roles."`
+}
+
+type fundViaMandateArgs struct {
+	EscrowID        string `json:"escrow_id" jsonschema:"Database escrow ID to fund"`
+	MandateType     string `json:"mandate_type" jsonschema:"AP2 mandate type: intent, cart, or payment"`
+	SignerAddress   string `json:"signer_address" jsonschema:"Mandate signer address (must be escrow buyer)"`
+	Signature       string `json:"signature" jsonschema:"Cryptographic signature of the mandate"`
+	AuthFrom        string `json:"auth_from" jsonschema:"EIP-3009 authorization from address"`
+	AuthValue       string `json:"auth_value" jsonschema:"EIP-3009 authorization value"`
+	AuthValidAfter  string `json:"auth_valid_after" jsonschema:"EIP-3009 validAfter timestamp"`
+	AuthValidBefore string `json:"auth_valid_before" jsonschema:"EIP-3009 validBefore timestamp"`
+	AuthNonce       string `json:"auth_nonce" jsonschema:"EIP-3009 nonce (hex)"`
+	AuthV           string `json:"auth_v" jsonschema:"EIP-3009 signature v"`
+	AuthR           string `json:"auth_r" jsonschema:"EIP-3009 signature r (hex)"`
+	AuthS           string `json:"auth_s" jsonschema:"EIP-3009 signature s (hex)"`
 }
 
 type emptyArgs struct{}
@@ -207,6 +224,11 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Name:        "accept_bid",
 		Description: "Accept a bid on an RFQ; triggers on-chain escrow creation with bid parameters. Paper §6.1: bid acceptance formalizes into escrow.",
 	}, s.handleAcceptBid)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "fund_via_mandate",
+		Description: "Fund an escrow via an AP2 mandate with EIP-3009 gasless authorization. Paper §6: AP2 stake-on-bid + conditional settlement.",
+	}, s.handleFundViaMandate)
 
 	if s.cfg.A2AEnabled {
 		mcp.AddTool(srv, &mcp.Tool{
@@ -909,6 +931,7 @@ func (s *Server) handlePlaceBid(ctx context.Context, req *mcp.CallToolRequest, a
 		MilestonesJSON:    args.MilestonesJSON,
 		Message:           args.Message,
 		ExpiresAt:         expiresAt,
+		StakeMandateID:    args.StakeMandateID,
 	})
 	if err != nil {
 		return textResult(err.Error()), nil, nil
@@ -971,6 +994,49 @@ func (s *Server) handleAcceptBid(ctx context.Context, req *mcp.CallToolRequest, 
 		"bid_id":          result.Bid.ID,
 		"bid_status":      result.Bid.Status,
 	})
+}
+
+func (s *Server) handleFundViaMandate(ctx context.Context, req *mcp.CallToolRequest, args fundViaMandateArgs) (*mcp.CallToolResult, any, error) {
+	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+	}
+
+	v, err := strconv.ParseUint(args.AuthV, 10, 8)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid auth_v: %v", err)), nil, nil
+	}
+
+	env := ap2.MandateEnvelope{
+		Type:          ap2.MandateType(args.MandateType),
+		Payload:       map[string]any{},
+		Signature:     args.Signature,
+		SignerAddress: args.SignerAddress,
+		Authorization: ap2.EIP3009Authorization{
+			From:        args.AuthFrom,
+			Value:       args.AuthValue,
+			ValidAfter:  args.AuthValidAfter,
+			ValidBefore: args.AuthValidBefore,
+			Nonce:       args.AuthNonce,
+			V:           uint8(v),
+			R:           args.AuthR,
+			S:           args.AuthS,
+		},
+	}
+
+	svc := &ap2.Service{
+		DB:    s.db,
+		Chain: s.chain,
+		Idx:   s.idx,
+		Cfg:   s.cfg,
+	}
+
+	resp, err := svc.FundViaMandate(ctx, escrowID, env)
+	if err != nil {
+		return textResult(fmt.Sprintf("fund via mandate error: %v", err)), nil, nil
+	}
+
+	return jsonResult(resp)
 }
 
 func (s *Server) handleGetAgentCard(ctx context.Context, req *mcp.CallToolRequest, args emptyArgs) (*mcp.CallToolResult, any, error) {
