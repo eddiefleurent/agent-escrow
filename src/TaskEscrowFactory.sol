@@ -119,7 +119,7 @@ contract TaskEscrowFactory {
         if (p.submissionDeadline <= block.timestamp) revert InvalidDeadline();
         if (
             frozenAddresses[p.buyer] || frozenAddresses[p.worker] || frozenAddresses[p.verifier]
-                || frozenAddresses[p.arbitrator]
+                || frozenAddresses[p.arbitrator] || (p.backupWorker != address(0) && frozenAddresses[p.backupWorker])
         ) revert FrozenAddress();
 
         TaskEscrow.CreateMilestoneParams[] memory escrowMilestones =

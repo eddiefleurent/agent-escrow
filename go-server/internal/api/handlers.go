@@ -1188,6 +1188,22 @@ func (h *Handlers) AcceptBid(w http.ResponseWriter, r *http.Request) {
 
 // --- Emergency response protocol handlers (paper §4.9) ---
 
+func (h *Handlers) writeEmergencyRecordingError(
+	w http.ResponseWriter, r *http.Request, txHash, operation string, err error,
+) {
+	slog.Error("emergency action recorded on-chain but local persistence failed",
+		"operation", operation,
+		"path", r.URL.Path,
+		"method", r.Method,
+		"tx_hash", txHash,
+		"error", err,
+	)
+	writeJSON(w, http.StatusInternalServerError, map[string]any{
+		"error":   fmt.Sprintf("on-chain transaction succeeded but local %s recording failed: %v", operation, err),
+		"tx_hash": txHash,
+	})
+}
+
 func (h *Handlers) FreezeAddress(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Address string `json:"address"`
@@ -1209,10 +1225,20 @@ func (h *Handlers) FreezeAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = h.db.UpsertFrozenAddress(r.Context(), strings.ToLower(addr.Hex()), "", "api")
-	_ = h.db.CreateEmergencyAction(r.Context(), "freeze_address", strings.ToLower(addr.Hex()), "", "", tx.Hash().Hex())
-	_ = h.idx.RunOnce(r.Context())
-	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex(), "address": addr.Hex()})
+	txHash := tx.Hash().Hex()
+	if err := h.db.UpsertFrozenAddress(r.Context(), strings.ToLower(addr.Hex()), "", "api"); err != nil {
+		h.writeEmergencyRecordingError(w, r, txHash, "freeze address", err)
+		return
+	}
+	if err := h.db.CreateEmergencyAction(r.Context(), "freeze_address", strings.ToLower(addr.Hex()), "", "", txHash); err != nil {
+		h.writeEmergencyRecordingError(w, r, txHash, "freeze address audit", err)
+		return
+	}
+	if err := h.idx.RunOnce(r.Context()); err != nil {
+		h.writeEmergencyRecordingError(w, r, txHash, "indexer sync", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash, "address": addr.Hex()})
 }
 
 func (h *Handlers) UnfreezeAddress(w http.ResponseWriter, r *http.Request) {
@@ -1236,10 +1262,20 @@ func (h *Handlers) UnfreezeAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = h.db.DeleteFrozenAddress(r.Context(), strings.ToLower(addr.Hex()))
-	_ = h.db.CreateEmergencyAction(r.Context(), "unfreeze_address", strings.ToLower(addr.Hex()), "", "", tx.Hash().Hex())
-	_ = h.idx.RunOnce(r.Context())
-	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex(), "address": addr.Hex()})
+	txHash := tx.Hash().Hex()
+	if err := h.db.DeleteFrozenAddress(r.Context(), strings.ToLower(addr.Hex())); err != nil {
+		h.writeEmergencyRecordingError(w, r, txHash, "unfreeze address", err)
+		return
+	}
+	if err := h.db.CreateEmergencyAction(r.Context(), "unfreeze_address", strings.ToLower(addr.Hex()), "", "", txHash); err != nil {
+		h.writeEmergencyRecordingError(w, r, txHash, "unfreeze address audit", err)
+		return
+	}
+	if err := h.idx.RunOnce(r.Context()); err != nil {
+		h.writeEmergencyRecordingError(w, r, txHash, "indexer sync", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash, "address": addr.Hex()})
 }
 
 func (h *Handlers) FreezeEscrow(w http.ResponseWriter, r *http.Request) {
@@ -1264,10 +1300,20 @@ func (h *Handlers) FreezeEscrow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = h.db.UpdateEscrowFrozen(r.Context(), req.EscrowID, true)
-	_ = h.db.CreateEmergencyAction(r.Context(), "freeze_escrow", escrow.EscrowAddress, "", "", tx.Hash().Hex())
-	_ = h.idx.RunOnce(r.Context())
-	writeJSON(w, http.StatusOK, map[string]any{"tx_hash": tx.Hash().Hex(), "escrow_id": req.EscrowID})
+	txHash := tx.Hash().Hex()
+	if err := h.db.UpdateEscrowFrozen(r.Context(), req.EscrowID, true); err != nil {
+		h.writeEmergencyRecordingError(w, r, txHash, "freeze escrow", err)
+		return
+	}
+	if err := h.db.CreateEmergencyAction(r.Context(), "freeze_escrow", escrow.EscrowAddress, "", "", txHash); err != nil {
+		h.writeEmergencyRecordingError(w, r, txHash, "freeze escrow audit", err)
+		return
+	}
+	if err := h.idx.RunOnce(r.Context()); err != nil {
+		h.writeEmergencyRecordingError(w, r, txHash, "indexer sync", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tx_hash": txHash, "escrow_id": req.EscrowID})
 }
 
 func (h *Handlers) UnfreezeEscrow(w http.ResponseWriter, r *http.Request) {
@@ -1292,10 +1338,20 @@ func (h *Handlers) UnfreezeEscrow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = h.db.UpdateEscrowFrozen(r.Context(), req.EscrowID, false)
-	_ = h.db.CreateEmergencyAction(r.Context(), "unfreeze_escrow", escrow.EscrowAddress, "", "", tx.Hash().Hex())
-	_ = h.idx.RunOnce(r.Context())
-	writeJSON(w, http.StatusOK, map[string]any{"tx_hash": tx.Hash().Hex(), "escrow_id": req.EscrowID})
+	txHash := tx.Hash().Hex()
+	if err := h.db.UpdateEscrowFrozen(r.Context(), req.EscrowID, false); err != nil {
+		h.writeEmergencyRecordingError(w, r, txHash, "unfreeze escrow", err)
+		return
+	}
+	if err := h.db.CreateEmergencyAction(r.Context(), "unfreeze_escrow", escrow.EscrowAddress, "", "", txHash); err != nil {
+		h.writeEmergencyRecordingError(w, r, txHash, "unfreeze escrow audit", err)
+		return
+	}
+	if err := h.idx.RunOnce(r.Context()); err != nil {
+		h.writeEmergencyRecordingError(w, r, txHash, "indexer sync", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tx_hash": txHash, "escrow_id": req.EscrowID})
 }
 
 func (h *Handlers) EmergencyResolve(w http.ResponseWriter, r *http.Request) {
@@ -1325,12 +1381,28 @@ func (h *Handlers) EmergencyResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = h.db.UpdateEscrowStatus(r.Context(), req.EscrowID, "resolved")
-	_ = h.db.CreateEmergencyAction(r.Context(), "emergency_resolve", escrow.EscrowAddress, "",
-		fmt.Sprintf("workerAwardBps=%d", req.WorkerAwardBps), tx.Hash().Hex())
-	_ = h.idx.RunOnce(r.Context())
+	txHash := tx.Hash().Hex()
+	if err := h.db.UpdateEscrowStatus(r.Context(), req.EscrowID, "resolved"); err != nil {
+		h.writeEmergencyRecordingError(w, r, txHash, "emergency resolve status update", err)
+		return
+	}
+	if err := h.db.CreateEmergencyAction(
+		r.Context(),
+		"emergency_resolve",
+		escrow.EscrowAddress,
+		"",
+		fmt.Sprintf("workerAwardBps=%d", req.WorkerAwardBps),
+		txHash,
+	); err != nil {
+		h.writeEmergencyRecordingError(w, r, txHash, "emergency resolve audit", err)
+		return
+	}
+	if err := h.idx.RunOnce(r.Context()); err != nil {
+		h.writeEmergencyRecordingError(w, r, txHash, "indexer sync", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"tx_hash":          tx.Hash().Hex(),
+		"tx_hash":          txHash,
 		"escrow_id":        req.EscrowID,
 		"worker_award_bps": req.WorkerAwardBps,
 	})

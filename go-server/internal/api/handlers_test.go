@@ -1532,8 +1532,10 @@ func TestListEmergencyActions_OK(t *testing.T) {
 	}
 }
 
-func TestEmergencyEndpoints_DisabledByDefault(t *testing.T) {
+func TestEmergencyEndpoints_FreezeAddress_Disabled(t *testing.T) {
 	env := setup(t)
+	env.cfg.EmergencyEnabled = false
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
 	body := `{"address":"0x1111111111111111111111111111111111111111"}`
 	rr := env.request(t, "POST", "/api/v1/emergency/freeze-address", body)

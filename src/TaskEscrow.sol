@@ -648,7 +648,8 @@ contract TaskEscrow {
     function _emergencySettleMilestones(uint16 bps) internal {
         uint8 mc = milestoneCount;
         for (uint8 i; i < mc;) {
-            if (milestones[i].status < MilestoneStatus.Approved) {
+            MilestoneStatus ms = milestones[i].status;
+            if (ms < MilestoneStatus.Approved || ms == MilestoneStatus.Disputed) {
                 milestones[i].status = MilestoneStatus.Resolved;
                 milestones[i].awardBps = bps;
                 _doMsResolvedSettle(i, bps);

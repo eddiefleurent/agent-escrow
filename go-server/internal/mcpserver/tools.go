@@ -1229,11 +1229,25 @@ func (s *Server) handleFreezeAddress(ctx context.Context, _ *mcp.CallToolRequest
 	if err != nil {
 		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
 	}
+	receipt, err := chain.WaitMined(ctx, s.chain, tx.Hash())
+	if err != nil {
+		return textResult(fmt.Sprintf("tx submitted (%s) but receipt unavailable: %v", tx.Hash().Hex(), err)), nil, nil
+	}
+	if receipt.Status != 1 {
+		return textResult("transaction reverted: " + tx.Hash().Hex()), nil, nil
+	}
 
-	_ = s.db.UpsertFrozenAddress(ctx, strings.ToLower(addr.Hex()), "", "mcp")
-	_ = s.db.CreateEmergencyAction(ctx, "freeze_address", strings.ToLower(addr.Hex()), "", "", tx.Hash().Hex())
-	_ = s.idx.RunOnce(ctx)
-	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "address": addr.Hex()})
+	txHash := receipt.TxHash.Hex()
+	if err := s.db.UpsertFrozenAddress(ctx, strings.ToLower(addr.Hex()), "", "mcp"); err != nil {
+		return textResult(fmt.Sprintf("db error after successful tx %s: %v", txHash, err)), nil, nil
+	}
+	if err := s.db.CreateEmergencyAction(ctx, "freeze_address", strings.ToLower(addr.Hex()), "", "", txHash); err != nil {
+		return textResult(fmt.Sprintf("db audit error after successful tx %s: %v", txHash, err)), nil, nil
+	}
+	if err := s.idx.RunOnce(ctx); err != nil {
+		return textResult(fmt.Sprintf("indexer sync error after successful tx %s: %v", txHash, err)), nil, nil
+	}
+	return jsonResult(map[string]any{"tx_hash": txHash, "address": addr.Hex()})
 }
 
 func (s *Server) handleUnfreezeAddress(ctx context.Context, _ *mcp.CallToolRequest, args addressArgs) (*mcp.CallToolResult, any, error) {
@@ -1247,11 +1261,25 @@ func (s *Server) handleUnfreezeAddress(ctx context.Context, _ *mcp.CallToolReque
 	if err != nil {
 		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
 	}
+	receipt, err := chain.WaitMined(ctx, s.chain, tx.Hash())
+	if err != nil {
+		return textResult(fmt.Sprintf("tx submitted (%s) but receipt unavailable: %v", tx.Hash().Hex(), err)), nil, nil
+	}
+	if receipt.Status != 1 {
+		return textResult("transaction reverted: " + tx.Hash().Hex()), nil, nil
+	}
 
-	_ = s.db.DeleteFrozenAddress(ctx, strings.ToLower(addr.Hex()))
-	_ = s.db.CreateEmergencyAction(ctx, "unfreeze_address", strings.ToLower(addr.Hex()), "", "", tx.Hash().Hex())
-	_ = s.idx.RunOnce(ctx)
-	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "address": addr.Hex()})
+	txHash := receipt.TxHash.Hex()
+	if err := s.db.DeleteFrozenAddress(ctx, strings.ToLower(addr.Hex())); err != nil {
+		return textResult(fmt.Sprintf("db error after successful tx %s: %v", txHash, err)), nil, nil
+	}
+	if err := s.db.CreateEmergencyAction(ctx, "unfreeze_address", strings.ToLower(addr.Hex()), "", "", txHash); err != nil {
+		return textResult(fmt.Sprintf("db audit error after successful tx %s: %v", txHash, err)), nil, nil
+	}
+	if err := s.idx.RunOnce(ctx); err != nil {
+		return textResult(fmt.Sprintf("indexer sync error after successful tx %s: %v", txHash, err)), nil, nil
+	}
+	return jsonResult(map[string]any{"tx_hash": txHash, "address": addr.Hex()})
 }
 
 func (s *Server) handleFreezeEscrow(ctx context.Context, _ *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
@@ -1269,11 +1297,25 @@ func (s *Server) handleFreezeEscrow(ctx context.Context, _ *mcp.CallToolRequest,
 	if err != nil {
 		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
 	}
+	receipt, err := chain.WaitMined(ctx, s.chain, tx.Hash())
+	if err != nil {
+		return textResult(fmt.Sprintf("tx submitted (%s) but receipt unavailable: %v", tx.Hash().Hex(), err)), nil, nil
+	}
+	if receipt.Status != 1 {
+		return textResult("transaction reverted: " + tx.Hash().Hex()), nil, nil
+	}
 
-	_ = s.db.UpdateEscrowFrozen(ctx, escrowID, true)
-	_ = s.db.CreateEmergencyAction(ctx, "freeze_escrow", escrow.EscrowAddress, "", "", tx.Hash().Hex())
-	_ = s.idx.RunOnce(ctx)
-	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "escrow_id": escrowID})
+	txHash := receipt.TxHash.Hex()
+	if err := s.db.UpdateEscrowFrozen(ctx, escrowID, true); err != nil {
+		return textResult(fmt.Sprintf("db error after successful tx %s: %v", txHash, err)), nil, nil
+	}
+	if err := s.db.CreateEmergencyAction(ctx, "freeze_escrow", escrow.EscrowAddress, "", "", txHash); err != nil {
+		return textResult(fmt.Sprintf("db audit error after successful tx %s: %v", txHash, err)), nil, nil
+	}
+	if err := s.idx.RunOnce(ctx); err != nil {
+		return textResult(fmt.Sprintf("indexer sync error after successful tx %s: %v", txHash, err)), nil, nil
+	}
+	return jsonResult(map[string]any{"tx_hash": txHash, "escrow_id": escrowID})
 }
 
 func (s *Server) handleUnfreezeEscrow(ctx context.Context, _ *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
@@ -1291,11 +1333,25 @@ func (s *Server) handleUnfreezeEscrow(ctx context.Context, _ *mcp.CallToolReques
 	if err != nil {
 		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
 	}
+	receipt, err := chain.WaitMined(ctx, s.chain, tx.Hash())
+	if err != nil {
+		return textResult(fmt.Sprintf("tx submitted (%s) but receipt unavailable: %v", tx.Hash().Hex(), err)), nil, nil
+	}
+	if receipt.Status != 1 {
+		return textResult("transaction reverted: " + tx.Hash().Hex()), nil, nil
+	}
 
-	_ = s.db.UpdateEscrowFrozen(ctx, escrowID, false)
-	_ = s.db.CreateEmergencyAction(ctx, "unfreeze_escrow", escrow.EscrowAddress, "", "", tx.Hash().Hex())
-	_ = s.idx.RunOnce(ctx)
-	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "escrow_id": escrowID})
+	txHash := receipt.TxHash.Hex()
+	if err := s.db.UpdateEscrowFrozen(ctx, escrowID, false); err != nil {
+		return textResult(fmt.Sprintf("db error after successful tx %s: %v", txHash, err)), nil, nil
+	}
+	if err := s.db.CreateEmergencyAction(ctx, "unfreeze_escrow", escrow.EscrowAddress, "", "", txHash); err != nil {
+		return textResult(fmt.Sprintf("db audit error after successful tx %s: %v", txHash, err)), nil, nil
+	}
+	if err := s.idx.RunOnce(ctx); err != nil {
+		return textResult(fmt.Sprintf("indexer sync error after successful tx %s: %v", txHash, err)), nil, nil
+	}
+	return jsonResult(map[string]any{"tx_hash": txHash, "escrow_id": escrowID})
 }
 
 func (s *Server) handleEmergencyResolve(ctx context.Context, _ *mcp.CallToolRequest, args emergencyResolveArgs) (*mcp.CallToolResult, any, error) {
@@ -1321,12 +1377,26 @@ func (s *Server) handleEmergencyResolve(ctx context.Context, _ *mcp.CallToolRequ
 	if err != nil {
 		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
 	}
+	receipt, err := chain.WaitMined(ctx, s.chain, tx.Hash())
+	if err != nil {
+		return textResult(fmt.Sprintf("tx submitted (%s) but receipt unavailable: %v", tx.Hash().Hex(), err)), nil, nil
+	}
+	if receipt.Status != 1 {
+		return textResult("transaction reverted: " + tx.Hash().Hex()), nil, nil
+	}
 
-	_ = s.db.UpdateEscrowStatus(ctx, escrowID, "resolved")
-	_ = s.db.CreateEmergencyAction(ctx, "emergency_resolve", escrow.EscrowAddress, "",
-		fmt.Sprintf("workerAwardBps=%d", bps), tx.Hash().Hex())
-	_ = s.idx.RunOnce(ctx)
-	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "escrow_id": escrowID, "worker_award_bps": bps})
+	txHash := receipt.TxHash.Hex()
+	if err := s.db.UpdateEscrowStatus(ctx, escrowID, "resolved"); err != nil {
+		return textResult(fmt.Sprintf("db error after successful tx %s: %v", txHash, err)), nil, nil
+	}
+	if err := s.db.CreateEmergencyAction(ctx, "emergency_resolve", escrow.EscrowAddress, "",
+		fmt.Sprintf("workerAwardBps=%d", bps), txHash); err != nil {
+		return textResult(fmt.Sprintf("db audit error after successful tx %s: %v", txHash, err)), nil, nil
+	}
+	if err := s.idx.RunOnce(ctx); err != nil {
+		return textResult(fmt.Sprintf("indexer sync error after successful tx %s: %v", txHash, err)), nil, nil
+	}
+	return jsonResult(map[string]any{"tx_hash": txHash, "escrow_id": escrowID, "worker_award_bps": bps})
 }
 
 func (s *Server) handleListFrozenAddresses(ctx context.Context, _ *mcp.CallToolRequest, _ emergencyListArgs) (*mcp.CallToolResult, any, error) {

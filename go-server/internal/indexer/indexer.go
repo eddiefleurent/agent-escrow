@@ -836,10 +836,16 @@ func (idx *Indexer) handleAddressFrozen(ctx context.Context, lg types.Log, froze
 
 	if frozen {
 		slog.Info("address frozen", "target", addr)
-		return idx.db.UpsertFrozenAddress(ctx, addr, "", "indexer")
+		if err := idx.db.UpsertFrozenAddress(ctx, addr, "", "indexer"); err != nil {
+			return err
+		}
+		return idx.db.CreateEmergencyAction(ctx, "freeze_address", addr, "", "", lg.TxHash.Hex())
 	}
 	slog.Info("address unfrozen", "target", addr)
-	return idx.db.DeleteFrozenAddress(ctx, addr)
+	if err := idx.db.DeleteFrozenAddress(ctx, addr); err != nil {
+		return err
+	}
+	return idx.db.CreateEmergencyAction(ctx, "unfreeze_address", addr, "", "", lg.TxHash.Hex())
 }
 
 func (idx *Indexer) handleEscrowFrozenFactory(ctx context.Context, lg types.Log, frozen bool) error {
@@ -866,7 +872,7 @@ func (idx *Indexer) handleEscrowFrozenFactory(ctx context.Context, lg types.Log,
 	if err := idx.db.UpdateEscrowFrozen(ctx, e.ID, frozen); err != nil {
 		return err
 	}
-	return idx.db.CreateEmergencyAction(ctx, action, e.EscrowAddress, "", "", "")
+	return idx.db.CreateEmergencyAction(ctx, action, e.EscrowAddress, "", "", lg.TxHash.Hex())
 }
 
 func (idx *Indexer) handleEmergencyResolvedFactory(ctx context.Context, lg types.Log) error {
@@ -902,7 +908,7 @@ func (idx *Indexer) handleEmergencyResolvedFactory(ctx context.Context, lg types
 		return err
 	}
 	return idx.db.CreateEmergencyAction(ctx, "emergency_resolve", e.EscrowAddress, "",
-		fmt.Sprintf("workerAwardBps=%d", bps), "")
+		fmt.Sprintf("workerAwardBps=%d", bps), lg.TxHash.Hex())
 }
 
 func (idx *Indexer) handleEscrowFrozenEscrow(ctx context.Context, dbEscrowID int64, frozen bool) error {
