@@ -124,42 +124,11 @@ Four integration paths, in priority order:
 
 ## System Architecture
 
-```
-                                        ┌──────────────┐
-                                        │ CDP Webhooks │ (optional)
-                                        │  (real-time  │
-                                        │  factory     │
-                                        │  events)     │
-                                        └──────┬───────┘
-                                               │ HMAC-signed POST
-┌──────────────────────────────────────────────┼──────┐
-│                   Go Server Binary            │      │
-│                                               │      │
-│  ┌─────────────┐  ┌──────────┐  ┌────────────┴──┐   │
-│  │  MCP Server  │  │ HTTP API │  │Webhook Handler│   │
-│  │   (stdio)    │  │ (JSON)   │  │(/webhooks/cdp)│   │
-│  └──────┬───────┘  └────┬─────┘  └───────┬───────┘   │
-│         │               │                │           │
-│         └───────────┬───┘                │           │
-│                     │                    │           │
-│  ┌──────────────────┤         ┌───────────────┐      │
-│  │  A2A Adapter     │         │ Event Indexer  │      │
-│  │  (/.well-known/  │         │ (background    │      │
-│  │   agent.json +   │         │  poller)       │      │
-│  │   POST /a2a)     │         └───────┬───────┘      │
-│  └──────┬───────────┤          ┌──────┴────────┐     │
-│         │    ┌──────┴──────┐   │   SQLite DB   │     │
-│         │    │ Chain Client│   │               │     │
-│         │    │(go-ethereum)│   └───────────────┘     │
-│         │    └──────┬──────┘                         │
-│         └───────────┘                                │
-└─────────────────────┼────────────────────────────────┘
-                      │
-              ┌───────┴────────┐
-              │  Base Sepolia  │
-              │  Contracts     │
-              └────────────────┘
-```
+![System Architecture](diagrams/architecture.png)
+
+For internal component wiring (which handler talks to which shared component, event bus publish/subscribe flows, indexer polling paths), see the detail view:
+
+![Go Server — Internal Detail](diagrams/architecture-detail.png)
 
 ### Scope Boundary
 
