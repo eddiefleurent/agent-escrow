@@ -435,6 +435,262 @@ func (d *DB) ListReputations(minCompleted int) ([]*Reputation, error) {
 	return reps, rows.Err()
 }
 
+// RFQ queries
+
+const rfqColumns = `id, title, description, spec_hash, buyer, token, budget_min, budget_max,
+	deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds,
+	verifier, arbitrator, worker_stake, milestones_json, requirements_json,
+	status, expires_at, created_at, updated_at`
+
+func scanRFQ(scanner interface{ Scan(...any) error }) (*RFQ, error) {
+	r := &RFQ{}
+	var createdAt, updatedAt string
+	err := scanner.Scan(&r.ID, &r.Title, &r.Description, &r.SpecHash, &r.Buyer, &r.Token,
+		&r.BudgetMin, &r.BudgetMax, &r.Deadline, &r.ReviewPeriodSeconds,
+		&r.DisputePeriodSeconds, &r.ArbitratorTimeoutSeconds,
+		&r.Verifier, &r.Arbitrator, &r.WorkerStake, &r.MilestonesJSON, &r.RequirementsJSON,
+		&r.Status, &r.ExpiresAt, &createdAt, &updatedAt)
+	if err != nil {
+		return nil, err
+	}
+	r.CreatedAt, err = parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse rfq created_at: %w", err)
+	}
+	r.UpdatedAt, err = parseSQLiteTime(updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse rfq updated_at: %w", err)
+	}
+	return r, nil
+}
+
+func (d *DB) CreateRFQ(r *RFQ) (*RFQ, error) {
+	res, err := d.db.Exec(
+		`INSERT INTO rfqs (title, description, spec_hash, buyer, token, budget_min, budget_max,
+			deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds,
+			verifier, arbitrator, worker_stake, milestones_json, requirements_json,
+			status, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.Title, r.Description, r.SpecHash, r.Buyer, r.Token, r.BudgetMin, r.BudgetMax,
+		r.Deadline, r.ReviewPeriodSeconds, r.DisputePeriodSeconds, r.ArbitratorTimeoutSeconds,
+		r.Verifier, r.Arbitrator, r.WorkerStake, r.MilestonesJSON, r.RequirementsJSON,
+		r.Status, r.ExpiresAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert rfq: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("last insert id: %w", err)
+	}
+	return d.GetRFQ(id)
+}
+
+func (d *DB) GetRFQ(id int64) (*RFQ, error) {
+	row := d.db.QueryRow(`SELECT `+rfqColumns+` FROM rfqs WHERE id = ?`, id)
+	r, err := scanRFQ(row)
+	if err != nil {
+		return nil, fmt.Errorf("get rfq: %w", err)
+	}
+	return r, nil
+}
+
+func (d *DB) ListRFQs(status, buyer string) ([]*RFQ, error) {
+	query := `SELECT ` + rfqColumns + ` FROM rfqs WHERE 1=1`
+	var args []any
+
+	if status != "" {
+		query += ` AND status = ?`
+		args = append(args, status)
+	}
+	if buyer != "" {
+		query += ` AND buyer = ?`
+		args = append(args, buyer)
+	}
+
+	query += ` ORDER BY id DESC`
+
+	rows, err := d.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list rfqs: %w", err)
+	}
+	defer rows.Close()
+
+	var rfqs []*RFQ
+	for rows.Next() {
+		r, err := scanRFQ(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan rfq: %w", err)
+		}
+		rfqs = append(rfqs, r)
+	}
+	return rfqs, rows.Err()
+}
+
+func (d *DB) UpdateRFQStatus(id int64, status string) error {
+	res, err := d.db.Exec(
+		`UPDATE rfqs SET status = ?, updated_at = datetime('now') WHERE id = ?`,
+		status, id,
+	)
+	if err != nil {
+		return fmt.Errorf("UpdateRFQStatus: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("UpdateRFQStatus rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("UpdateRFQStatus id=%d: %w", id, sql.ErrNoRows)
+	}
+	return nil
+}
+
+// Bid queries
+
+const bidColumns = `id, rfq_id, bidder, amount, estimated_duration, reputation_bond,
+	milestones_json, message, status, escrow_id, expires_at, created_at, updated_at`
+
+func scanBid(scanner interface{ Scan(...any) error }) (*Bid, error) {
+	b := &Bid{}
+	var createdAt, updatedAt string
+	var escrowID sql.NullInt64
+	err := scanner.Scan(&b.ID, &b.RFQID, &b.Bidder, &b.Amount, &b.EstimatedDuration,
+		&b.ReputationBond, &b.MilestonesJSON, &b.Message, &b.Status,
+		&escrowID, &b.ExpiresAt, &createdAt, &updatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if escrowID.Valid {
+		v := escrowID.Int64
+		b.EscrowID = &v
+	}
+	b.CreatedAt, err = parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse bid created_at: %w", err)
+	}
+	b.UpdatedAt, err = parseSQLiteTime(updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse bid updated_at: %w", err)
+	}
+	return b, nil
+}
+
+func (d *DB) CreateBid(b *Bid) (*Bid, error) {
+	res, err := d.db.Exec(
+		`INSERT INTO bids (rfq_id, bidder, amount, estimated_duration, reputation_bond,
+			milestones_json, message, status, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		b.RFQID, b.Bidder, b.Amount, b.EstimatedDuration, b.ReputationBond,
+		b.MilestonesJSON, b.Message, b.Status, b.ExpiresAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert bid: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("last insert id: %w", err)
+	}
+	return d.GetBid(id)
+}
+
+func (d *DB) GetBid(id int64) (*Bid, error) {
+	row := d.db.QueryRow(`SELECT `+bidColumns+` FROM bids WHERE id = ?`, id)
+	b, err := scanBid(row)
+	if err != nil {
+		return nil, fmt.Errorf("get bid: %w", err)
+	}
+	return b, nil
+}
+
+func (d *DB) ListBidsByRFQ(rfqID int64) ([]*Bid, error) {
+	rows, err := d.db.Query(
+		`SELECT `+bidColumns+` FROM bids WHERE rfq_id = ? ORDER BY id DESC`, rfqID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list bids by rfq: %w", err)
+	}
+	defer rows.Close()
+
+	var bids []*Bid
+	for rows.Next() {
+		b, err := scanBid(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan bid: %w", err)
+		}
+		bids = append(bids, b)
+	}
+	return bids, rows.Err()
+}
+
+func (d *DB) ListBidsByBidder(bidder string) ([]*Bid, error) {
+	rows, err := d.db.Query(
+		`SELECT `+bidColumns+` FROM bids WHERE bidder = ? ORDER BY id DESC`, bidder,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list bids by bidder: %w", err)
+	}
+	defer rows.Close()
+
+	var bids []*Bid
+	for rows.Next() {
+		b, err := scanBid(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan bid: %w", err)
+		}
+		bids = append(bids, b)
+	}
+	return bids, rows.Err()
+}
+
+func (d *DB) UpdateBidStatus(id int64, status string) error {
+	res, err := d.db.Exec(
+		`UPDATE bids SET status = ?, updated_at = datetime('now') WHERE id = ?`,
+		status, id,
+	)
+	if err != nil {
+		return fmt.Errorf("UpdateBidStatus: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("UpdateBidStatus rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("UpdateBidStatus id=%d: %w", id, sql.ErrNoRows)
+	}
+	return nil
+}
+
+func (d *DB) AcceptBid(bidID, escrowID int64) error {
+	res, err := d.db.Exec(
+		`UPDATE bids SET status = 'accepted', escrow_id = ?, updated_at = datetime('now') WHERE id = ?`,
+		escrowID, bidID,
+	)
+	if err != nil {
+		return fmt.Errorf("AcceptBid: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("AcceptBid rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("AcceptBid id=%d: %w", bidID, sql.ErrNoRows)
+	}
+	return nil
+}
+
+// RejectPendingBids sets all pending bids on an RFQ to rejected, except the given bid.
+func (d *DB) RejectPendingBids(rfqID, exceptBidID int64) error {
+	_, err := d.db.Exec(
+		`UPDATE bids SET status = 'rejected', updated_at = datetime('now')
+		 WHERE rfq_id = ? AND id != ? AND status = 'pending'`,
+		rfqID, exceptBidID,
+	)
+	if err != nil {
+		return fmt.Errorf("RejectPendingBids: %w", err)
+	}
+	return nil
+}
+
 // Chain log queries
 
 func (d *DB) CreateChainLog(txHash string, logIndex int, blockNumber int64, eventName, contractAddress, rawData string) error {

@@ -33,6 +33,15 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	mux.HandleFunc("POST /api/v1/escrows/{id}/activate-backup", h.ActivateBackup)
 	mux.HandleFunc("GET /api/v1/reputation/{address}", h.GetReputation)
 
+	// RFQ bidding protocol endpoints (paper §6.1)
+	mux.HandleFunc("POST /api/v1/rfqs", h.CreateRFQ)
+	mux.HandleFunc("GET /api/v1/rfqs", h.ListRFQs)
+	mux.HandleFunc("GET /api/v1/rfqs/{id}", h.GetRFQ)
+	mux.HandleFunc("POST /api/v1/rfqs/{id}/cancel", h.CancelRFQ)
+	mux.HandleFunc("POST /api/v1/rfqs/{id}/bids", h.PlaceBid)
+	mux.HandleFunc("GET /api/v1/rfqs/{id}/bids", h.ListBids)
+	mux.HandleFunc("POST /api/v1/rfqs/{id}/accept", h.AcceptBid)
+
 	if cfg.WebhookMode() {
 		wh := NewWebhookHandler(idx, cfg.CDPWebhookSecret)
 		mux.HandleFunc("POST /webhooks/cdp", wh.HandleCDPWebhook)

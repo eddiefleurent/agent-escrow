@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/bidding"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/ethereum/go-ethereum/common"
@@ -77,6 +78,47 @@ type listArgs struct {
 	Status  string `json:"status" jsonschema:"Filter by status"`
 }
 
+type createRFQArgs struct {
+	Title                    string `json:"title" jsonschema:"Task title for the RFQ"`
+	Description              string `json:"description" jsonschema:"Task description for the RFQ"`
+	Buyer                    string `json:"buyer" jsonschema:"Buyer address broadcasting the RFQ"`
+	Token                    string `json:"token,omitempty" jsonschema:"ERC20 token address; omit or 0x0 for ETH"`
+	BudgetMin                string `json:"budget_min" jsonschema:"Minimum budget in wei or smallest unit"`
+	BudgetMax                string `json:"budget_max" jsonschema:"Maximum budget in wei or smallest unit"`
+	Deadline                 string `json:"deadline" jsonschema:"Unix timestamp: latest acceptable submission deadline"`
+	ReviewPeriodSeconds      string `json:"review_period_seconds" jsonschema:"Review period in seconds"`
+	DisputePeriodSeconds     string `json:"dispute_period_seconds" jsonschema:"Dispute period in seconds"`
+	ArbitratorTimeoutSeconds string `json:"arbitrator_timeout_seconds" jsonschema:"Arbitrator timeout in seconds"`
+	Verifier                 string `json:"verifier,omitempty" jsonschema:"Designated verifier address"`
+	Arbitrator               string `json:"arbitrator,omitempty" jsonschema:"Designated arbitrator address"`
+	WorkerStake              string `json:"worker_stake,omitempty" jsonschema:"Required worker stake; omit or 0 for none"`
+	MilestonesJSON           string `json:"milestones_json,omitempty" jsonschema:"JSON array of milestone specs"`
+	RequirementsJSON         string `json:"requirements_json,omitempty" jsonschema:"JSON: capability requirements, tags, constraints"`
+	ExpiresAt                string `json:"expires_at" jsonschema:"Unix timestamp: RFQ expiry"`
+}
+
+type placeBidArgs struct {
+	RFQID             string `json:"rfq_id" jsonschema:"RFQ ID to bid on"`
+	Bidder            string `json:"bidder" jsonschema:"Worker agent address placing the bid"`
+	Amount            string `json:"amount" jsonschema:"Proposed total price in wei or smallest unit"`
+	EstimatedDuration string `json:"estimated_duration,omitempty" jsonschema:"Estimated seconds to complete"`
+	ReputationBond    string `json:"reputation_bond,omitempty" jsonschema:"Offered reputation bond in wei"`
+	MilestonesJSON    string `json:"milestones_json,omitempty" jsonschema:"JSON: proposed milestone breakdown"`
+	Message           string `json:"message,omitempty" jsonschema:"Free-form bid justification"`
+	ExpiresAt         string `json:"expires_at" jsonschema:"Unix timestamp: bid expiry"`
+}
+
+type listBidsArgs struct {
+	RFQID  string `json:"rfq_id,omitempty" jsonschema:"List bids for this RFQ ID"`
+	Bidder string `json:"bidder,omitempty" jsonschema:"List bids by this bidder address"`
+}
+
+type acceptBidArgs struct {
+	RFQID  string `json:"rfq_id" jsonschema:"RFQ ID"`
+	BidID  string `json:"bid_id" jsonschema:"Bid ID to accept"`
+	Caller string `json:"caller,omitempty" jsonschema:"Caller address (must match RFQ buyer)"`
+}
+
 type reputationArgs struct {
 	Address string `json:"address" jsonschema:"Ethereum address to look up reputation for"`
 	Role    string `json:"role,omitempty" jsonschema:"Optional: 'worker' or 'buyer'. Omit to return both roles."`
@@ -142,6 +184,26 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Name:        "get_reputation",
 		Description: "Get on-chain reputation record for an address (tasks completed, disputed, failed). Paper §4.6: immutable ledger approach.",
 	}, s.handleGetReputation)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "create_rfq",
+		Description: "Broadcast a Task_RFQ (Request for Quote) describing a task for agents to bid on. Paper §6.1: Task_RFQ broadcast.",
+	}, s.handleCreateRFQ)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "place_bid",
+		Description: "Submit a Bid_Object on an open RFQ with proposed price, duration, and bond. Paper §6.1: signed Bid_Objects.",
+	}, s.handlePlaceBid)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "list_bids",
+		Description: "List bids for an RFQ (buyer view) or by bidder address (worker view).",
+	}, s.handleListBids)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "accept_bid",
+		Description: "Accept a bid on an RFQ; triggers on-chain escrow creation with bid parameters. Paper §6.1: bid acceptance formalizes into escrow.",
+	}, s.handleAcceptBid)
 }
 
 func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolRequest, args createEscrowArgs) (*mcp.CallToolResult, any, error) {
@@ -748,6 +810,157 @@ func (s *Server) handleGetReputation(ctx context.Context, req *mcp.CallToolReque
 		})
 	}
 	return jsonResult(reps)
+}
+
+func (s *Server) biddingService() *bidding.Service {
+	return &bidding.Service{
+		DB:    s.db,
+		Chain: s.chain,
+		Idx:   s.idx,
+		Cfg:   s.cfg,
+	}
+}
+
+func (s *Server) handleCreateRFQ(ctx context.Context, req *mcp.CallToolRequest, args createRFQArgs) (*mcp.CallToolResult, any, error) {
+	deadline, err := strconv.ParseInt(args.Deadline, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid deadline: %v", err)), nil, nil
+	}
+	review, err := strconv.ParseInt(args.ReviewPeriodSeconds, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid review_period_seconds: %v", err)), nil, nil
+	}
+	dispute, err := strconv.ParseInt(args.DisputePeriodSeconds, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid dispute_period_seconds: %v", err)), nil, nil
+	}
+	arbTimeout, err := strconv.ParseInt(args.ArbitratorTimeoutSeconds, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid arbitrator_timeout_seconds: %v", err)), nil, nil
+	}
+	expiresAt, err := strconv.ParseInt(args.ExpiresAt, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid expires_at: %v", err)), nil, nil
+	}
+
+	svc := s.biddingService()
+	rfq, err := svc.CreateRFQ(bidding.CreateRFQParams{
+		Title:                    args.Title,
+		Description:              args.Description,
+		Buyer:                    args.Buyer,
+		Token:                    args.Token,
+		BudgetMin:                args.BudgetMin,
+		BudgetMax:                args.BudgetMax,
+		Deadline:                 deadline,
+		ReviewPeriodSeconds:      review,
+		DisputePeriodSeconds:     dispute,
+		ArbitratorTimeoutSeconds: arbTimeout,
+		Verifier:                 args.Verifier,
+		Arbitrator:               args.Arbitrator,
+		WorkerStake:              args.WorkerStake,
+		MilestonesJSON:           args.MilestonesJSON,
+		RequirementsJSON:         args.RequirementsJSON,
+		ExpiresAt:                expiresAt,
+	})
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
+
+	return jsonResult(map[string]any{
+		"rfq_id": rfq.ID,
+		"status": rfq.Status,
+	})
+}
+
+func (s *Server) handlePlaceBid(ctx context.Context, req *mcp.CallToolRequest, args placeBidArgs) (*mcp.CallToolResult, any, error) {
+	rfqID, err := strconv.ParseInt(args.RFQID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid rfq_id: %v", err)), nil, nil
+	}
+	var estimatedDuration int64
+	if args.EstimatedDuration != "" {
+		estimatedDuration, err = strconv.ParseInt(args.EstimatedDuration, 10, 64)
+		if err != nil {
+			return textResult(fmt.Sprintf("invalid estimated_duration: %v", err)), nil, nil
+		}
+	}
+	expiresAt, err := strconv.ParseInt(args.ExpiresAt, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid expires_at: %v", err)), nil, nil
+	}
+
+	svc := s.biddingService()
+	bid, err := svc.PlaceBid(bidding.PlaceBidParams{
+		RFQID:             rfqID,
+		Bidder:            args.Bidder,
+		Amount:            args.Amount,
+		EstimatedDuration: estimatedDuration,
+		ReputationBond:    args.ReputationBond,
+		MilestonesJSON:    args.MilestonesJSON,
+		Message:           args.Message,
+		ExpiresAt:         expiresAt,
+	})
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
+
+	return jsonResult(map[string]any{
+		"bid_id": bid.ID,
+		"status": bid.Status,
+	})
+}
+
+func (s *Server) handleListBids(ctx context.Context, req *mcp.CallToolRequest, args listBidsArgs) (*mcp.CallToolResult, any, error) {
+	if args.RFQID != "" {
+		rfqID, err := strconv.ParseInt(args.RFQID, 10, 64)
+		if err != nil {
+			return textResult(fmt.Sprintf("invalid rfq_id: %v", err)), nil, nil
+		}
+		bids, err := s.db.ListBidsByRFQ(rfqID)
+		if err != nil {
+			return textResult(fmt.Sprintf("error: %v", err)), nil, nil
+		}
+		return jsonResult(bids)
+	}
+	if args.Bidder != "" {
+		bids, err := s.db.ListBidsByBidder(args.Bidder)
+		if err != nil {
+			return textResult(fmt.Sprintf("error: %v", err)), nil, nil
+		}
+		return jsonResult(bids)
+	}
+	return textResult("provide either rfq_id or bidder"), nil, nil
+}
+
+func (s *Server) handleAcceptBid(ctx context.Context, req *mcp.CallToolRequest, args acceptBidArgs) (*mcp.CallToolResult, any, error) {
+	rfqID, err := strconv.ParseInt(args.RFQID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid rfq_id: %v", err)), nil, nil
+	}
+	bidID, err := strconv.ParseInt(args.BidID, 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid bid_id: %v", err)), nil, nil
+	}
+
+	svc := s.biddingService()
+	result, err := svc.AcceptBid(ctx, bidding.AcceptBidParams{
+		RFQID:  rfqID,
+		BidID:  bidID,
+		Caller: args.Caller,
+	})
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
+
+	return jsonResult(map[string]any{
+		"escrow_id":       result.Escrow.ID,
+		"task_id":         result.Task.ID,
+		"tx_hash":         result.TxHash,
+		"escrow_address":  result.Escrow.EscrowAddress,
+		"chain_escrow_id": result.Escrow.EscrowID,
+		"bid_id":          result.Bid.ID,
+		"bid_status":      result.Bid.Status,
+	})
 }
 
 func parseMilestoneIndex(s string) (uint8, error) {

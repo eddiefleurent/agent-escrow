@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coinbase/x402/go/extensions/bazaar"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/bidding"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
@@ -861,6 +863,318 @@ func (h *Handlers) GetReputation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, reps)
+}
+
+func (h *Handlers) biddingService() *bidding.Service {
+	return &bidding.Service{
+		DB:    h.db,
+		Chain: h.chain,
+		Idx:   h.idx,
+		Cfg:   h.cfg,
+	}
+}
+
+// RFQ Handlers
+
+type createRFQRequest struct {
+	Title                    string `json:"title"`
+	Description              string `json:"description"`
+	Buyer                    string `json:"buyer"`
+	Token                    string `json:"token,omitempty"`
+	BudgetMin                string `json:"budget_min"`
+	BudgetMax                string `json:"budget_max"`
+	Deadline                 string `json:"deadline"`
+	ReviewPeriodSeconds      string `json:"review_period_seconds"`
+	DisputePeriodSeconds     string `json:"dispute_period_seconds"`
+	ArbitratorTimeoutSeconds string `json:"arbitrator_timeout_seconds"`
+	Verifier                 string `json:"verifier,omitempty"`
+	Arbitrator               string `json:"arbitrator,omitempty"`
+	WorkerStake              string `json:"worker_stake,omitempty"`
+	MilestonesJSON           string `json:"milestones_json,omitempty"`
+	RequirementsJSON         string `json:"requirements_json,omitempty"`
+	ExpiresAt                string `json:"expires_at"`
+}
+
+func (h *Handlers) CreateRFQ(w http.ResponseWriter, r *http.Request) {
+	var req createRFQRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+
+	deadline, err := strconv.ParseInt(req.Deadline, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid deadline"})
+		return
+	}
+	review, err := strconv.ParseInt(req.ReviewPeriodSeconds, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid review_period_seconds"})
+		return
+	}
+	dispute, err := strconv.ParseInt(req.DisputePeriodSeconds, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid dispute_period_seconds"})
+		return
+	}
+	arbTimeout, err := strconv.ParseInt(req.ArbitratorTimeoutSeconds, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid arbitrator_timeout_seconds"})
+		return
+	}
+	expiresAt, err := strconv.ParseInt(req.ExpiresAt, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid expires_at"})
+		return
+	}
+
+	svc := h.biddingService()
+	rfq, err := svc.CreateRFQ(bidding.CreateRFQParams{
+		Title:                    req.Title,
+		Description:              req.Description,
+		Buyer:                    req.Buyer,
+		Token:                    req.Token,
+		BudgetMin:                req.BudgetMin,
+		BudgetMax:                req.BudgetMax,
+		Deadline:                 deadline,
+		ReviewPeriodSeconds:      review,
+		DisputePeriodSeconds:     dispute,
+		ArbitratorTimeoutSeconds: arbTimeout,
+		Verifier:                 req.Verifier,
+		Arbitrator:               req.Arbitrator,
+		WorkerStake:              req.WorkerStake,
+		MilestonesJSON:           req.MilestonesJSON,
+		RequirementsJSON:         req.RequirementsJSON,
+		ExpiresAt:                expiresAt,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, rfq)
+}
+
+// rfqBazaarDiscovery is the x402 Bazaar discovery extension for the RFQ listing
+// endpoint, enabling agents to discover open RFQs via the x402 facilitator's
+// /discovery/resources endpoint (paper §6.1).
+var rfqBazaarDiscovery = func() *bazaar.DiscoveryExtension {
+	ext, err := bazaar.DeclareDiscoveryExtension(
+		bazaar.MethodGET,
+		map[string]interface{}{
+			"status": "open",
+		},
+		bazaar.JSONSchema{
+			"properties": map[string]interface{}{
+				"status": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"open", "closed", "cancelled", "expired"},
+					"description": "Filter RFQs by status",
+				},
+				"buyer": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter RFQs by buyer address",
+				},
+			},
+		},
+		"",
+		&bazaar.OutputConfig{
+			Example: map[string]interface{}{
+				"rfqs": []map[string]interface{}{
+					{
+						"id": 1, "title": "Build a widget", "status": "open",
+						"budget_min": "100", "budget_max": "500",
+					},
+				},
+			},
+		},
+	)
+	if err != nil {
+		return nil
+	}
+	return &ext
+}()
+
+func (h *Handlers) ListRFQs(w http.ResponseWriter, r *http.Request) {
+	status := r.URL.Query().Get("status")
+	buyer := r.URL.Query().Get("buyer")
+
+	rfqs, err := h.db.ListRFQs(status, buyer)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	if r.URL.Query().Get("discovery") == "true" && rfqBazaarDiscovery != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"rfqs": rfqs,
+			"extensions": map[string]any{
+				bazaar.BAZAAR: rfqBazaarDiscovery,
+			},
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, rfqs)
+}
+
+func (h *Handlers) GetRFQ(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+
+	rfq, err := h.db.GetRFQ(id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+
+	bids, err := h.db.ListBidsByRFQ(id)
+	if err != nil {
+		slog.Error("failed to fetch bids for rfq", "rfq_id", id, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch bids"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"rfq":  rfq,
+		"bids": bids,
+	})
+}
+
+func (h *Handlers) CancelRFQ(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+
+	rfq, err := h.db.GetRFQ(id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	if rfq.Status != "open" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("rfq is not open (status: %s)", rfq.Status)})
+		return
+	}
+
+	if err := h.db.UpdateRFQStatus(id, "cancelled"); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := h.db.RejectPendingBids(id, 0); err != nil {
+		slog.Error("failed to reject pending bids on cancel", "rfq_id", id, "error", err)
+	}
+
+	rfq, _ = h.db.GetRFQ(id)
+	writeJSON(w, http.StatusOK, rfq)
+}
+
+type placeBidRequest struct {
+	Bidder            string `json:"bidder"`
+	Amount            string `json:"amount"`
+	EstimatedDuration int64  `json:"estimated_duration,omitempty"`
+	ReputationBond    string `json:"reputation_bond,omitempty"`
+	MilestonesJSON    string `json:"milestones_json,omitempty"`
+	Message           string `json:"message,omitempty"`
+	ExpiresAt         string `json:"expires_at"`
+}
+
+func (h *Handlers) PlaceBid(w http.ResponseWriter, r *http.Request) {
+	rfqID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid rfq id"})
+		return
+	}
+
+	var req placeBidRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+
+	expiresAt, err := strconv.ParseInt(req.ExpiresAt, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid expires_at"})
+		return
+	}
+
+	svc := h.biddingService()
+	bid, err := svc.PlaceBid(bidding.PlaceBidParams{
+		RFQID:             rfqID,
+		Bidder:            req.Bidder,
+		Amount:            req.Amount,
+		EstimatedDuration: req.EstimatedDuration,
+		ReputationBond:    req.ReputationBond,
+		MilestonesJSON:    req.MilestonesJSON,
+		Message:           req.Message,
+		ExpiresAt:         expiresAt,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, bid)
+}
+
+func (h *Handlers) ListBids(w http.ResponseWriter, r *http.Request) {
+	rfqID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid rfq id"})
+		return
+	}
+
+	bids, err := h.db.ListBidsByRFQ(rfqID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, bids)
+}
+
+type acceptBidRequest struct {
+	BidID  int64  `json:"bid_id"`
+	Caller string `json:"caller,omitempty"`
+}
+
+func (h *Handlers) AcceptBid(w http.ResponseWriter, r *http.Request) {
+	rfqID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid rfq id"})
+		return
+	}
+
+	var req acceptBidRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+
+	svc := h.biddingService()
+	result, err := svc.AcceptBid(r.Context(), bidding.AcceptBidParams{
+		RFQID:  rfqID,
+		BidID:  req.BidID,
+		Caller: req.Caller,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"escrow_id":       result.Escrow.ID,
+		"task_id":         result.Task.ID,
+		"tx_hash":         result.TxHash,
+		"escrow_address":  result.Escrow.EscrowAddress,
+		"chain_escrow_id": result.Escrow.EscrowID,
+		"bid_id":          result.Bid.ID,
+		"bid_status":      result.Bid.Status,
+	})
 }
 
 func isValidAddress(s string) bool {

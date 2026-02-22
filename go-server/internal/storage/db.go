@@ -21,6 +21,9 @@ var migration003SQL string
 //go:embed migrations/004_add_reputation.sql
 var migration004SQL string
 
+//go:embed migrations/005_add_bidding.sql
+var migration005SQL string
+
 type DB struct {
 	db *sql.DB
 }
@@ -109,6 +112,27 @@ func Open(dsn string) (*DB, error) {
 		return nil, fmt.Errorf("commit migration 004: %w", err)
 	}
 
+	// Run migration 005 (bidding) idempotently
+	tx5, err := sqlDB.Begin()
+	if err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("begin migration 005 tx: %w", err)
+	}
+	for _, stmt := range splitStatements(migration005SQL) {
+		if _, err := tx5.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) && !isAlreadyExistsError(err) {
+				tx5.Rollback()
+				sqlDB.Close()
+				return nil, fmt.Errorf("run migration 005: %w", err)
+			}
+		}
+	}
+	if err := tx5.Commit(); err != nil {
+		tx5.Rollback()
+		sqlDB.Close()
+		return nil, fmt.Errorf("commit migration 005: %w", err)
+	}
+
 	return &DB{db: sqlDB}, nil
 }
 
@@ -133,4 +157,8 @@ func splitStatements(sql string) []string {
 
 func isDuplicateColumnError(err error) bool {
 	return strings.Contains(err.Error(), "duplicate column")
+}
+
+func isAlreadyExistsError(err error) bool {
+	return strings.Contains(err.Error(), "already exists")
 }

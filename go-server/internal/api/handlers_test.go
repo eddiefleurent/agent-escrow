@@ -805,6 +805,484 @@ func TestCreateEscrow_EmptyComplexityFloorAllowsAny(t *testing.T) {
 	}
 }
 
+// RFQ Bidding Protocol Tests
+
+func futureTimestamp() string {
+	return fmt.Sprintf("%d", time.Now().Unix()+86400)
+}
+
+func farFutureTimestamp() string {
+	return fmt.Sprintf("%d", time.Now().Unix()+172800)
+}
+
+func TestCreateRFQ_Success(t *testing.T) {
+	env := setup(t)
+
+	body := fmt.Sprintf(`{
+		"title": "Build a widget",
+		"description": "Build a high-quality widget",
+		"buyer": "0x1000000000000000000000000000000000000001",
+		"budget_min": "100",
+		"budget_max": "500",
+		"deadline": "%s",
+		"review_period_seconds": "86400",
+		"dispute_period_seconds": "172800",
+		"arbitrator_timeout_seconds": "604800",
+		"verifier": "0x3000000000000000000000000000000000000003",
+		"arbitrator": "0x4000000000000000000000000000000000000004",
+		"expires_at": "%s"
+	}`, futureTimestamp(), farFutureTimestamp())
+
+	rr := env.request(t, "POST", "/api/v1/rfqs", body)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeJSON(t, rr)
+	if resp["status"] != "open" {
+		t.Fatalf("expected status 'open', got %v", resp["status"])
+	}
+	if resp["title"] != "Build a widget" {
+		t.Fatalf("expected title 'Build a widget', got %v", resp["title"])
+	}
+}
+
+func TestCreateRFQ_InvalidBudget(t *testing.T) {
+	env := setup(t)
+
+	body := fmt.Sprintf(`{
+		"title": "Test",
+		"description": "desc",
+		"buyer": "0x1000000000000000000000000000000000000001",
+		"budget_min": "500",
+		"budget_max": "100",
+		"deadline": "%s",
+		"review_period_seconds": "86400",
+		"dispute_period_seconds": "172800",
+		"arbitrator_timeout_seconds": "604800",
+		"expires_at": "%s"
+	}`, futureTimestamp(), farFutureTimestamp())
+
+	rr := env.request(t, "POST", "/api/v1/rfqs", body)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestListRFQs_Success(t *testing.T) {
+	env := setup(t)
+
+	_, err := env.db.CreateRFQ(&storage.RFQ{
+		Title: "RFQ 1", Description: "desc", SpecHash: "0x1",
+		Buyer: "0xBuyer", BudgetMin: "100", BudgetMax: "500",
+		Deadline: 1800000000, ReviewPeriodSeconds: 86400,
+		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+		Status: "open", ExpiresAt: 1900000000,
+		MilestonesJSON: "[]", RequirementsJSON: "{}",
+	})
+	if err != nil {
+		t.Fatalf("setup rfq: %v", err)
+	}
+
+	rr := env.request(t, "GET", "/api/v1/rfqs", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var rfqs []map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&rfqs); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(rfqs) != 1 {
+		t.Fatalf("expected 1 rfq, got %d", len(rfqs))
+	}
+}
+
+func TestListRFQs_FilterByStatus(t *testing.T) {
+	env := setup(t)
+
+	_, err := env.db.CreateRFQ(&storage.RFQ{
+		Title: "RFQ 1", Description: "desc", SpecHash: "0x1",
+		Buyer: "0xBuyer", BudgetMin: "100", BudgetMax: "500",
+		Deadline: 1800000000, ReviewPeriodSeconds: 86400,
+		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+		Status: "open", ExpiresAt: 1900000000,
+		MilestonesJSON: "[]", RequirementsJSON: "{}",
+	})
+	if err != nil {
+		t.Fatalf("setup rfq: %v", err)
+	}
+	_, err = env.db.CreateRFQ(&storage.RFQ{
+		Title: "RFQ 2", Description: "desc", SpecHash: "0x2",
+		Buyer: "0xBuyer", BudgetMin: "200", BudgetMax: "600",
+		Deadline: 1800000000, ReviewPeriodSeconds: 86400,
+		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+		Status: "closed", ExpiresAt: 1900000000,
+		MilestonesJSON: "[]", RequirementsJSON: "{}",
+	})
+	if err != nil {
+		t.Fatalf("setup rfq: %v", err)
+	}
+
+	rr := env.request(t, "GET", "/api/v1/rfqs?status=open", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var rfqs []map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&rfqs); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(rfqs) != 1 {
+		t.Fatalf("expected 1 open rfq, got %d", len(rfqs))
+	}
+}
+
+func TestGetRFQ_Success(t *testing.T) {
+	env := setup(t)
+
+	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+		Title: "RFQ 1", Description: "desc", SpecHash: "0x1",
+		Buyer: "0xBuyer", BudgetMin: "100", BudgetMax: "500",
+		Deadline: 1800000000, ReviewPeriodSeconds: 86400,
+		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+		Status: "open", ExpiresAt: 1900000000,
+		MilestonesJSON: "[]", RequirementsJSON: "{}",
+	})
+	if err != nil {
+		t.Fatalf("setup rfq: %v", err)
+	}
+
+	rr := env.request(t, "GET", fmt.Sprintf("/api/v1/rfqs/%d", rfq.ID), "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeJSON(t, rr)
+	rfqData, ok := resp["rfq"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected rfq object in response, got %v", resp)
+	}
+	if rfqData["title"] != "RFQ 1" {
+		t.Fatalf("expected title 'RFQ 1', got %v", rfqData["title"])
+	}
+}
+
+func TestGetRFQ_NotFound(t *testing.T) {
+	env := setup(t)
+
+	rr := env.request(t, "GET", "/api/v1/rfqs/999", "")
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+}
+
+func TestCancelRFQ_Success(t *testing.T) {
+	env := setup(t)
+
+	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+		Title: "RFQ 1", Description: "desc", SpecHash: "0x1",
+		Buyer: "0xBuyer", BudgetMin: "100", BudgetMax: "500",
+		Deadline: 1800000000, ReviewPeriodSeconds: 86400,
+		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+		Status: "open", ExpiresAt: 1900000000,
+		MilestonesJSON: "[]", RequirementsJSON: "{}",
+	})
+	if err != nil {
+		t.Fatalf("setup rfq: %v", err)
+	}
+
+	rr := env.request(t, "POST", fmt.Sprintf("/api/v1/rfqs/%d/cancel", rfq.ID), "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeJSON(t, rr)
+	if resp["status"] != "cancelled" {
+		t.Fatalf("expected status 'cancelled', got %v", resp["status"])
+	}
+}
+
+func TestCancelRFQ_AlreadyClosed(t *testing.T) {
+	env := setup(t)
+
+	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+		Title: "RFQ", Description: "desc", SpecHash: "0x1",
+		Buyer: "0xBuyer", BudgetMin: "100", BudgetMax: "500",
+		Deadline: 1800000000, ReviewPeriodSeconds: 86400,
+		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+		Status: "closed", ExpiresAt: 1900000000,
+		MilestonesJSON: "[]", RequirementsJSON: "{}",
+	})
+	if err != nil {
+		t.Fatalf("setup rfq: %v", err)
+	}
+
+	rr := env.request(t, "POST", fmt.Sprintf("/api/v1/rfqs/%d/cancel", rfq.ID), "")
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestPlaceBid_Success(t *testing.T) {
+	env := setup(t)
+
+	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+		Title: "RFQ", Description: "desc", SpecHash: "0x1",
+		Buyer:     "0x1000000000000000000000000000000000000001",
+		BudgetMin: "100", BudgetMax: "500",
+		Deadline: time.Now().Unix() + 86400, ReviewPeriodSeconds: 86400,
+		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+		Status: "open", ExpiresAt: time.Now().Unix() + 172800,
+		MilestonesJSON: "[]", RequirementsJSON: "{}",
+	})
+	if err != nil {
+		t.Fatalf("setup rfq: %v", err)
+	}
+
+	body := fmt.Sprintf(`{
+		"bidder": "0x2000000000000000000000000000000000000002",
+		"amount": "300",
+		"estimated_duration": 3600,
+		"message": "I can do this",
+		"expires_at": "%s"
+	}`, futureTimestamp())
+
+	rr := env.request(t, "POST", fmt.Sprintf("/api/v1/rfqs/%d/bids", rfq.ID), body)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeJSON(t, rr)
+	if resp["status"] != "pending" {
+		t.Fatalf("expected status 'pending', got %v", resp["status"])
+	}
+}
+
+func TestPlaceBid_OutOfBudgetRange(t *testing.T) {
+	env := setup(t)
+
+	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+		Title: "RFQ", Description: "desc", SpecHash: "0x1",
+		Buyer:     "0x1000000000000000000000000000000000000001",
+		BudgetMin: "100", BudgetMax: "500",
+		Deadline: time.Now().Unix() + 86400, ReviewPeriodSeconds: 86400,
+		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+		Status: "open", ExpiresAt: time.Now().Unix() + 172800,
+		MilestonesJSON: "[]", RequirementsJSON: "{}",
+	})
+	if err != nil {
+		t.Fatalf("setup rfq: %v", err)
+	}
+
+	body := fmt.Sprintf(`{
+		"bidder": "0x2000000000000000000000000000000000000002",
+		"amount": "999",
+		"expires_at": "%s"
+	}`, futureTimestamp())
+
+	rr := env.request(t, "POST", fmt.Sprintf("/api/v1/rfqs/%d/bids", rfq.ID), body)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestPlaceBid_BidderIsBuyer(t *testing.T) {
+	env := setup(t)
+
+	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+		Title: "RFQ", Description: "desc", SpecHash: "0x1",
+		Buyer:     "0x1000000000000000000000000000000000000001",
+		BudgetMin: "100", BudgetMax: "500",
+		Deadline: time.Now().Unix() + 86400, ReviewPeriodSeconds: 86400,
+		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+		Status: "open", ExpiresAt: time.Now().Unix() + 172800,
+		MilestonesJSON: "[]", RequirementsJSON: "{}",
+	})
+	if err != nil {
+		t.Fatalf("setup rfq: %v", err)
+	}
+
+	body := fmt.Sprintf(`{
+		"bidder": "0x1000000000000000000000000000000000000001",
+		"amount": "300",
+		"expires_at": "%s"
+	}`, futureTimestamp())
+
+	rr := env.request(t, "POST", fmt.Sprintf("/api/v1/rfqs/%d/bids", rfq.ID), body)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestListBids_Success(t *testing.T) {
+	env := setup(t)
+
+	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+		Title: "RFQ", Description: "desc", SpecHash: "0x1",
+		Buyer: "0xBuyer", BudgetMin: "100", BudgetMax: "500",
+		Deadline: 1800000000, ReviewPeriodSeconds: 86400,
+		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+		Status: "open", ExpiresAt: 1900000000,
+		MilestonesJSON: "[]", RequirementsJSON: "{}",
+	})
+	if err != nil {
+		t.Fatalf("setup rfq: %v", err)
+	}
+
+	_, err = env.db.CreateBid(&storage.Bid{
+		RFQID: rfq.ID, Bidder: "0xWorker", Amount: "200",
+		Status: "pending", ExpiresAt: 1850000000, MilestonesJSON: "[]",
+	})
+	if err != nil {
+		t.Fatalf("setup bid: %v", err)
+	}
+
+	rr := env.request(t, "GET", fmt.Sprintf("/api/v1/rfqs/%d/bids", rfq.ID), "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var bids []map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&bids); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(bids) != 1 {
+		t.Fatalf("expected 1 bid, got %d", len(bids))
+	}
+}
+
+func TestAcceptBid_Success(t *testing.T) {
+	env := setup(t)
+
+	escrowAddr := common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12")
+	buyer := common.HexToAddress("0x1000000000000000000000000000000000000001")
+	env.mock.Receipt = chain.MakeEscrowCreatedReceipt(7, escrowAddr, buyer)
+
+	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+		Title: "Build widget", Description: "Build a high-quality widget", SpecHash: "0x1",
+		Buyer:     "0x1000000000000000000000000000000000000001",
+		BudgetMin: "100", BudgetMax: "500",
+		Verifier:   "0x3000000000000000000000000000000000000003",
+		Arbitrator: "0x4000000000000000000000000000000000000004",
+		Deadline:   time.Now().Unix() + 86400, ReviewPeriodSeconds: 86400,
+		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+		Status: "open", ExpiresAt: time.Now().Unix() + 172800,
+		MilestonesJSON: "[]", RequirementsJSON: "{}",
+	})
+	if err != nil {
+		t.Fatalf("setup rfq: %v", err)
+	}
+
+	bid, err := env.db.CreateBid(&storage.Bid{
+		RFQID: rfq.ID, Bidder: "0x2000000000000000000000000000000000000002",
+		Amount: "300", Status: "pending", ExpiresAt: time.Now().Unix() + 86400,
+		MilestonesJSON: "[]",
+	})
+	if err != nil {
+		t.Fatalf("setup bid: %v", err)
+	}
+
+	body := fmt.Sprintf(`{"bid_id": %d}`, bid.ID)
+	rr := env.request(t, "POST", fmt.Sprintf("/api/v1/rfqs/%d/accept", rfq.ID), body)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeJSON(t, rr)
+	if resp["escrow_address"] != escrowAddr.Hex() {
+		t.Fatalf("expected escrow address %s, got %v", escrowAddr.Hex(), resp["escrow_address"])
+	}
+	if resp["bid_status"] != "accepted" {
+		t.Fatalf("expected bid_status 'accepted', got %v", resp["bid_status"])
+	}
+
+	// Verify RFQ is now closed
+	updatedRFQ, err := env.db.GetRFQ(rfq.ID)
+	if err != nil {
+		t.Fatalf("get rfq: %v", err)
+	}
+	if updatedRFQ.Status != "closed" {
+		t.Fatalf("expected rfq status 'closed', got %q", updatedRFQ.Status)
+	}
+}
+
+func TestAcceptBid_RFQNotOpen(t *testing.T) {
+	env := setup(t)
+
+	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+		Title: "RFQ", Description: "desc", SpecHash: "0x1",
+		Buyer: "0xBuyer", BudgetMin: "100", BudgetMax: "500",
+		Deadline: 1800000000, ReviewPeriodSeconds: 86400,
+		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+		Status: "closed", ExpiresAt: 1900000000,
+		MilestonesJSON: "[]", RequirementsJSON: "{}",
+	})
+	if err != nil {
+		t.Fatalf("setup rfq: %v", err)
+	}
+
+	rr := env.request(t, "POST", fmt.Sprintf("/api/v1/rfqs/%d/accept", rfq.ID), `{"bid_id": 1}`)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAcceptBid_RejectsOtherBids(t *testing.T) {
+	env := setup(t)
+
+	escrowAddr := common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12")
+	buyer := common.HexToAddress("0x1000000000000000000000000000000000000001")
+	env.mock.Receipt = chain.MakeEscrowCreatedReceipt(7, escrowAddr, buyer)
+
+	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+		Title: "Build widget", Description: "desc", SpecHash: "0x1",
+		Buyer:     "0x1000000000000000000000000000000000000001",
+		BudgetMin: "100", BudgetMax: "500",
+		Verifier:   "0x3000000000000000000000000000000000000003",
+		Arbitrator: "0x4000000000000000000000000000000000000004",
+		Deadline:   time.Now().Unix() + 86400, ReviewPeriodSeconds: 86400,
+		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+		Status: "open", ExpiresAt: time.Now().Unix() + 172800,
+		MilestonesJSON: "[]", RequirementsJSON: "{}",
+	})
+	if err != nil {
+		t.Fatalf("setup rfq: %v", err)
+	}
+
+	bid1, err := env.db.CreateBid(&storage.Bid{
+		RFQID: rfq.ID, Bidder: "0x2000000000000000000000000000000000000002",
+		Amount: "200", Status: "pending", ExpiresAt: time.Now().Unix() + 86400,
+		MilestonesJSON: "[]",
+	})
+	if err != nil {
+		t.Fatalf("setup bid 1: %v", err)
+	}
+	bid2, err := env.db.CreateBid(&storage.Bid{
+		RFQID: rfq.ID, Bidder: "0x5000000000000000000000000000000000000005",
+		Amount: "300", Status: "pending", ExpiresAt: time.Now().Unix() + 86400,
+		MilestonesJSON: "[]",
+	})
+	if err != nil {
+		t.Fatalf("setup bid 2: %v", err)
+	}
+
+	body := fmt.Sprintf(`{"bid_id": %d}`, bid1.ID)
+	rr := env.request(t, "POST", fmt.Sprintf("/api/v1/rfqs/%d/accept", rfq.ID), body)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Verify bid2 was rejected
+	rejectedBid, err := env.db.GetBid(bid2.ID)
+	if err != nil {
+		t.Fatalf("get bid 2: %v", err)
+	}
+	if rejectedBid.Status != "rejected" {
+		t.Fatalf("expected bid 2 status 'rejected', got %q", rejectedBid.Status)
+	}
+}
+
 func escrowPath(id int64, action string) string {
 	if action != "" {
 		return fmt.Sprintf("/api/v1/escrows/%d/%s", id, action)

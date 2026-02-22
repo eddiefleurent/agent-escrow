@@ -86,6 +86,48 @@ type Reputation struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// RFQ represents a Task Request for Quote broadcast (paper §6.1).
+type RFQ struct {
+	ID                       int64     `json:"id"`
+	Title                    string    `json:"title"`
+	Description              string    `json:"description"`
+	SpecHash                 string    `json:"spec_hash"`
+	Buyer                    string    `json:"buyer"`
+	Token                    string    `json:"token"`
+	BudgetMin                string    `json:"budget_min"`
+	BudgetMax                string    `json:"budget_max"`
+	Deadline                 int64     `json:"deadline"`
+	ReviewPeriodSeconds      int64     `json:"review_period_seconds"`
+	DisputePeriodSeconds     int64     `json:"dispute_period_seconds"`
+	ArbitratorTimeoutSeconds int64     `json:"arbitrator_timeout_seconds"`
+	Verifier                 string    `json:"verifier"`
+	Arbitrator               string    `json:"arbitrator"`
+	WorkerStake              string    `json:"worker_stake"`
+	MilestonesJSON           string    `json:"milestones_json"`
+	RequirementsJSON         string    `json:"requirements_json"`
+	Status                   string    `json:"status"`
+	ExpiresAt                int64     `json:"expires_at"`
+	CreatedAt                time.Time `json:"created_at"`
+	UpdatedAt                time.Time `json:"updated_at"`
+}
+
+// Bid represents a signed Bid_Object from a worker agent (paper §6.1).
+type Bid struct {
+	ID                int64     `json:"id"`
+	RFQID             int64     `json:"rfq_id"`
+	Bidder            string    `json:"bidder"`
+	Amount            string    `json:"amount"`
+	EstimatedDuration int64     `json:"estimated_duration"`
+	ReputationBond    string    `json:"reputation_bond"`
+	MilestonesJSON    string    `json:"milestones_json"`
+	Message           string    `json:"message"`
+	Status            string    `json:"status"`
+	EscrowID          *int64    `json:"escrow_id"`
+	ExpiresAt         int64     `json:"expires_at"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
 type ChainLog struct {
 	ID              int64
 	TxHash          string
