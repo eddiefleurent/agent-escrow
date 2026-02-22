@@ -35,6 +35,11 @@ type Config struct {
 	// The polling indexer still runs for escrow-level events since each
 	// TaskEscrow is a separate contract that can't be pre-subscribed.
 	CDPWebhookSecret string
+
+	// A2A settlement adapter configuration (paper §6: A2A Task object extension).
+	A2AEnabled   bool   // Enable A2A adapter routes (default true)
+	A2AAgentName string // Agent card display name
+	A2AAgentURL  string // Agent card URL (default derived from PORT)
 }
 
 // WebhookMode reports whether CDP webhook mode is enabled (secret is configured).
@@ -122,6 +127,25 @@ func Load() (*Config, error) {
 		}
 	}
 
+	a2aEnabled := true
+	if raw := os.Getenv("A2A_ENABLED"); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid A2A_ENABLED: %w", err)
+		}
+		a2aEnabled = v
+	}
+
+	a2aAgentName := os.Getenv("A2A_AGENT_NAME")
+	if a2aAgentName == "" {
+		a2aAgentName = "Escrow Settlement Agent"
+	}
+
+	a2aAgentURL := os.Getenv("A2A_AGENT_URL")
+	if a2aAgentURL == "" {
+		a2aAgentURL = fmt.Sprintf("http://localhost:%d", port)
+	}
+
 	cfg := &Config{
 		RPCURL:           os.Getenv("RPC_URL"),
 		PrivateKey:       os.Getenv("PRIVATE_KEY"),
@@ -137,6 +161,9 @@ func Load() (*Config, error) {
 		StartBlock:       startBlock,
 		ComplexityFloor:  complexityFloor,
 		CDPWebhookSecret: os.Getenv("CDP_WEBHOOK_SECRET"),
+		A2AEnabled:       a2aEnabled,
+		A2AAgentName:     a2aAgentName,
+		A2AAgentURL:      a2aAgentURL,
 	}
 
 	result := cfg.Validate()

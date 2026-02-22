@@ -25,6 +25,9 @@ var migration004SQL string
 //go:embed migrations/005_add_bidding.sql
 var migration005SQL string
 
+//go:embed migrations/006_add_a2a.sql
+var migration006SQL string
+
 type DB struct {
 	db *sql.DB
 }
@@ -132,6 +135,27 @@ func Open(dsn string) (*DB, error) {
 		tx5.Rollback()
 		sqlDB.Close()
 		return nil, fmt.Errorf("commit migration 005: %w", err)
+	}
+
+	// Run migration 006 (A2A tasks) idempotently
+	tx6, err := sqlDB.Begin()
+	if err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("begin migration 006 tx: %w", err)
+	}
+	for _, stmt := range splitStatements(migration006SQL) {
+		if _, err := tx6.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) && !isAlreadyExistsError(err) {
+				tx6.Rollback()
+				sqlDB.Close()
+				return nil, fmt.Errorf("run migration 006: %w", err)
+			}
+		}
+	}
+	if err := tx6.Commit(); err != nil {
+		tx6.Rollback()
+		sqlDB.Close()
+		return nil, fmt.Errorf("commit migration 006: %w", err)
 	}
 
 	return &DB{db: sqlDB}, nil

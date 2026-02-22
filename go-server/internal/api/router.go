@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/a2a"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
@@ -45,6 +46,19 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	if cfg.WebhookMode() {
 		wh := NewWebhookHandler(idx, cfg.CDPWebhookSecret)
 		mux.HandleFunc("POST /webhooks/cdp", wh.HandleCDPWebhook)
+	}
+
+	// A2A settlement adapter routes (paper §6: A2A Task object extension)
+	if cfg.A2AEnabled {
+		a2aSvc := &a2a.Service{
+			DB:    db,
+			Chain: chainClient,
+			Idx:   idx,
+			Cfg:   cfg,
+		}
+		a2aHandler := a2a.NewHandler(a2aSvc)
+		mux.HandleFunc("GET /.well-known/agent.json", a2aHandler.ServeAgentCard)
+		mux.HandleFunc("POST /a2a", a2aHandler.HandleJSONRPC)
 	}
 
 	var handler http.Handler = mux

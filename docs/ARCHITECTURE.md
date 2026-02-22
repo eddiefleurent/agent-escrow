@@ -141,15 +141,18 @@ Four integration paths, in priority order:
 │  └──────┬───────┘  └────┬─────┘  └───────┬───────┘   │
 │         │               │                │           │
 │         └───────────┬───┘                │           │
-│                     │         ┌───────────────┐      │
-│                     │         │ Event Indexer  │      │
-│                     │         │ (background    │      │
-│                     │         │  poller)       │      │
-│                     │         └───────┬───────┘      │
-│              ┌──────┴──────┐  ┌──────┴────────┐      │
-│              │ Chain Client│  │   SQLite DB    │      │
-│              │(go-ethereum)│  │                │      │
-│              └──────┬──────┘  └───────────────┘      │
+│                     │                    │           │
+│  ┌──────────────────┤         ┌───────────────┐      │
+│  │  A2A Adapter     │         │ Event Indexer  │      │
+│  │  (/.well-known/  │         │ (background    │      │
+│  │   agent.json +   │         │  poller)       │      │
+│  │   POST /a2a)     │         └───────┬───────┘      │
+│  └──────┬───────────┤          ┌──────┴────────┐     │
+│         │    ┌──────┴──────┐   │   SQLite DB   │     │
+│         │    │ Chain Client│   │               │     │
+│         │    │(go-ethereum)│   └───────────────┘     │
+│         │    └──────┬──────┘                         │
+│         └───────────┘                                │
 └─────────────────────┼────────────────────────────────┘
                       │
               ┌───────┴────────┐
@@ -416,9 +419,13 @@ go-server/
     indexer/indexer.go             Event polling -> DB reconciliation
     bidding/
       bidding.go                   Shared bidding protocol logic (RFQ + Bid lifecycle)
+    a2a/
+      types.go                     A2A protocol types (AgentCard, Task, verification_policy)
+      service.go                   A2A-to-escrow lifecycle mapping
+      handler.go                   HTTP handlers (agent card + JSON-RPC endpoint)
     mcpserver/
       server.go                    MCP server setup
-      tools.go                     16 tool handlers
+      tools.go                     17 tool handlers
     api/
       router.go                    HTTP mux with middleware
       handlers.go                  JSON request/response handlers
@@ -455,6 +462,7 @@ SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 | `reputation` | Per-address, per-role outcome counters (completed, disputed, failed) indexed from on-chain events |
 | `rfqs` | Task Request for Quote broadcasts (paper §6.1: Task_RFQ) |
 | `bids` | Signed Bid_Objects from worker agents (paper §6.1: Bid_Object) |
+| `a2a_tasks` | A2A protocol tasks linked to escrows (paper §6: A2A Task object extension) |
 | `chain_logs` | Raw chain event log (idempotent by tx_hash + log_index) |
 | `chain_cursors` | Indexer block cursor per chain |
 
@@ -506,6 +514,25 @@ The bidding protocol implements the paper's decentralized market mechanism (§4.
 
 **Data model:** Two new tables (`rfqs`, `bids`) with status-based lifecycle management. RFQs have budget ranges enabling competitive bidding within buyer constraints. Both RFQs and bids have expiry timestamps checked at read time (no background cleanup needed).
 
+### A2A Settlement Adapter (Paper §6)
+
+The A2A adapter makes the escrow settlement layer accessible as an A2A-compatible agent (paper §6, pages 25-27). The paper identifies that A2A "lacks the cryptographic slots to enforce verifiable task completion" and "assumes a predefined service interface" with "no native support for structured pre-commitment negotiation of scope, cost, and liability." The adapter fills this gap.
+
+**Agent card** (`GET /.well-known/agent.json`): Serves a standard A2A v0.2+ agent card with eight skills mapping to escrow lifecycle actions (create, fund, submit, approve, dispute, resolve, query, settle_task). External agents discover the settlement capability via this endpoint.
+
+**JSON-RPC endpoint** (`POST /a2a`): Implements A2A JSON-RPC 2.0 methods:
+- `tasks/send` -- Receive a task from a delegator agent. If `escrow_trigger: true` in the `verification_policy` metadata, the task is linked to an on-chain escrow.
+- `tasks/get` -- Query task/escrow status.
+- `tasks/cancel` -- Cancel a task (maps to escrow cancellation if unfunded).
+
+**Paper-defined extensions** on A2A Task metadata (paper §6.1):
+- `verification_policy`: Specifies verification mode (`strict`, `optimistic`, `manual`), required artifacts (`unit_test_log`, `zk_snark_trace`, `manual_review`), and whether to trigger escrow creation.
+- `escrow_trigger`: When true, task acceptance automatically creates an on-chain escrow.
+
+**Architecture**: The adapter is a new integration surface alongside MCP and HTTP, following the same shared-logic pattern. The `a2a.Service` struct holds the same dependencies (`storage.DB`, `chain.ChainClient`, `indexer.Indexer`, `config.Config`) and is wired into the router when `A2A_ENABLED` is true (default).
+
+**Data model:** The `a2a_tasks` table links A2A task IDs and sessions to escrow records, storing verification policy and escrow trigger state.
+
 ### MCP Tools (Primary Interface)
 
 | Tool | Inputs | Chain Method |
@@ -526,6 +553,7 @@ The bidding protocol implements the paper's decentralized market mechanism (§4.
 | `place_bid` | rfq_id, bidder, amount, estimated_duration, expires_at, etc. | DB write (off-chain) |
 | `list_bids` | rfq_id or bidder | DB query |
 | `accept_bid` | rfq_id, bid_id, caller | `Factory.createEscrow` (on acceptance) |
+| `get_agent_card` | (none) | Returns A2A agent card JSON |
 
 ### HTTP API (Secondary Interface)
 
@@ -552,6 +580,8 @@ The bidding protocol implements the paper's decentralized market mechanism (§4.
 | GET | `/api/v1/rfqs/{id}/bids` | List bids for RFQ |
 | POST | `/api/v1/rfqs/{id}/accept` | Accept bid and create escrow |
 | POST | `/webhooks/cdp` | CDP webhook receiver (factory events; requires `CDP_WEBHOOK_SECRET`) |
+| GET | `/.well-known/agent.json` | A2A agent card (capabilities, skills, endpoint URL) |
+| POST | `/a2a` | A2A JSON-RPC 2.0 endpoint (`tasks/send`, `tasks/get`, `tasks/cancel`) |
 
 ### Configuration
 
@@ -569,6 +599,9 @@ The bidding protocol implements the paper's decentralized market mechanism (§4.
 | `TX_TIMEOUT` | No | `90s` | Timeout for chain transaction HTTP requests |
 | `COMPLEXITY_FLOOR` | No | -- | Minimum escrow amount (wei/smallest unit) for early rejection; `0` or empty = disabled |
 | `CDP_WEBHOOK_SECRET` | No | -- | CDP webhook HMAC secret; enables real-time factory event delivery via `POST /webhooks/cdp` |
+| `A2A_ENABLED` | No | `true` | Enable A2A settlement adapter routes |
+| `A2A_AGENT_NAME` | No | `Escrow Settlement Agent` | Agent card display name |
+| `A2A_AGENT_URL` | No | `http://localhost:{PORT}` | Agent card URL |
 
 ### Design Decisions
 

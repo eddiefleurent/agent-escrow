@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/a2a"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/bidding"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
@@ -124,6 +125,8 @@ type reputationArgs struct {
 	Role    string `json:"role,omitempty" jsonschema:"Optional: 'worker' or 'buyer'. Omit to return both roles."`
 }
 
+type emptyArgs struct{}
+
 func (s *Server) registerTools(srv *mcp.Server) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "create_escrow",
@@ -204,6 +207,11 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Name:        "accept_bid",
 		Description: "Accept a bid on an RFQ; triggers on-chain escrow creation with bid parameters. Paper §6.1: bid acceptance formalizes into escrow.",
 	}, s.handleAcceptBid)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "get_agent_card",
+		Description: "Get the A2A agent card JSON for this settlement agent. Returns capabilities, skills, and the A2A endpoint URL for agent discovery. Paper §6: A2A settlement adapter.",
+	}, s.handleGetAgentCard)
 }
 
 func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolRequest, args createEscrowArgs) (*mcp.CallToolResult, any, error) {
@@ -961,6 +969,17 @@ func (s *Server) handleAcceptBid(ctx context.Context, req *mcp.CallToolRequest, 
 		"bid_id":          result.Bid.ID,
 		"bid_status":      result.Bid.Status,
 	})
+}
+
+func (s *Server) handleGetAgentCard(ctx context.Context, req *mcp.CallToolRequest, args emptyArgs) (*mcp.CallToolResult, any, error) {
+	svc := &a2a.Service{
+		DB:    s.db,
+		Chain: s.chain,
+		Idx:   s.idx,
+		Cfg:   s.cfg,
+	}
+	card := svc.BuildAgentCard()
+	return jsonResult(card)
 }
 
 func parseMilestoneIndex(s string) (uint8, error) {
