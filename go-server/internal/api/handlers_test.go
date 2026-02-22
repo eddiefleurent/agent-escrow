@@ -577,6 +577,21 @@ func TestCORS_Preflight_WildcardDefault(t *testing.T) {
 	}
 }
 
+func TestCORS_ExplicitWildcard(t *testing.T) {
+	env := setup(t)
+	env.cfg.CORSOrigins = []string{"*"}
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/health", nil)
+	req.Header.Set("Origin", "https://anything.example.com")
+	rr := httptest.NewRecorder()
+	env.mux.ServeHTTP(rr, req)
+
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("expected wildcard CORS header when origins=[\"*\"], got %q", got)
+	}
+}
+
 func TestCORS_RestrictedOrigins_Allowed(t *testing.T) {
 	env := setup(t)
 	env.cfg.CORSOrigins = []string{"https://example.com", "https://app.example.com"}

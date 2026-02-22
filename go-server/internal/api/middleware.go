@@ -53,17 +53,21 @@ func recoveryMiddleware(next http.Handler) http.Handler {
 }
 
 // corsMiddleware checks the request Origin against allowedOrigins.
-// If allowedOrigins is empty, all origins are permitted ("*").
+// If allowedOrigins is empty or contains "*", all origins are permitted.
 func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
 	allowed := make(map[string]bool, len(allowedOrigins))
+	allowAll := len(allowedOrigins) == 0
 	for _, o := range allowedOrigins {
+		if o == "*" {
+			allowAll = true
+		}
 		allowed[o] = true
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 
-		if len(allowed) == 0 {
+		if allowAll {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		} else if allowed[origin] {
 			w.Header().Set("Access-Control-Allow-Origin", origin)

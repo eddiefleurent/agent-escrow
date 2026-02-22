@@ -12,21 +12,27 @@ import (
 
 // StreamHandler serves SSE and WebSocket event streams.
 type StreamHandler struct {
-	bus            *events.EventBus
-	allowedOrigins map[string]bool
+	bus             *events.EventBus
+	allowedOrigins  map[string]bool
+	allowAllOrigins bool
 }
 
 // NewStreamHandler creates a handler wired to the given event bus.
 // allowedOrigins controls which origins are permitted for WebSocket upgrades;
-// an empty slice means all origins are allowed.
+// an empty slice or a slice containing "*" means all origins are allowed.
 func NewStreamHandler(bus *events.EventBus, allowedOrigins ...[]string) *StreamHandler {
 	allowed := make(map[string]bool)
-	if len(allowedOrigins) > 0 {
+	allowAll := true
+	if len(allowedOrigins) > 0 && len(allowedOrigins[0]) > 0 {
+		allowAll = false
 		for _, o := range allowedOrigins[0] {
+			if o == "*" {
+				allowAll = true
+			}
 			allowed[o] = true
 		}
 	}
-	return &StreamHandler{bus: bus, allowedOrigins: allowed}
+	return &StreamHandler{bus: bus, allowedOrigins: allowed, allowAllOrigins: allowAll}
 }
 
 // HandleSSE serves Server-Sent Events for a specific escrow or all escrows.
@@ -86,7 +92,7 @@ type wsSubscribeMsg struct {
 func (sh *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
-			if len(sh.allowedOrigins) == 0 {
+			if sh.allowAllOrigins {
 				return true
 			}
 			return sh.allowedOrigins[r.Header.Get("Origin")]
