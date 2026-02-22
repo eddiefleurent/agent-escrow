@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"database/sql"
@@ -15,7 +16,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/numconv"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/ethereum/go-ethereum/common"
 )
@@ -71,10 +74,13 @@ type cdpWebhookEventData struct {
 type WebhookHandler struct {
 	idx    *indexer.Indexer
 	secret string
+	bus    *events.EventBus
 }
 
-func NewWebhookHandler(idx *indexer.Indexer, secret string) *WebhookHandler {
-	return &WebhookHandler{idx: idx, secret: secret}
+// NewWebhookHandler creates a webhook handler. The bus parameter may be nil
+// when event streaming is disabled.
+func NewWebhookHandler(idx *indexer.Indexer, secret string, bus *events.EventBus) *WebhookHandler {
+	return &WebhookHandler{idx: idx, secret: secret, bus: bus}
 }
 
 // HandleCDPWebhook is the HTTP handler for POST /webhooks/cdp.
@@ -118,7 +124,7 @@ func (wh *WebhookHandler) HandleCDPWebhook(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := wh.processWebhookEvent(payload); err != nil {
+	if err := wh.processWebhookEvent(r.Context(), payload); err != nil {
 		slog.Error("webhook: event processing failed",
 			"event_id", payload.ID,
 			"event_name", payload.Data.EventName,
@@ -134,7 +140,7 @@ func (wh *WebhookHandler) HandleCDPWebhook(w http.ResponseWriter, r *http.Reques
 
 // processWebhookEvent handles a CDP webhook payload by dispatching on eventName.
 // Only factory events (EscrowCreated, OutcomeRecorded) are handled here.
-func (wh *WebhookHandler) processWebhookEvent(payload cdpWebhookPayload) error {
+func (wh *WebhookHandler) processWebhookEvent(ctx context.Context, payload cdpWebhookPayload) error {
 	data := payload.Data
 	db := wh.idx.DB()
 
@@ -157,7 +163,7 @@ func (wh *WebhookHandler) processWebhookEvent(payload cdpWebhookPayload) error {
 	}
 
 	// Deduplicate: use the same chain_log mechanism as the polling indexer.
-	exists, err := db.ChainLogExists(data.TransactionHash, logIdx)
+	exists, err := db.ChainLogExists(ctx, data.TransactionHash, logIdx)
 	if err != nil {
 		return fmt.Errorf("check chain log: %w", err)
 	}
@@ -170,9 +176,9 @@ func (wh *WebhookHandler) processWebhookEvent(payload cdpWebhookPayload) error {
 	var handlerErr error
 	switch data.EventName {
 	case "EscrowCreated":
-		handlerErr = wh.handleEscrowCreated(data)
+		handlerErr = wh.handleEscrowCreated(ctx, data)
 	case "OutcomeRecorded":
-		handlerErr = wh.handleOutcomeRecorded(data)
+		handlerErr = wh.handleOutcomeRecorded(ctx, data)
 	default:
 		slog.Info("webhook: ignoring unhandled factory event", "event_name", data.EventName)
 	}
@@ -180,16 +186,40 @@ func (wh *WebhookHandler) processWebhookEvent(payload cdpWebhookPayload) error {
 		return handlerErr
 	}
 
-	if err := db.CreateChainLog(data.TransactionHash, logIdx, blockNum, data.EventName, data.ContractAddress, ""); err != nil {
+	if err := db.CreateChainLog(ctx, data.TransactionHash, logIdx, blockNum, data.EventName, data.ContractAddress, ""); err != nil {
 		return fmt.Errorf("create chain log: %w", err)
 	}
 
+	wh.publishWebhookEvent(data, blockNum)
 	return nil
+}
+
+// publishWebhookEvent publishes an L1 event to the bus for webhook-delivered events.
+func (wh *WebhookHandler) publishWebhookEvent(data cdpWebhookEventData, blockNum int64) {
+	if wh.bus == nil {
+		return
+	}
+	blockUint, err := numconv.Int64ToUint64(blockNum, "block_number")
+	if err != nil {
+		slog.Warn("webhook: invalid block number for event publish", "block_number", blockNum, "error", err)
+		return
+	}
+	streamName, ok := events.OnChainEventName[data.EventName]
+	if !ok {
+		return
+	}
+	wh.bus.Publish(events.Event{
+		Name:   streamName,
+		Escrow: data.Escrow,
+		Level:  events.L1,
+		Block:  blockUint,
+		ID:     fmt.Sprintf("%s-%s", data.TransactionHash, data.LogIndex.String()),
+	})
 }
 
 // handleEscrowCreated processes an EscrowCreated event from the CDP webhook.
 // Mirrors the logic in indexer.handleEscrowCreated but reads from decoded params.
-func (wh *WebhookHandler) handleEscrowCreated(data cdpWebhookEventData) error {
+func (wh *WebhookHandler) handleEscrowCreated(ctx context.Context, data cdpWebhookEventData) error {
 	db := wh.idx.DB()
 
 	if !common.IsHexAddress(data.Escrow) {
@@ -198,7 +228,7 @@ func (wh *WebhookHandler) handleEscrowCreated(data cdpWebhookEventData) error {
 	escrowAddr := common.HexToAddress(data.Escrow).Hex()
 
 	// Check if escrow already exists (e.g. created via API/MCP handler)
-	_, err := db.GetEscrowByAddress(escrowAddr)
+	_, err := db.GetEscrowByAddress(ctx, escrowAddr)
 	if err == nil {
 		return nil // Already indexed
 	}
@@ -239,7 +269,7 @@ func (wh *WebhookHandler) handleEscrowCreated(data cdpWebhookEventData) error {
 		tokenAddr = common.HexToAddress(data.Token)
 	}
 
-	task, err := db.CreateTask("Indexed task", "", taskSpecHash)
+	task, err := db.CreateTask(ctx, "Indexed task", "", taskSpecHash)
 	if err != nil {
 		return fmt.Errorf("create task: %w", err)
 	}
@@ -247,7 +277,7 @@ func (wh *WebhookHandler) handleEscrowCreated(data cdpWebhookEventData) error {
 	factoryAddr := wh.idx.FactoryAddress()
 	chainID := wh.idx.ChainID()
 
-	_, err = db.CreateEscrow(&storage.Escrow{
+	_, err = db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID:             task.ID,
 		ChainID:            chainID,
 		FactoryAddress:     factoryAddr.Hex(),
@@ -277,7 +307,7 @@ func (wh *WebhookHandler) handleEscrowCreated(data cdpWebhookEventData) error {
 
 // handleOutcomeRecorded processes an OutcomeRecorded event from the CDP webhook.
 // Mirrors the logic in indexer.handleOutcomeRecorded.
-func (wh *WebhookHandler) handleOutcomeRecorded(data cdpWebhookEventData) error {
+func (wh *WebhookHandler) handleOutcomeRecorded(ctx context.Context, data cdpWebhookEventData) error {
 	if !common.IsHexAddress(data.Participant) {
 		return fmt.Errorf("OutcomeRecorded: invalid participant address: %q", data.Participant)
 	}
@@ -290,7 +320,7 @@ func (wh *WebhookHandler) handleOutcomeRecorded(data cdpWebhookEventData) error 
 		"outcome", data.Outcome,
 	)
 
-	return wh.idx.DB().UpsertReputation(participant, data.Role, data.Outcome)
+	return wh.idx.DB().UpsertReputation(ctx, participant, data.Role, data.Outcome)
 }
 
 // verifyCDPSignature verifies the HMAC-SHA256 signature from a CDP webhook.

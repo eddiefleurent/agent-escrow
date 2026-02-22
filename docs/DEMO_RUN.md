@@ -1,31 +1,29 @@
-# Live Demo Runs — Base Sepolia
+# Live Demo — Base Sepolia
 
-On-chain escrow lifecycle demos executed on Base Sepolia (chain ID 84532). All transactions are verifiable on [BaseScan](https://sepolia.basescan.org).
+These are real escrow lifecycles executed on Base Sepolia -- every transaction is on-chain and verifiable. Click any tx hash to see it on [BaseScan](https://sepolia.basescan.org).
+
+**What you're seeing:** A buyer posts a task and locks funds in escrow. A worker picks it up and submits proof of completion. The buyer approves, and the smart contract automatically pays the worker (minus a 1% protocol fee). No intermediary touches the funds -- the contract is the custodian from start to finish.
+
+Two demos below: one paying in ETH, one in USDC. Same contract, same lifecycle, different payment token.
 
 ---
 
-## V2 — ERC20/USDC Support (2026-02-20)
+## V2 — ETH + USDC Escrow (2026-02-20)
 
-V2 adds ERC20 token support alongside ETH. The same factory and escrow contracts handle both payment types — `token = address(0)` means ETH, any other address means ERC20. This demo runs two escrows back-to-back: one with ETH, one with USDC.
+Factory: [`0x798830e2d3C25cF9296fe06a46D808CFB550e880`](https://sepolia.basescan.org/address/0x798830e2d3C25cF9296fe06a46D808CFB550e880)
 
-### Factory
+**Participants** (same addresses used for both demos):
 
-| | Address |
-|---|---|
-| Factory | [`0x798830e2d3C25cF9296fe06a46D808CFB550e880`](https://sepolia.basescan.org/address/0x798830e2d3C25cF9296fe06a46D808CFB550e880) |
-
-### Roles
-
-| Role | Address |
-|---|---|
-| Buyer | `0x458397fDDB048239Ab033054d3F70919a95cF4d3` |
-| Worker | `0xD6Dc6572Ee319E08D314095851a9C85BE1159a32` |
-| Verifier | `0x5021D39C857F97dEfa9Af20b52777D7fBBb44Be3` |
-| Arbitrator | `0x5dc4CfaEC049d54A21664d05298F1BB9b6522E88` |
+| Role | Who | Address |
+|---|---|---|
+| Buyer | Posts the task, locks funds, approves work | `0x458397fDDB048239Ab033054d3F70919a95cF4d3` |
+| Worker | Does the work, submits proof, receives payment | `0xD6Dc6572Ee319E08D314095851a9C85BE1159a32` |
+| Verifier | Reviews submissions (not used in happy path) | `0x5021D39C857F97dEfa9Af20b52777D7fBBb44Be3` |
+| Arbitrator | Resolves disputes (not used in happy path) | `0x5dc4CfaEC049d54A21664d05298F1BB9b6522E88` |
 
 ### Demo A: ETH Escrow (0.0001 ETH)
 
-Same flow as V1, but through the V2 contract with `token = address(0)`.
+Buyer locks 0.0001 ETH. Worker delivers. Buyer approves. Worker gets paid.
 
 ```mermaid
 sequenceDiagram
@@ -61,9 +59,9 @@ sequenceDiagram
 | Submit work | [`0xfbb5232...`](https://sepolia.basescan.org/tx/0xfbb52326a459ecb16713a2d1428f39ddc6e259086e00cf0f776c678972dd92de) |
 | Approve + settle | [`0x163e4d4...`](https://sepolia.basescan.org/tx/0x163e4d49fb4a86add4cd745b32f3e20a7753766465a3a4ca426e636dc113e33d) |
 
-### Demo B: USDC Escrow (1 USDC) — New in V2
+### Demo B: USDC Escrow (1 USDC)
 
-The key difference: buyer approves the USDC token transfer before funding, and the escrow pulls tokens via `transferFrom` instead of receiving ETH via `msg.value`.
+Same lifecycle, but paying in USDC instead of ETH. The extra step: buyer approves the token transfer first, then the escrow pulls the tokens.
 
 USDC on Base Sepolia: [`0x036CbD53842c5426634e7929541eC2318f3dCF7e`](https://sepolia.basescan.org/address/0x036CbD53842c5426634e7929541eC2318f3dCF7e)
 
@@ -107,6 +105,8 @@ sequenceDiagram
 
 ### Settlement Math
 
+Both escrows end with a zero balance -- all funds are distributed. The protocol takes a 1% fee; the worker gets the rest.
+
 | | ETH Escrow | USDC Escrow |
 |---|---|---|
 | Escrow amount | 0.0001 ETH | 1 USDC |
@@ -118,15 +118,9 @@ sequenceDiagram
 
 ## V1 — Settlement Kernel (2026-02-20)
 
-The original ETH-only deployment. Factory and escrow contracts supported native ETH only.
+The original deployment -- ETH only, proving the core lifecycle works end-to-end before adding token support.
 
-### Factory
-
-| | Address |
-|---|---|
-| Factory | [`0xf10a696e7dfC8B923ddeA2E01B07D0B01a75cf34`](https://sepolia.basescan.org/address/0xf10a696e7dfC8B923ddeA2E01B07D0B01a75cf34) |
-
-### Roles
+Factory: [`0xf10a696e7dfC8B923ddeA2E01B07D0B01a75cf34`](https://sepolia.basescan.org/address/0xf10a696e7dfC8B923ddeA2E01B07D0B01a75cf34)
 
 | Role | Address |
 |---|---|
@@ -172,14 +166,6 @@ sequenceDiagram
 | Submit work | [`0x5265f57...`](https://sepolia.basescan.org/tx/0x5265f57d5aae19bab7eafa306eebe06da63e364b0bd0c2627c25dfad2c509ca1) |
 | Approve + settle | [`0x214d16c...`](https://sepolia.basescan.org/tx/0x214d16cb6ac0a33e2c8348ae8902cb5b9e3c561826473433b1424640aea0bb46) |
 
-### Final State
+### Result
 
-```json
-{
-  "status": "settled",
-  "amount": "1000000000000000",
-  "escrow_address": "0x3d65A82088F162cE00d0bE75c491ed314bb4C1e4"
-}
-```
-
-Worker received 0.00099 ETH (99%). Treasury received 0.00001 ETH (1% protocol fee). Escrow contract balance: 0.
+Escrow settled. Worker received 0.00099 ETH (99%). Treasury received 0.00001 ETH (1% protocol fee). Contract balance: 0 -- all funds distributed, nothing left behind.

@@ -1,6 +1,7 @@
 package chain
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 )
@@ -21,7 +22,7 @@ func ValidateComplexityFloor(amount *big.Int, floorStr string) error {
 		return fmt.Errorf("invalid complexity floor %q: must be non-negative", floorStr)
 	}
 	if amount == nil {
-		return fmt.Errorf("amount is nil")
+		return errors.New("amount is nil")
 	}
 	if amount.Cmp(floor) < 0 {
 		return fmt.Errorf("amount %s is below complexity floor %s", amount, floor)

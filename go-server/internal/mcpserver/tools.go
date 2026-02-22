@@ -14,6 +14,8 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/ap2"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/bidding"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/numconv"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -144,6 +146,13 @@ type fundViaMandateArgs struct {
 	AuthS           string `json:"auth_s" jsonschema:"EIP-3009 signature s (hex)"`
 }
 
+type subscribeEventsArgs struct {
+	EscrowAddress string `json:"escrow_address,omitempty" jsonschema:"Filter to specific escrow address; omit for all"`
+	SinceID       string `json:"since_id,omitempty" jsonschema:"Return events after this event ID (cursor-based pagination)"`
+	Granularity   string `json:"granularity,omitempty" jsonschema:"Granularity level: L0, L1, L2, L3 (default L1)"`
+	Limit         string `json:"limit,omitempty" jsonschema:"Max events to return (default 50, max 200)"`
+}
+
 type emptyArgs struct{}
 
 func (s *Server) registerTools(srv *mcp.Server) {
@@ -232,6 +241,13 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Description: "Fund an escrow via an AP2 mandate with EIP-3009 gasless authorization. Paper §6: AP2 stake-on-bid + conditional settlement.",
 	}, s.handleFundViaMandate)
 
+	if s.bus != nil && s.cfg.EventsEnabled {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name:        "subscribe_events",
+			Description: "Poll recent escrow lifecycle events with cursor-based pagination. Returns events since a given cursor (event ID). Paper §4.5: configurable granularity L0-L3.",
+		}, s.handleSubscribeEvents)
+	}
+
 	if s.cfg.A2AEnabled {
 		mcp.AddTool(srv, &mcp.Tool{
 			Name:        "get_agent_card",
@@ -288,7 +304,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 	for _, m := range args.Milestones {
 		msAmount, ok := new(big.Int).SetString(m.Amount, 10)
 		if !ok {
-			return textResult(fmt.Sprintf("invalid milestone amount: %s", m.Amount)), nil, nil
+			return textResult("invalid milestone amount: " + m.Amount), nil, nil
 		}
 		msDeadline, err := strconv.ParseUint(m.SubmissionDeadline, 10, 64)
 		if err != nil {
@@ -317,6 +333,36 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 	}
 	if backupDeadlineExt > 0 && (args.BackupWorker == "" || common.HexToAddress(args.BackupWorker) == (common.Address{})) {
 		return textResult("backup_deadline_extension set but no backup_worker provided"), nil, nil
+	}
+
+	// Validate all uint64→int64 conversions before any on-chain or DB side effects.
+	submissionDeadline, err := numconv.Uint64ToInt64(deadline, "submission_deadline")
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
+	reviewPeriod, err := numconv.Uint64ToInt64(review, "review_period_seconds")
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
+	disputePeriod, err := numconv.Uint64ToInt64(dispute, "dispute_period_seconds")
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
+	arbitratorTimeout, err := numconv.Uint64ToInt64(arbTimeout, "arbitrator_timeout_seconds")
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
+	backupDeadline, err := numconv.Uint64ToInt64(backupDeadlineExt, "backup_deadline_extension")
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
+
+	msDeadlinesInt64 := make([]int64, len(milestones))
+	for i, m := range milestones {
+		msDeadlinesInt64[i], err = numconv.Uint64ToInt64(m.SubmissionDeadline, fmt.Sprintf("milestones[%d].submission_deadline", i))
+		if err != nil {
+			return textResult(err.Error()), nil, nil
+		}
 	}
 
 	factory := common.HexToAddress(s.cfg.FactoryAddress)
@@ -348,7 +394,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		return textResult(fmt.Sprintf("receipt error: %v", err)), nil, nil
 	}
 
-	task, err := s.db.CreateTask(args.Title, args.Description, specHash.Hex())
+	task, err := s.db.CreateTask(ctx, args.Title, args.Description, specHash.Hex())
 	if err != nil {
 		return textResult(fmt.Sprintf("db error: %v", err)), nil, nil
 	}
@@ -358,7 +404,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		milestoneCount = len(milestones)
 	}
 
-	escrow, err := s.db.CreateEscrow(&storage.Escrow{
+	escrow, err := s.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID:                   task.ID,
 		ChainID:                  s.cfg.ChainID,
 		FactoryAddress:           s.cfg.FactoryAddress,
@@ -372,14 +418,14 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		WorkerStake:              workerStakeVal.String(),
 		Token:                    tokenAddr.Hex(),
 		Status:                   "created",
-		SubmissionDeadline:       int64(deadline),
-		ReviewPeriodSeconds:      int64(review),
-		DisputePeriodSeconds:     int64(dispute),
-		ArbitratorTimeoutSeconds: int64(arbTimeout),
+		SubmissionDeadline:       submissionDeadline,
+		ReviewPeriodSeconds:      reviewPeriod,
+		DisputePeriodSeconds:     disputePeriod,
+		ArbitratorTimeoutSeconds: arbitratorTimeout,
 		MilestoneCount:           milestoneCount,
 		CurrentMilestone:         0,
 		BackupWorker:             backupWorkerAddr.Hex(),
-		BackupDeadlineExtension:  int64(backupDeadlineExt),
+		BackupDeadlineExtension:  backupDeadline,
 		ActiveWorker:             args.Worker,
 	})
 	if err != nil {
@@ -387,11 +433,11 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 	}
 
 	for i, m := range milestones {
-		_, err := s.db.CreateMilestone(&storage.MilestoneRecord{
+		_, err := s.db.CreateMilestone(ctx, &storage.MilestoneRecord{
 			EscrowID:           escrow.ID,
 			MilestoneIndex:     i,
 			Amount:             m.Amount.String(),
-			SubmissionDeadline: int64(m.SubmissionDeadline),
+			SubmissionDeadline: msDeadlinesInt64[i],
 			Status:             "pending",
 		})
 		if err != nil {
@@ -416,7 +462,7 @@ func (s *Server) handleFundEscrow(ctx context.Context, req *mcp.CallToolRequest,
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
 	}
-	escrow, err := s.db.GetEscrow(escrowID)
+	escrow, err := s.db.GetEscrow(ctx, escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
@@ -464,7 +510,7 @@ func (s *Server) handleDepositStake(ctx context.Context, req *mcp.CallToolReques
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
 	}
-	escrow, err := s.db.GetEscrow(escrowID)
+	escrow, err := s.db.GetEscrow(ctx, escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
@@ -512,7 +558,7 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
 	}
-	escrow, err := s.db.GetEscrow(escrowID)
+	escrow, err := s.db.GetEscrow(ctx, escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
@@ -553,7 +599,7 @@ func (s *Server) handleApproveWork(ctx context.Context, req *mcp.CallToolRequest
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
 	}
-	escrow, err := s.db.GetEscrow(escrowID)
+	escrow, err := s.db.GetEscrow(ctx, escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
@@ -613,7 +659,7 @@ func (s *Server) handleDisputeWork(ctx context.Context, req *mcp.CallToolRequest
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
 	}
-	escrow, err := s.db.GetEscrow(escrowID)
+	escrow, err := s.db.GetEscrow(ctx, escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
@@ -695,7 +741,7 @@ func (s *Server) handleResolveDispute(ctx context.Context, req *mcp.CallToolRequ
 		return textResult("worker_award_bps must be between 0 and 10000"), nil, nil
 	}
 
-	escrow, err := s.db.GetEscrow(escrowID)
+	escrow, err := s.db.GetEscrow(ctx, escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
@@ -732,7 +778,7 @@ func (s *Server) handleGetEscrow(ctx context.Context, req *mcp.CallToolRequest, 
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
 	}
-	escrow, err := s.db.GetEscrow(escrowID)
+	escrow, err := s.db.GetEscrow(ctx, escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
@@ -740,7 +786,7 @@ func (s *Server) handleGetEscrow(ctx context.Context, req *mcp.CallToolRequest, 
 	result := map[string]any{"escrow": escrow}
 
 	if escrow.MilestoneCount > 1 {
-		milestones, err := s.db.GetMilestonesByEscrow(escrowID)
+		milestones, err := s.db.GetMilestonesByEscrow(ctx, escrowID)
 		if err != nil {
 			return textResult(fmt.Sprintf("failed to fetch milestones for escrow %d: %v", escrowID, err)), nil, nil
 		}
@@ -751,7 +797,7 @@ func (s *Server) handleGetEscrow(ctx context.Context, req *mcp.CallToolRequest, 
 }
 
 func (s *Server) handleListEscrows(ctx context.Context, req *mcp.CallToolRequest, args listArgs) (*mcp.CallToolResult, any, error) {
-	escrows, err := s.db.ListEscrows(args.Role, args.Address, args.Status)
+	escrows, err := s.db.ListEscrows(ctx, args.Role, args.Address, args.Status)
 	if err != nil {
 		return textResult(fmt.Sprintf("error: %v", err)), nil, nil
 	}
@@ -763,7 +809,7 @@ func (s *Server) handleAbortRemainingMilestones(ctx context.Context, req *mcp.Ca
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
 	}
-	escrow, err := s.db.GetEscrow(escrowID)
+	escrow, err := s.db.GetEscrow(ctx, escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
@@ -785,7 +831,7 @@ func (s *Server) handleActivateBackup(ctx context.Context, req *mcp.CallToolRequ
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
 	}
-	escrow, err := s.db.GetEscrow(escrowID)
+	escrow, err := s.db.GetEscrow(ctx, escrowID)
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
@@ -817,7 +863,7 @@ func (s *Server) handleGetReputation(ctx context.Context, req *mcp.CallToolReque
 	}
 
 	if args.Role != "" {
-		rep, err := s.db.GetReputation(addr, args.Role)
+		rep, err := s.db.GetReputation(ctx, addr, args.Role)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return jsonResult(map[string]any{
@@ -833,7 +879,7 @@ func (s *Server) handleGetReputation(ctx context.Context, req *mcp.CallToolReque
 		return jsonResult(rep)
 	}
 
-	reps, err := s.db.GetReputationByAddress(addr)
+	reps, err := s.db.GetReputationByAddress(ctx, addr)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get reputation by address: %w", err)
 	}
@@ -878,7 +924,7 @@ func (s *Server) handleCreateRFQ(ctx context.Context, req *mcp.CallToolRequest, 
 	}
 
 	svc := s.biddingService()
-	rfq, err := svc.CreateRFQ(bidding.CreateRFQParams{
+	rfq, err := svc.CreateRFQ(ctx, bidding.CreateRFQParams{
 		Title:                    args.Title,
 		Description:              args.Description,
 		Buyer:                    args.Buyer,
@@ -924,7 +970,7 @@ func (s *Server) handlePlaceBid(ctx context.Context, req *mcp.CallToolRequest, a
 	}
 
 	svc := s.biddingService()
-	bid, err := svc.PlaceBid(bidding.PlaceBidParams{
+	bid, err := svc.PlaceBid(ctx, bidding.PlaceBidParams{
 		RFQID:             rfqID,
 		Bidder:            args.Bidder,
 		Amount:            args.Amount,
@@ -951,14 +997,14 @@ func (s *Server) handleListBids(ctx context.Context, req *mcp.CallToolRequest, a
 		if err != nil {
 			return textResult(fmt.Sprintf("invalid rfq_id: %v", err)), nil, nil
 		}
-		bids, err := s.db.ListBidsByRFQ(rfqID)
+		bids, err := s.db.ListBidsByRFQ(ctx, rfqID)
 		if err != nil {
 			return textResult(fmt.Sprintf("error: %v", err)), nil, nil
 		}
 		return jsonResult(bids)
 	}
 	if args.Bidder != "" {
-		bids, err := s.db.ListBidsByBidder(args.Bidder)
+		bids, err := s.db.ListBidsByBidder(ctx, args.Bidder)
 		if err != nil {
 			return textResult(fmt.Sprintf("error: %v", err)), nil, nil
 		}
@@ -1018,7 +1064,7 @@ func (s *Server) handleFundViaMandate(ctx context.Context, req *mcp.CallToolRequ
 
 	authTo := args.AuthTo
 	if authTo == "" {
-		escrow, err := s.db.GetEscrow(escrowID)
+		escrow, err := s.db.GetEscrow(ctx, escrowID)
 		if err != nil {
 			return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 		}
@@ -1069,10 +1115,60 @@ func (s *Server) handleGetAgentCard(ctx context.Context, req *mcp.CallToolReques
 	return jsonResult(card)
 }
 
+func (s *Server) handleSubscribeEvents(ctx context.Context, req *mcp.CallToolRequest, args subscribeEventsArgs) (*mcp.CallToolResult, any, error) {
+	granularity := events.ParseGranularity(args.Granularity)
+
+	limit := 50
+	if args.Limit != "" {
+		v, err := strconv.Atoi(args.Limit)
+		if err != nil || v <= 0 {
+			return textResult("invalid limit: must be a positive integer"), nil, nil //nolint:nilerr // err is from Atoi; we return a user-facing message, not the parse error
+		}
+		if v > 200 {
+			v = 200
+		}
+		limit = v
+	}
+
+	recent := s.bus.RecentEvents(args.EscrowAddress, granularity, args.SinceID, limit)
+
+	type eventOut struct {
+		Event     string         `json:"event"`
+		Escrow    string         `json:"escrow,omitempty"`
+		ID        string         `json:"id"`
+		Block     uint64         `json:"block,omitempty"`
+		Timestamp int64          `json:"timestamp"`
+		Payload   map[string]any `json:"payload,omitempty"`
+	}
+
+	out := make([]eventOut, len(recent))
+	for i, e := range recent {
+		out[i] = eventOut{
+			Event:     e.Name,
+			Escrow:    e.Escrow,
+			ID:        e.ID,
+			Block:     e.Block,
+			Timestamp: e.Timestamp.Unix(),
+			Payload:   e.Payload,
+		}
+	}
+
+	var cursor string
+	if len(recent) > 0 {
+		cursor = recent[len(recent)-1].ID
+	}
+
+	return jsonResult(map[string]any{
+		"events": out,
+		"cursor": cursor,
+		"count":  len(out),
+	})
+}
+
 func parseMilestoneIndex(s string) (uint8, error) {
 	v, err := strconv.ParseUint(s, 10, 8)
 	if err != nil {
-		return 0, fmt.Errorf("invalid milestone_index: %v", err)
+		return 0, fmt.Errorf("invalid milestone_index: %w", err)
 	}
 	return uint8(v), nil
 }

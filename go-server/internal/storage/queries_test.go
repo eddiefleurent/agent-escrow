@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 )
 
@@ -16,8 +17,9 @@ func openTestDB(t *testing.T) *DB {
 
 func TestCreateAndGetTask(t *testing.T) {
 	db := openTestDB(t)
+	ctx := context.Background()
 
-	task, err := db.CreateTask("Test Task", "A description", "0xabc123")
+	task, err := db.CreateTask(ctx, "Test Task", "A description", "0xabc123")
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
@@ -28,7 +30,7 @@ func TestCreateAndGetTask(t *testing.T) {
 		t.Fatalf("expected title 'Test Task', got %q", task.Title)
 	}
 
-	got, err := db.GetTask(task.ID)
+	got, err := db.GetTask(ctx, task.ID)
 	if err != nil {
 		t.Fatalf("get task: %v", err)
 	}
@@ -39,12 +41,13 @@ func TestCreateAndGetTask(t *testing.T) {
 
 func TestCreateAndGetEscrow(t *testing.T) {
 	db := openTestDB(t)
+	ctx := context.Background()
 
-	task, err := db.CreateTask("Task", "", "0x123")
+	task, err := db.CreateTask(ctx, "Task", "", "0x123")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	escrow, err := db.CreateEscrow(&Escrow{
+	escrow, err := db.CreateEscrow(ctx, &Escrow{
 		TaskID:                   task.ID,
 		ChainID:                  84532,
 		FactoryAddress:           "0xFactory",
@@ -68,7 +71,7 @@ func TestCreateAndGetEscrow(t *testing.T) {
 		t.Fatal("expected non-zero escrow ID")
 	}
 
-	got, err := db.GetEscrow(escrow.ID)
+	got, err := db.GetEscrow(ctx, escrow.ID)
 	if err != nil {
 		t.Fatalf("get escrow: %v", err)
 	}
@@ -82,12 +85,13 @@ func TestCreateAndGetEscrow(t *testing.T) {
 
 func TestGetEscrowByAddress(t *testing.T) {
 	db := openTestDB(t)
+	ctx := context.Background()
 
-	task, err := db.CreateTask("Task", "", "0x123")
+	task, err := db.CreateTask(ctx, "Task", "", "0x123")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	_, err = db.CreateEscrow(&Escrow{
+	_, err = db.CreateEscrow(ctx, &Escrow{
 		TaskID:         task.ID,
 		ChainID:        84532,
 		FactoryAddress: "0xFactory",
@@ -103,7 +107,7 @@ func TestGetEscrowByAddress(t *testing.T) {
 		t.Fatalf("setup escrow: %v", err)
 	}
 
-	got, err := db.GetEscrowByAddress("0xUniqueAddr")
+	got, err := db.GetEscrowByAddress(ctx, "0xUniqueAddr")
 	if err != nil {
 		t.Fatalf("get by address: %v", err)
 	}
@@ -114,12 +118,13 @@ func TestGetEscrowByAddress(t *testing.T) {
 
 func TestUpdateEscrowStatus(t *testing.T) {
 	db := openTestDB(t)
+	ctx := context.Background()
 
-	task, err := db.CreateTask("Task", "", "0x123")
+	task, err := db.CreateTask(ctx, "Task", "", "0x123")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	escrow, err := db.CreateEscrow(&Escrow{
+	escrow, err := db.CreateEscrow(ctx, &Escrow{
 		TaskID:         task.ID,
 		ChainID:        84532,
 		FactoryAddress: "0xFactory",
@@ -135,11 +140,11 @@ func TestUpdateEscrowStatus(t *testing.T) {
 		t.Fatalf("setup escrow: %v", err)
 	}
 
-	if err := db.UpdateEscrowStatus(escrow.ID, "funded"); err != nil {
+	if err := db.UpdateEscrowStatus(ctx, escrow.ID, "funded"); err != nil {
 		t.Fatalf("update status: %v", err)
 	}
 
-	got, err := db.GetEscrow(escrow.ID)
+	got, err := db.GetEscrow(ctx, escrow.ID)
 	if err != nil {
 		t.Fatalf("get escrow: %v", err)
 	}
@@ -150,12 +155,13 @@ func TestUpdateEscrowStatus(t *testing.T) {
 
 func TestListEscrows(t *testing.T) {
 	db := openTestDB(t)
+	ctx := context.Background()
 
-	task, err := db.CreateTask("Task", "", "0x123")
+	task, err := db.CreateTask(ctx, "Task", "", "0x123")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	_, err = db.CreateEscrow(&Escrow{
+	_, err = db.CreateEscrow(ctx, &Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE1",
 		Buyer: "0xBuyer", Worker: "0xWorker", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "created",
@@ -163,7 +169,7 @@ func TestListEscrows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup escrow: %v", err)
 	}
-	_, err = db.CreateEscrow(&Escrow{
+	_, err = db.CreateEscrow(ctx, &Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE2",
 		Buyer: "0xBuyer", Worker: "0xOtherWorker", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "200", Status: "funded",
@@ -173,7 +179,7 @@ func TestListEscrows(t *testing.T) {
 	}
 
 	// List all
-	all, err := db.ListEscrows("", "", "")
+	all, err := db.ListEscrows(ctx, "", "", "")
 	if err != nil {
 		t.Fatalf("list all: %v", err)
 	}
@@ -182,7 +188,7 @@ func TestListEscrows(t *testing.T) {
 	}
 
 	// Filter by status
-	funded, err := db.ListEscrows("", "", "funded")
+	funded, err := db.ListEscrows(ctx, "", "", "funded")
 	if err != nil {
 		t.Fatalf("list funded: %v", err)
 	}
@@ -191,7 +197,7 @@ func TestListEscrows(t *testing.T) {
 	}
 
 	// Filter by role
-	byWorker, err := db.ListEscrows("worker", "0xWorker", "")
+	byWorker, err := db.ListEscrows(ctx, "worker", "0xWorker", "")
 	if err != nil {
 		t.Fatalf("list by worker: %v", err)
 	}
@@ -202,12 +208,13 @@ func TestListEscrows(t *testing.T) {
 
 func TestSubmissions(t *testing.T) {
 	db := openTestDB(t)
+	ctx := context.Background()
 
-	task, err := db.CreateTask("Task", "", "0x123")
+	task, err := db.CreateTask(ctx, "Task", "", "0x123")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	escrow, err := db.CreateEscrow(&Escrow{
+	escrow, err := db.CreateEscrow(ctx, &Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
@@ -216,7 +223,7 @@ func TestSubmissions(t *testing.T) {
 		t.Fatalf("setup escrow: %v", err)
 	}
 
-	sub, err := db.CreateSubmission(escrow.ID, "0xhash123", "ipfs://result")
+	sub, err := db.CreateSubmission(ctx, escrow.ID, "0xhash123", "ipfs://result")
 	if err != nil {
 		t.Fatalf("create submission: %v", err)
 	}
@@ -224,7 +231,7 @@ func TestSubmissions(t *testing.T) {
 		t.Fatalf("expected hash '0xhash123', got %q", sub.SubmissionHash)
 	}
 
-	subs, err := db.GetSubmissionsByEscrow(escrow.ID)
+	subs, err := db.GetSubmissionsByEscrow(ctx, escrow.ID)
 	if err != nil {
 		t.Fatalf("get submissions: %v", err)
 	}
@@ -235,12 +242,13 @@ func TestSubmissions(t *testing.T) {
 
 func TestDisputes(t *testing.T) {
 	db := openTestDB(t)
+	ctx := context.Background()
 
-	task, err := db.CreateTask("Task", "", "0x123")
+	task, err := db.CreateTask(ctx, "Task", "", "0x123")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	escrow, err := db.CreateEscrow(&Escrow{
+	escrow, err := db.CreateEscrow(ctx, &Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "disputed",
@@ -249,7 +257,7 @@ func TestDisputes(t *testing.T) {
 		t.Fatalf("setup escrow: %v", err)
 	}
 
-	disp, err := db.CreateDispute(escrow.ID, "0xBuyer", "ipfs://reason")
+	disp, err := db.CreateDispute(ctx, escrow.ID, "0xBuyer", "ipfs://reason")
 	if err != nil {
 		t.Fatalf("create dispute: %v", err)
 	}
@@ -257,12 +265,12 @@ func TestDisputes(t *testing.T) {
 		t.Fatalf("expected status 'open', got %q", disp.Status)
 	}
 
-	err = db.UpdateDispute(disp.ID, "ipfs://resolution", 5000)
+	err = db.UpdateDispute(ctx, disp.ID, "ipfs://resolution", 5000)
 	if err != nil {
 		t.Fatalf("update dispute: %v", err)
 	}
 
-	updated, err := db.GetDispute(disp.ID)
+	updated, err := db.GetDispute(ctx, disp.ID)
 	if err != nil {
 		t.Fatalf("get dispute after update: %v", err)
 	}
@@ -279,19 +287,20 @@ func TestDisputes(t *testing.T) {
 
 func TestChainLogIdempotent(t *testing.T) {
 	db := openTestDB(t)
+	ctx := context.Background()
 
-	err := db.CreateChainLog("0xtxhash", 0, 12345, "EscrowFunded", "0xAddr", "{}")
+	err := db.CreateChainLog(ctx, "0xtxhash", 0, 12345, "EscrowFunded", "0xAddr", "{}")
 	if err != nil {
 		t.Fatalf("first insert: %v", err)
 	}
 
 	// Duplicate should not error (INSERT OR IGNORE)
-	err = db.CreateChainLog("0xtxhash", 0, 12345, "EscrowFunded", "0xAddr", "{}")
+	err = db.CreateChainLog(ctx, "0xtxhash", 0, 12345, "EscrowFunded", "0xAddr", "{}")
 	if err != nil {
 		t.Fatalf("duplicate insert: %v", err)
 	}
 
-	exists, err := db.ChainLogExists("0xtxhash", 0)
+	exists, err := db.ChainLogExists(ctx, "0xtxhash", 0)
 	if err != nil {
 		t.Fatalf("check exists: %v", err)
 	}
@@ -299,7 +308,7 @@ func TestChainLogIdempotent(t *testing.T) {
 		t.Fatal("expected log to exist")
 	}
 
-	exists, err = db.ChainLogExists("0xother", 0)
+	exists, err = db.ChainLogExists(ctx, "0xother", 0)
 	if err != nil {
 		t.Fatalf("check not exists: %v", err)
 	}
@@ -312,8 +321,9 @@ func TestChainLogIdempotent(t *testing.T) {
 
 func TestCreateAndGetRFQ(t *testing.T) {
 	db := openTestDB(t)
+	ctx := context.Background()
 
-	rfq, err := db.CreateRFQ(&RFQ{
+	rfq, err := db.CreateRFQ(ctx, &RFQ{
 		Title:                    "Build a widget",
 		Description:              "Build a high-quality widget",
 		SpecHash:                 "0xabc",
@@ -346,7 +356,7 @@ func TestCreateAndGetRFQ(t *testing.T) {
 		t.Fatalf("expected status 'open', got %q", rfq.Status)
 	}
 
-	got, err := db.GetRFQ(rfq.ID)
+	got, err := db.GetRFQ(ctx, rfq.ID)
 	if err != nil {
 		t.Fatalf("get rfq: %v", err)
 	}
@@ -360,8 +370,9 @@ func TestCreateAndGetRFQ(t *testing.T) {
 
 func TestListRFQs(t *testing.T) {
 	db := openTestDB(t)
+	ctx := context.Background()
 
-	_, err := db.CreateRFQ(&RFQ{
+	_, err := db.CreateRFQ(ctx, &RFQ{
 		Title: "RFQ 1", Description: "desc", SpecHash: "0x1", Buyer: "0xBuyer1",
 		BudgetMin: "100", BudgetMax: "500", Deadline: 1800000000,
 		ReviewPeriodSeconds: 86400, DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
@@ -370,7 +381,7 @@ func TestListRFQs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create rfq 1: %v", err)
 	}
-	_, err = db.CreateRFQ(&RFQ{
+	_, err = db.CreateRFQ(ctx, &RFQ{
 		Title: "RFQ 2", Description: "desc", SpecHash: "0x2", Buyer: "0xBuyer2",
 		BudgetMin: "200", BudgetMax: "600", Deadline: 1800000000,
 		ReviewPeriodSeconds: 86400, DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
@@ -380,7 +391,7 @@ func TestListRFQs(t *testing.T) {
 		t.Fatalf("create rfq 2: %v", err)
 	}
 
-	all, err := db.ListRFQs("", "")
+	all, err := db.ListRFQs(ctx, "", "")
 	if err != nil {
 		t.Fatalf("list all: %v", err)
 	}
@@ -388,7 +399,7 @@ func TestListRFQs(t *testing.T) {
 		t.Fatalf("expected 2 rfqs, got %d", len(all))
 	}
 
-	open, err := db.ListRFQs("open", "")
+	open, err := db.ListRFQs(ctx, "open", "")
 	if err != nil {
 		t.Fatalf("list open: %v", err)
 	}
@@ -396,7 +407,7 @@ func TestListRFQs(t *testing.T) {
 		t.Fatalf("expected 1 open rfq, got %d", len(open))
 	}
 
-	byBuyer, err := db.ListRFQs("", "0xBuyer1")
+	byBuyer, err := db.ListRFQs(ctx, "", "0xBuyer1")
 	if err != nil {
 		t.Fatalf("list by buyer: %v", err)
 	}
@@ -407,8 +418,9 @@ func TestListRFQs(t *testing.T) {
 
 func TestUpdateRFQStatus(t *testing.T) {
 	db := openTestDB(t)
+	ctx := context.Background()
 
-	rfq, err := db.CreateRFQ(&RFQ{
+	rfq, err := db.CreateRFQ(ctx, &RFQ{
 		Title: "RFQ", Description: "desc", SpecHash: "0x1", Buyer: "0xBuyer",
 		BudgetMin: "100", BudgetMax: "500", Deadline: 1800000000,
 		ReviewPeriodSeconds: 86400, DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
@@ -418,11 +430,11 @@ func TestUpdateRFQStatus(t *testing.T) {
 		t.Fatalf("create rfq: %v", err)
 	}
 
-	if err := db.UpdateRFQStatus(rfq.ID, "closed"); err != nil {
+	if err := db.UpdateRFQStatus(ctx, rfq.ID, "closed"); err != nil {
 		t.Fatalf("update status: %v", err)
 	}
 
-	got, err := db.GetRFQ(rfq.ID)
+	got, err := db.GetRFQ(ctx, rfq.ID)
 	if err != nil {
 		t.Fatalf("get rfq: %v", err)
 	}
@@ -433,8 +445,9 @@ func TestUpdateRFQStatus(t *testing.T) {
 
 func TestCreateAndGetBid(t *testing.T) {
 	db := openTestDB(t)
+	ctx := context.Background()
 
-	rfq, err := db.CreateRFQ(&RFQ{
+	rfq, err := db.CreateRFQ(ctx, &RFQ{
 		Title: "RFQ", Description: "desc", SpecHash: "0x1", Buyer: "0xBuyer",
 		BudgetMin: "100", BudgetMax: "500", Deadline: 1800000000,
 		ReviewPeriodSeconds: 86400, DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
@@ -444,7 +457,7 @@ func TestCreateAndGetBid(t *testing.T) {
 		t.Fatalf("create rfq: %v", err)
 	}
 
-	bid, err := db.CreateBid(&Bid{
+	bid, err := db.CreateBid(ctx, &Bid{
 		RFQID:             rfq.ID,
 		Bidder:            "0xWorker",
 		Amount:            "300",
@@ -468,7 +481,7 @@ func TestCreateAndGetBid(t *testing.T) {
 		t.Fatalf("expected nil escrow_id, got %v", bid.EscrowID)
 	}
 
-	got, err := db.GetBid(bid.ID)
+	got, err := db.GetBid(ctx, bid.ID)
 	if err != nil {
 		t.Fatalf("get bid: %v", err)
 	}
@@ -479,8 +492,9 @@ func TestCreateAndGetBid(t *testing.T) {
 
 func TestListBidsByRFQ(t *testing.T) {
 	db := openTestDB(t)
+	ctx := context.Background()
 
-	rfq, err := db.CreateRFQ(&RFQ{
+	rfq, err := db.CreateRFQ(ctx, &RFQ{
 		Title: "RFQ", Description: "desc", SpecHash: "0x1", Buyer: "0xBuyer",
 		BudgetMin: "100", BudgetMax: "500", Deadline: 1800000000,
 		ReviewPeriodSeconds: 86400, DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
@@ -490,8 +504,8 @@ func TestListBidsByRFQ(t *testing.T) {
 		t.Fatalf("create rfq: %v", err)
 	}
 
-	for i := 0; i < 3; i++ {
-		_, err := db.CreateBid(&Bid{
+	for i := range 3 {
+		_, err := db.CreateBid(ctx, &Bid{
 			RFQID: rfq.ID, Bidder: "0xWorker", Amount: "200",
 			Status: "pending", ExpiresAt: 1850000000, MilestonesJSON: "[]",
 		})
@@ -500,7 +514,7 @@ func TestListBidsByRFQ(t *testing.T) {
 		}
 	}
 
-	bids, err := db.ListBidsByRFQ(rfq.ID)
+	bids, err := db.ListBidsByRFQ(ctx, rfq.ID)
 	if err != nil {
 		t.Fatalf("list bids: %v", err)
 	}
@@ -511,8 +525,9 @@ func TestListBidsByRFQ(t *testing.T) {
 
 func TestListBidsByBidder(t *testing.T) {
 	db := openTestDB(t)
+	ctx := context.Background()
 
-	rfq, err := db.CreateRFQ(&RFQ{
+	rfq, err := db.CreateRFQ(ctx, &RFQ{
 		Title: "RFQ", Description: "desc", SpecHash: "0x1", Buyer: "0xBuyer",
 		BudgetMin: "100", BudgetMax: "500", Deadline: 1800000000,
 		ReviewPeriodSeconds: 86400, DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
@@ -522,14 +537,14 @@ func TestListBidsByBidder(t *testing.T) {
 		t.Fatalf("create rfq: %v", err)
 	}
 
-	_, err = db.CreateBid(&Bid{
+	_, err = db.CreateBid(ctx, &Bid{
 		RFQID: rfq.ID, Bidder: "0xWorkerA", Amount: "200",
 		Status: "pending", ExpiresAt: 1850000000, MilestonesJSON: "[]",
 	})
 	if err != nil {
 		t.Fatalf("create bid: %v", err)
 	}
-	_, err = db.CreateBid(&Bid{
+	_, err = db.CreateBid(ctx, &Bid{
 		RFQID: rfq.ID, Bidder: "0xWorkerB", Amount: "300",
 		Status: "pending", ExpiresAt: 1850000000, MilestonesJSON: "[]",
 	})
@@ -537,7 +552,7 @@ func TestListBidsByBidder(t *testing.T) {
 		t.Fatalf("create bid: %v", err)
 	}
 
-	bidsA, err := db.ListBidsByBidder("0xWorkerA")
+	bidsA, err := db.ListBidsByBidder(ctx, "0xWorkerA")
 	if err != nil {
 		t.Fatalf("list bids: %v", err)
 	}
@@ -548,8 +563,9 @@ func TestListBidsByBidder(t *testing.T) {
 
 func TestAcceptBidAndRejectPending(t *testing.T) {
 	db := openTestDB(t)
+	ctx := context.Background()
 
-	rfq, err := db.CreateRFQ(&RFQ{
+	rfq, err := db.CreateRFQ(ctx, &RFQ{
 		Title: "RFQ", Description: "desc", SpecHash: "0x1", Buyer: "0xBuyer",
 		BudgetMin: "100", BudgetMax: "500", Deadline: 1800000000,
 		ReviewPeriodSeconds: 86400, DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
@@ -559,11 +575,11 @@ func TestAcceptBidAndRejectPending(t *testing.T) {
 		t.Fatalf("create rfq: %v", err)
 	}
 
-	task, err := db.CreateTask("Task", "", "0x123")
+	task, err := db.CreateTask(ctx, "Task", "", "0x123")
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	escrow, err := db.CreateEscrow(&Escrow{
+	escrow, err := db.CreateEscrow(ctx, &Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE",
 		Buyer: "0xBuyer", Worker: "0xWorkerA", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "200", Status: "created",
@@ -572,14 +588,14 @@ func TestAcceptBidAndRejectPending(t *testing.T) {
 		t.Fatalf("create escrow: %v", err)
 	}
 
-	bid1, err := db.CreateBid(&Bid{
+	bid1, err := db.CreateBid(ctx, &Bid{
 		RFQID: rfq.ID, Bidder: "0xWorkerA", Amount: "200",
 		Status: "pending", ExpiresAt: 1850000000, MilestonesJSON: "[]",
 	})
 	if err != nil {
 		t.Fatalf("create bid 1: %v", err)
 	}
-	bid2, err := db.CreateBid(&Bid{
+	bid2, err := db.CreateBid(ctx, &Bid{
 		RFQID: rfq.ID, Bidder: "0xWorkerB", Amount: "300",
 		Status: "pending", ExpiresAt: 1850000000, MilestonesJSON: "[]",
 	})
@@ -587,14 +603,14 @@ func TestAcceptBidAndRejectPending(t *testing.T) {
 		t.Fatalf("create bid 2: %v", err)
 	}
 
-	if err := db.AcceptBid(bid1.ID, escrow.ID); err != nil {
+	if err := db.AcceptBid(ctx, bid1.ID, escrow.ID); err != nil {
 		t.Fatalf("accept bid: %v", err)
 	}
-	if err := db.RejectPendingBids(rfq.ID, bid1.ID); err != nil {
+	if err := db.RejectPendingBids(ctx, rfq.ID, bid1.ID); err != nil {
 		t.Fatalf("reject pending: %v", err)
 	}
 
-	accepted, err := db.GetBid(bid1.ID)
+	accepted, err := db.GetBid(ctx, bid1.ID)
 	if err != nil {
 		t.Fatalf("get accepted bid: %v", err)
 	}
@@ -605,7 +621,7 @@ func TestAcceptBidAndRejectPending(t *testing.T) {
 		t.Fatalf("expected escrow_id %d, got %v", escrow.ID, accepted.EscrowID)
 	}
 
-	rejected, err := db.GetBid(bid2.ID)
+	rejected, err := db.GetBid(ctx, bid2.ID)
 	if err != nil {
 		t.Fatalf("get rejected bid: %v", err)
 	}
@@ -616,8 +632,9 @@ func TestAcceptBidAndRejectPending(t *testing.T) {
 
 func TestCursor(t *testing.T) {
 	db := openTestDB(t)
+	ctx := context.Background()
 
-	block, err := db.GetCursor(84532, "indexer")
+	block, err := db.GetCursor(ctx, 84532, "indexer")
 	if err != nil {
 		t.Fatalf("get cursor: %v", err)
 	}
@@ -625,11 +642,11 @@ func TestCursor(t *testing.T) {
 		t.Fatalf("expected 0, got %d", block)
 	}
 
-	if err := db.SetCursor(84532, "indexer", 100); err != nil {
+	if err := db.SetCursor(ctx, 84532, "indexer", 100); err != nil {
 		t.Fatalf("set cursor: %v", err)
 	}
 
-	block, err = db.GetCursor(84532, "indexer")
+	block, err = db.GetCursor(ctx, 84532, "indexer")
 	if err != nil {
 		t.Fatalf("get cursor after set: %v", err)
 	}
@@ -638,10 +655,10 @@ func TestCursor(t *testing.T) {
 	}
 
 	// Update existing
-	if err := db.SetCursor(84532, "indexer", 200); err != nil {
+	if err := db.SetCursor(ctx, 84532, "indexer", 200); err != nil {
 		t.Fatalf("update cursor: %v", err)
 	}
-	block, err = db.GetCursor(84532, "indexer")
+	block, err = db.GetCursor(ctx, 84532, "indexer")
 	if err != nil {
 		t.Fatalf("get cursor: %v", err)
 	}

@@ -1,6 +1,7 @@
 package a2a
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -73,8 +74,9 @@ func TestBuildAgentCard(t *testing.T) {
 
 func TestHandleTaskSend_NoEscrowTrigger(t *testing.T) {
 	svc := setupService(t)
+	ctx := context.Background()
 
-	task, err := svc.HandleTaskSend(TaskSendParams{
+	task, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		Message: Message{
 			Role:  "user",
 			Parts: []Part{{Type: "text", Text: "Create a task"}},
@@ -100,8 +102,9 @@ func TestHandleTaskSend_NoEscrowTrigger(t *testing.T) {
 
 func TestHandleTaskSend_WithEscrowTrigger(t *testing.T) {
 	svc := setupService(t)
+	ctx := context.Background()
 
-	task, err := svc.HandleTaskSend(TaskSendParams{
+	task, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		Message: Message{
 			Role:  "user",
 			Parts: []Part{{Type: "text", Text: "Create an escrowed task"}},
@@ -126,8 +129,9 @@ func TestHandleTaskSend_WithEscrowTrigger(t *testing.T) {
 
 func TestHandleTaskSend_PreservesCallerMetadata(t *testing.T) {
 	svc := setupService(t)
+	ctx := context.Background()
 
-	task, err := svc.HandleTaskSend(TaskSendParams{
+	task, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		Message: Message{
 			Role:  "user",
 			Parts: []Part{{Type: "text", Text: "preserve metadata"}},
@@ -162,8 +166,9 @@ func TestHandleTaskSend_PreservesCallerMetadata(t *testing.T) {
 
 func TestHandleTaskSend_WithExplicitID(t *testing.T) {
 	svc := setupService(t)
+	ctx := context.Background()
 
-	task, err := svc.HandleTaskSend(TaskSendParams{
+	task, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		ID:        "custom-task-id",
 		SessionID: "custom-session-id",
 		Message: Message{
@@ -185,8 +190,9 @@ func TestHandleTaskSend_WithExplicitID(t *testing.T) {
 
 func TestHandleTaskSend_UpdateExisting(t *testing.T) {
 	svc := setupService(t)
+	ctx := context.Background()
 
-	_, err := svc.HandleTaskSend(TaskSendParams{
+	_, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		ID: "task-1",
 		Message: Message{
 			Role:  "user",
@@ -197,7 +203,7 @@ func TestHandleTaskSend_UpdateExisting(t *testing.T) {
 		t.Fatalf("first HandleTaskSend: %v", err)
 	}
 
-	task, err := svc.HandleTaskSend(TaskSendParams{
+	task, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		ID: "task-1",
 		Message: Message{
 			Role:  "user",
@@ -215,8 +221,9 @@ func TestHandleTaskSend_UpdateExisting(t *testing.T) {
 
 func TestVerificationPolicy_StrictRequiresArtifacts(t *testing.T) {
 	svc := setupService(t)
+	ctx := context.Background()
 
-	_, err := svc.HandleTaskSend(TaskSendParams{
+	_, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		Message: Message{
 			Role:  "user",
 			Parts: []Part{{Type: "text", Text: "test"}},
@@ -232,8 +239,9 @@ func TestVerificationPolicy_StrictRequiresArtifacts(t *testing.T) {
 
 func TestVerificationPolicy_InvalidMode(t *testing.T) {
 	svc := setupService(t)
+	ctx := context.Background()
 
-	_, err := svc.HandleTaskSend(TaskSendParams{
+	_, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		Message: Message{
 			Role:  "user",
 			Parts: []Part{{Type: "text", Text: "test"}},
@@ -249,8 +257,9 @@ func TestVerificationPolicy_InvalidMode(t *testing.T) {
 
 func TestVerificationPolicy_InvalidArtifactType(t *testing.T) {
 	svc := setupService(t)
+	ctx := context.Background()
 
-	_, err := svc.HandleTaskSend(TaskSendParams{
+	_, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		Message: Message{
 			Role:  "user",
 			Parts: []Part{{Type: "text", Text: "test"}},
@@ -266,8 +275,9 @@ func TestVerificationPolicy_InvalidArtifactType(t *testing.T) {
 
 func TestGetTaskStatus(t *testing.T) {
 	svc := setupService(t)
+	ctx := context.Background()
 
-	created, err := svc.HandleTaskSend(TaskSendParams{
+	created, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		ID: "status-test",
 		Message: Message{
 			Role:  "user",
@@ -278,7 +288,7 @@ func TestGetTaskStatus(t *testing.T) {
 		t.Fatalf("create task: %v", err)
 	}
 
-	task, err := svc.GetTaskStatus(created.ID)
+	task, err := svc.GetTaskStatus(ctx, created.ID)
 	if err != nil {
 		t.Fatalf("GetTaskStatus: %v", err)
 	}
@@ -290,8 +300,9 @@ func TestGetTaskStatus(t *testing.T) {
 
 func TestGetTaskStatus_NotFound(t *testing.T) {
 	svc := setupService(t)
+	ctx := context.Background()
 
-	_, err := svc.GetTaskStatus("nonexistent")
+	_, err := svc.GetTaskStatus(ctx, "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent task")
 	}
@@ -299,8 +310,9 @@ func TestGetTaskStatus_NotFound(t *testing.T) {
 
 func TestCancelTask(t *testing.T) {
 	svc := setupService(t)
+	ctx := context.Background()
 
-	_, err := svc.HandleTaskSend(TaskSendParams{
+	_, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		ID: "cancel-test",
 		Message: Message{
 			Role:  "user",
@@ -311,7 +323,7 @@ func TestCancelTask(t *testing.T) {
 		t.Fatalf("create task: %v", err)
 	}
 
-	task, err := svc.CancelTask("cancel-test")
+	task, err := svc.CancelTask(ctx, "cancel-test")
 	if err != nil {
 		t.Fatalf("CancelTask: %v", err)
 	}
@@ -323,8 +335,9 @@ func TestCancelTask(t *testing.T) {
 
 func TestCancelTask_AlreadyCanceled(t *testing.T) {
 	svc := setupService(t)
+	ctx := context.Background()
 
-	_, err := svc.HandleTaskSend(TaskSendParams{
+	_, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		ID: "double-cancel",
 		Message: Message{
 			Role:  "user",
@@ -335,12 +348,12 @@ func TestCancelTask_AlreadyCanceled(t *testing.T) {
 		t.Fatalf("create task: %v", err)
 	}
 
-	_, err = svc.CancelTask("double-cancel")
+	_, err = svc.CancelTask(ctx, "double-cancel")
 	if err != nil {
 		t.Fatalf("first cancel: %v", err)
 	}
 
-	_, err = svc.CancelTask("double-cancel")
+	_, err = svc.CancelTask(ctx, "double-cancel")
 	if err == nil {
 		t.Fatal("expected error for canceling already-canceled task")
 	}
@@ -348,8 +361,9 @@ func TestCancelTask_AlreadyCanceled(t *testing.T) {
 
 func TestCancelTask_NotFound(t *testing.T) {
 	svc := setupService(t)
+	ctx := context.Background()
 
-	_, err := svc.CancelTask("nonexistent")
+	_, err := svc.CancelTask(ctx, "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent task")
 	}
@@ -357,8 +371,9 @@ func TestCancelTask_NotFound(t *testing.T) {
 
 func TestHandleTaskSend_UpdateTerminalState(t *testing.T) {
 	svc := setupService(t)
+	ctx := context.Background()
 
-	_, err := svc.HandleTaskSend(TaskSendParams{
+	_, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		ID: "terminal-test",
 		Message: Message{
 			Role:  "user",
@@ -369,12 +384,12 @@ func TestHandleTaskSend_UpdateTerminalState(t *testing.T) {
 		t.Fatalf("create task: %v", err)
 	}
 
-	_, err = svc.CancelTask("terminal-test")
+	_, err = svc.CancelTask(ctx, "terminal-test")
 	if err != nil {
 		t.Fatalf("cancel task: %v", err)
 	}
 
-	_, err = svc.HandleTaskSend(TaskSendParams{
+	_, err = svc.HandleTaskSend(ctx, TaskSendParams{
 		ID: "terminal-test",
 		Message: Message{
 			Role:  "user",
@@ -388,8 +403,9 @@ func TestHandleTaskSend_UpdateTerminalState(t *testing.T) {
 
 func TestVerificationPolicy_OptimisticMode(t *testing.T) {
 	svc := setupService(t)
+	ctx := context.Background()
 
-	task, err := svc.HandleTaskSend(TaskSendParams{
+	task, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		Message: Message{
 			Role:  "user",
 			Parts: []Part{{Type: "text", Text: "optimistic task"}},
@@ -409,8 +425,9 @@ func TestVerificationPolicy_OptimisticMode(t *testing.T) {
 
 func TestVerificationPolicy_ManualMode(t *testing.T) {
 	svc := setupService(t)
+	ctx := context.Background()
 
-	task, err := svc.HandleTaskSend(TaskSendParams{
+	task, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		Message: Message{
 			Role:  "user",
 			Parts: []Part{{Type: "text", Text: "manual review task"}},
@@ -430,8 +447,9 @@ func TestVerificationPolicy_ManualMode(t *testing.T) {
 
 func TestSessionManagement(t *testing.T) {
 	svc := setupService(t)
+	ctx := context.Background()
 
-	_, err := svc.HandleTaskSend(TaskSendParams{
+	_, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		ID:        "session-task-1",
 		SessionID: "session-abc",
 		Message: Message{
@@ -443,7 +461,7 @@ func TestSessionManagement(t *testing.T) {
 		t.Fatalf("create first task: %v", err)
 	}
 
-	_, err = svc.HandleTaskSend(TaskSendParams{
+	_, err = svc.HandleTaskSend(ctx, TaskSendParams{
 		ID:        "session-task-2",
 		SessionID: "session-abc",
 		Message: Message{
@@ -455,7 +473,7 @@ func TestSessionManagement(t *testing.T) {
 		t.Fatalf("create second task: %v", err)
 	}
 
-	tasks, err := svc.DB.ListA2ATasksBySession("session-abc")
+	tasks, err := svc.DB.ListA2ATasksBySession(ctx, "session-abc")
 	if err != nil {
 		t.Fatalf("list tasks by session: %v", err)
 	}

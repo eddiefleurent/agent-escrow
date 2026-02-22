@@ -70,6 +70,12 @@ jobs:
         working-directory: go-server
         run: go vet ./...
 
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9.2.0
+        with:
+          version: v2.10
+          working-directory: go-server
+
       - name: Go Test
         working-directory: go-server
         run: go test ./...

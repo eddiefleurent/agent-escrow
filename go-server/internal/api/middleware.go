@@ -1,11 +1,27 @@
 package api
 
 import (
+	"bufio"
+	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 )
+
+// isStreamingEndpoint returns true for SSE and WebSocket event stream paths
+// that should bypass request timeout middleware.
+func isStreamingEndpoint(r *http.Request) bool {
+	p := r.URL.Path
+	if p == "/api/v1/events" || p == "/api/v1/events/ws" {
+		return true
+	}
+	if strings.HasPrefix(p, "/api/v1/escrows/") && strings.HasSuffix(p, "/events") {
+		return true
+	}
+	return false
+}
 
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -29,6 +45,7 @@ func recoveryMiddleware(next http.Handler) http.Handler {
 				slog.Error("panic recovered", "error", err, "method", r.Method, "path", r.URL.Path)
 				if !rw.written {
 					http.Error(rw, "internal server error", http.StatusInternalServerError)
+					return
 				}
 			}
 		}()
@@ -37,17 +54,21 @@ func recoveryMiddleware(next http.Handler) http.Handler {
 }
 
 // corsMiddleware checks the request Origin against allowedOrigins.
-// If allowedOrigins is empty, all origins are permitted ("*").
+// If allowedOrigins is empty or contains "*", all origins are permitted.
 func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
 	allowed := make(map[string]bool, len(allowedOrigins))
+	allowAll := len(allowedOrigins) == 0
 	for _, o := range allowedOrigins {
+		if o == "*" {
+			allowAll = true
+		}
 		allowed[o] = true
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 
-		if len(allowed) == 0 {
+		if allowAll {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		} else if allowed[origin] {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
@@ -87,6 +108,23 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	return rw.ResponseWriter.Write(b)
 }
 
+// Flush delegates to the underlying ResponseWriter if it implements http.Flusher.
+// This preserves SSE streaming through the middleware chain.
+func (rw *responseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Hijack delegates to the underlying ResponseWriter if it implements http.Hijacker.
+// This is required for gorilla/websocket's Upgrader to take over the connection.
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := rw.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, errors.New("underlying ResponseWriter does not implement http.Hijacker")
+}
+
 // timeoutMiddleware applies request timeouts based on the HTTP method and path.
 // POST endpoints that interact with the chain use txTimeout (default 90s).
 // GET/read endpoints use requestTimeout (default 10s).
@@ -97,6 +135,11 @@ func timeoutMiddleware(requestTimeout, txTimeout time.Duration, next http.Handle
 	txHandler := http.TimeoutHandler(next, txTimeout, timeoutBody)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// SSE and WebSocket endpoints are long-lived; skip timeout wrapping.
+		if isStreamingEndpoint(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/") {
 			txHandler.ServeHTTP(w, r)
 			return

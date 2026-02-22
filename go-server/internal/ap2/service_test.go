@@ -103,13 +103,14 @@ func TestValidateMandate_SignerMismatch(t *testing.T) {
 
 func TestFundViaMandate_HappyPath(t *testing.T) {
 	svc, db, _ := setupTestService(t)
+	ctx := context.Background()
 
-	task, err := db.CreateTask("Test Task", "Description", "0xhash")
+	task, err := db.CreateTask(ctx, "Test Task", "Description", "0xhash")
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
 
-	escrow, err := db.CreateEscrow(&storage.Escrow{
+	escrow, err := db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID:                   task.ID,
 		ChainID:                  84532,
 		FactoryAddress:           "0x1234567890123456789012345678901234567890",
@@ -172,12 +173,13 @@ func TestFundViaMandate_HappyPath(t *testing.T) {
 
 func TestFundViaMandate_BuyerMismatch(t *testing.T) {
 	svc, db, _ := setupTestService(t)
+	ctx := context.Background()
 
-	task, err := db.CreateTask("Test Task", "Description", "0xhash")
+	task, err := db.CreateTask(ctx, "Test Task", "Description", "0xhash")
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	escrow, err := db.CreateEscrow(&storage.Escrow{
+	escrow, err := db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID:                   task.ID,
 		ChainID:                  84532,
 		FactoryAddress:           "0x1234567890123456789012345678901234567890",
@@ -227,12 +229,13 @@ func TestFundViaMandate_BuyerMismatch(t *testing.T) {
 
 func TestFundViaMandate_InsufficientValue(t *testing.T) {
 	svc, db, _ := setupTestService(t)
+	ctx := context.Background()
 
-	task, err := db.CreateTask("Test Task", "Description", "0xhash")
+	task, err := db.CreateTask(ctx, "Test Task", "Description", "0xhash")
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	escrow, err := db.CreateEscrow(&storage.Escrow{
+	escrow, err := db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID:                   task.ID,
 		ChainID:                  84532,
 		FactoryAddress:           "0x1234567890123456789012345678901234567890",
@@ -282,12 +285,13 @@ func TestFundViaMandate_InsufficientValue(t *testing.T) {
 
 func TestFundViaMandate_AuthToMismatch(t *testing.T) {
 	svc, db, _ := setupTestService(t)
+	ctx := context.Background()
 
-	task, err := db.CreateTask("Test Task", "Description", "0xhash")
+	task, err := db.CreateTask(ctx, "Test Task", "Description", "0xhash")
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	escrow, err := db.CreateEscrow(&storage.Escrow{
+	escrow, err := db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID:                   task.ID,
 		ChainID:                  84532,
 		FactoryAddress:           "0x1234567890123456789012345678901234567890",

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -48,7 +50,7 @@ func setupWebhookTest(t *testing.T) *webhookTestEnv {
 	}
 
 	idx := indexer.New(db, mock, cfg.FactoryAddress)
-	mux := NewRouter(db, mock, idx, cfg)
+	mux := NewRouter(db, mock, idx, cfg, nil)
 
 	return &webhookTestEnv{db: db, mock: mock, idx: idx, cfg: cfg, mux: mux}
 }
@@ -57,7 +59,7 @@ func setupWebhookTest(t *testing.T) *webhookTestEnv {
 func signPayload(t *testing.T, body string, secret string, headers http.Header) string {
 	t.Helper()
 
-	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	headerNames := "content-type x-hook0-id"
 
 	nameList := strings.Split(headerNames, " ")
@@ -85,7 +87,7 @@ func makeCDPPayload(t *testing.T, eventName string, contractAddr string, txHash 
 	t.Helper()
 
 	// Build the data object: standard fields + decoded event params
-	data := map[string]interface{}{
+	data := map[string]any{
 		"subscriptionId":  "sub_test",
 		"networkId":       "base-sepolia",
 		"blockNumber":     100,
@@ -99,7 +101,7 @@ func makeCDPPayload(t *testing.T, eventName string, contractAddr string, txHash 
 		data[k] = v
 	}
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"id":        "evt_test123",
 		"type":      "onchain.activity.detected",
 		"createdAt": time.Now().UTC().Format(time.RFC3339),
@@ -158,7 +160,7 @@ func TestWebhook_ValidSignature_EscrowCreated(t *testing.T) {
 
 	// Verify escrow was created in DB (use checksummed form from common.HexToAddress)
 	checksummed := common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12").Hex()
-	escrow, err := env.db.GetEscrowByAddress(checksummed)
+	escrow, err := env.db.GetEscrowByAddress(context.Background(), checksummed)
 	if err != nil {
 		t.Fatalf("get escrow by address: %v", err)
 	}
@@ -212,11 +214,11 @@ func TestWebhook_MissingSignature_Rejected(t *testing.T) {
 func TestWebhook_UnknownEventType_Ignored(t *testing.T) {
 	env := setupWebhookTest(t)
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"id":        "evt_unknown",
 		"type":      "some.unknown.type",
 		"createdAt": time.Now().UTC().Format(time.RFC3339),
-		"data":      map[string]interface{}{"subscriptionId": "sub_test"},
+		"data":      map[string]any{"subscriptionId": "sub_test"},
 	}
 	bodyBytes, _ := json.Marshal(payload)
 	body := string(bodyBytes)
@@ -274,6 +276,7 @@ func TestWebhook_OutcomeRecorded_Processed(t *testing.T) {
 
 	// Verify reputation was upserted
 	rep, err := env.db.GetReputation(
+		context.Background(),
 		strings.ToLower("0x1000000000000000000000000000000000000001"),
 		"worker",
 	)
@@ -313,14 +316,15 @@ func TestWebhook_DuplicateEvent_Idempotent(t *testing.T) {
 
 func TestWebhook_ExistingEscrow_Skipped(t *testing.T) {
 	env := setupWebhookTest(t)
+	ctx := context.Background()
 
 	// Pre-create the escrow in the DB (simulates API/MCP creation)
-	task, err := env.db.CreateTask("Existing", "desc", "0xabc")
+	task, err := env.db.CreateTask(ctx, "Existing", "desc", "0xabc")
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
 	escrowAddr := "0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE1"
-	_, err = env.db.CreateEscrow(&storage.Escrow{
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: env.cfg.FactoryAddress,
 		EscrowAddress: escrowAddr, EscrowID: 42,
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
@@ -361,7 +365,7 @@ func TestWebhook_ReplayedTimestamp_Rejected(t *testing.T) {
 	req.Header.Set("X-Hook0-Id", "evt_test123")
 
 	// Sign with a timestamp from 10 minutes ago
-	oldTimestamp := fmt.Sprintf("%d", time.Now().Add(-10*time.Minute).Unix())
+	oldTimestamp := strconv.FormatInt(time.Now().Add(-10*time.Minute).Unix(), 10)
 	headerNames := "content-type x-hook0-id"
 
 	nameList := strings.Split(headerNames, " ")
@@ -405,7 +409,7 @@ func TestWebhook_NotRegistered_InPollingMode(t *testing.T) {
 	}
 
 	idx := indexer.New(db, mock, cfg.FactoryAddress)
-	mux := NewRouter(db, mock, idx, cfg)
+	mux := NewRouter(db, mock, idx, cfg, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/cdp", strings.NewReader("{}"))
 	req.Header.Set("Content-Type", "application/json")
@@ -425,7 +429,7 @@ func TestVerifyCDPSignature_Valid(t *testing.T) {
 	headers.Set("Content-Type", "application/json")
 	headers.Set("X-Hook0-Id", "evt_123")
 
-	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	headerNames := "content-type x-hook0-id"
 
 	signedPayload := fmt.Sprintf("%s.%s.%s.%s.%s",
@@ -451,7 +455,7 @@ func TestVerifyCDPSignature_Invalid(t *testing.T) {
 	headers.Set("Content-Type", "application/json")
 	headers.Set("X-Hook0-Id", "evt_123")
 
-	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	headerNames := "content-type x-hook0-id"
 
 	sigHeader := fmt.Sprintf("t=%s,h=%s,v1=%s", timestamp, headerNames,
@@ -470,7 +474,7 @@ func TestVerifyCDPSignature_ExpiredTimestamp(t *testing.T) {
 	headers.Set("Content-Type", "application/json")
 	headers.Set("X-Hook0-Id", "evt_123")
 
-	timestamp := fmt.Sprintf("%d", time.Now().Add(-10*time.Minute).Unix())
+	timestamp := strconv.FormatInt(time.Now().Add(-10*time.Minute).Unix(), 10)
 	headerNames := "content-type x-hook0-id"
 
 	signedPayload := fmt.Sprintf("%s.%s.%s.%s.%s",

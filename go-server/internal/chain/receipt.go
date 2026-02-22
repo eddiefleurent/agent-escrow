@@ -35,7 +35,7 @@ func WaitMined(ctx context.Context, cc ChainClient, txHash common.Hash) (*types.
 	const maxAttempts = 60
 	delay := 500 * time.Millisecond
 
-	for i := 0; i < maxAttempts; i++ {
+	for range maxAttempts {
 		receipt, err := cc.TransactionReceipt(ctx, txHash)
 		if err == nil && receipt != nil {
 			return receipt, nil

@@ -1,0 +1,110 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - dupword
+    - durationcheck
+    - errcheck
+    - errname
+    - errorlint
+    - fatcontext
+    - forcetypeassert
+    - gocritic
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - nilerr
+    - nilnesserr
+    - noctx
+    - nolintlint
+    - perfsprint
+    - reassign
+    - revive
+    - sloglint
+    - sqlclosecheck
+    - staticcheck
+    - unconvert
+    - unused
+    - wastedassign
+  settings:
+    errcheck:
+      check-type-assertions: true
+      exclude-functions:
+        - (*database/sql.Tx).Rollback
+    gocritic:
+      enabled-tags:
+        - diagnostic
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    gosec:
+      excludes:
+        # Rollback/Close in error-cleanup paths -- standard Go pattern.
+        - G104
+        # Structured slog logging with separate key/value fields is used by default.
+        - G706
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+        - shadow
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: var-declaration
+        - name: var-naming
+    sloglint:
+      kv-only: true
+    staticcheck:
+      checks:
+        - all
+        - -ST1000
+  exclusions:
+    warn-unused: true
+    presets:
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters:
+          - bodyclose
+          - dupl
+          - errcheck
+          - forcetypeassert
+          - gosec
+      - path: abi/embed\.go
+        linters:
+          - revive
+      - path: internal/api/
+        text: "avoid meaningless package names"
+        linters:
+          - revive
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

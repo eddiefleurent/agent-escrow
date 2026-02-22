@@ -1,11 +1,13 @@
 package a2a
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
@@ -101,7 +103,7 @@ func (s *Service) BuildAgentCard() *AgentCard {
 // HandleTaskSend processes a tasks/send request, creating or updating an A2A task.
 // If escrow_trigger is true in the verification_policy metadata, the task is linked
 // to an on-chain escrow.
-func (s *Service) HandleTaskSend(params TaskSendParams) (*Task, error) {
+func (s *Service) HandleTaskSend(ctx context.Context, params TaskSendParams) (*Task, error) {
 	taskID := params.ID
 	if taskID == "" {
 		taskID = uuid.New().String()
@@ -112,28 +114,28 @@ func (s *Service) HandleTaskSend(params TaskSendParams) (*Task, error) {
 		sessionID = uuid.New().String()
 	}
 
-	existing, err := s.DB.GetA2ATaskByTaskID(taskID)
+	existing, err := s.DB.GetA2ATaskByTaskID(ctx, taskID)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("lookup a2a task: %w", err)
 		}
-		return s.createNewTask(taskID, sessionID, params)
+		return s.createNewTask(ctx, taskID, sessionID, params)
 	}
 
 	return s.updateExistingTask(existing, params)
 }
 
-func (s *Service) createNewTask(taskID, sessionID string, params TaskSendParams) (*Task, error) {
+func (s *Service) createNewTask(ctx context.Context, taskID, sessionID string, params TaskSendParams) (*Task, error) {
 	var vp VerificationPolicy
 	escrowTrigger := false
 	vpJSON := "{}"
 
 	if raw, ok := params.Metadata["verification_policy"]; ok {
 		if err := json.Unmarshal([]byte(raw), &vp); err != nil {
-			return nil, fmt.Errorf("%w: invalid verification_policy: %v", ErrInvalidParams, err)
+			return nil, fmt.Errorf("%w: invalid verification_policy: %w", ErrInvalidParams, err)
 		}
 		if err := validateVerificationPolicy(vp); err != nil {
-			return nil, fmt.Errorf("%w: verification_policy validation: %v", ErrInvalidParams, err)
+			return nil, fmt.Errorf("%w: verification_policy validation: %w", ErrInvalidParams, err)
 		}
 		escrowTrigger = vp.EscrowTrigger
 		vpJSON = raw
@@ -152,7 +154,7 @@ func (s *Service) createNewTask(taskID, sessionID string, params TaskSendParams)
 		return nil, fmt.Errorf("marshal metadata: %w", err)
 	}
 
-	a2aTask, err := s.DB.CreateA2ATask(&storage.A2ATask{
+	a2aTask, err := s.DB.CreateA2ATask(ctx, &storage.A2ATask{
 		A2ATaskID:              taskID,
 		SessionID:              sessionID,
 		DelegatorAgent:         delegator,
@@ -191,15 +193,15 @@ func (s *Service) updateExistingTask(existing *storage.A2ATask, params TaskSendP
 }
 
 // GetTaskStatus returns the current status of an A2A task.
-func (s *Service) GetTaskStatus(taskID string) (*Task, error) {
-	a2aTask, err := s.DB.GetA2ATaskByTaskID(taskID)
+func (s *Service) GetTaskStatus(ctx context.Context, taskID string) (*Task, error) {
+	a2aTask, err := s.DB.GetA2ATaskByTaskID(ctx, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("get task %s: %w", taskID, err)
 	}
 
 	statusMsg := "Task status: " + a2aTask.A2AStatus
 	if a2aTask.EscrowID != nil {
-		escrow, err := s.DB.GetEscrow(*a2aTask.EscrowID)
+		escrow, err := s.DB.GetEscrow(ctx, *a2aTask.EscrowID)
 		if err == nil {
 			statusMsg = fmt.Sprintf("Task status: %s, escrow status: %s, escrow address: %s",
 				a2aTask.A2AStatus, escrow.Status, escrow.EscrowAddress)
@@ -210,8 +212,8 @@ func (s *Service) GetTaskStatus(taskID string) (*Task, error) {
 }
 
 // CancelTask cancels an A2A task if it's not in a terminal state.
-func (s *Service) CancelTask(taskID string) (*Task, error) {
-	a2aTask, err := s.DB.GetA2ATaskByTaskID(taskID)
+func (s *Service) CancelTask(ctx context.Context, taskID string) (*Task, error) {
+	a2aTask, err := s.DB.GetA2ATaskByTaskID(ctx, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("get task %s: %w", taskID, err)
 	}
@@ -222,7 +224,7 @@ func (s *Service) CancelTask(taskID string) (*Task, error) {
 		return nil, fmt.Errorf("task %s is in terminal state: %s", a2aTask.A2ATaskID, a2aTask.A2AStatus)
 	}
 
-	if err := s.DB.UpdateA2ATaskStatus(a2aTask.ID, string(TaskStatusCanceled)); err != nil {
+	if err := s.DB.UpdateA2ATaskStatus(ctx, a2aTask.ID, string(TaskStatusCanceled)); err != nil {
 		return nil, fmt.Errorf("cancel task: %w", err)
 	}
 
@@ -236,13 +238,13 @@ func validateVerificationPolicy(vp VerificationPolicy) error {
 	switch vp.Mode {
 	case "strict", "optimistic", "manual":
 	case "":
-		return fmt.Errorf("mode is required")
+		return errors.New("mode is required")
 	default:
 		return fmt.Errorf("invalid mode: %s (must be strict, optimistic, or manual)", vp.Mode)
 	}
 
 	if vp.Mode == "strict" && len(vp.Artifacts) == 0 {
-		return fmt.Errorf("strict mode requires at least one verification artifact")
+		return errors.New("strict mode requires at least one verification artifact")
 	}
 
 	for i, a := range vp.Artifacts {
@@ -271,7 +273,7 @@ func buildTaskResponse(a2aTask *storage.A2ATask, message string) *Task {
 		metadata = make(map[string]string)
 	}
 
-	metadata["escrow_trigger"] = fmt.Sprintf("%t", a2aTask.EscrowTrigger)
+	metadata["escrow_trigger"] = strconv.FormatBool(a2aTask.EscrowTrigger)
 	metadata["verification_policy"] = a2aTask.VerificationPolicyJSON
 
 	return &Task{

@@ -67,10 +67,7 @@ func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p Cre
 	}
 	milestones := make([]milestoneTuple, len(p.Milestones))
 	for i, m := range p.Milestones {
-		milestones[i] = milestoneTuple{
-			Amount:             m.Amount,
-			SubmissionDeadline: m.SubmissionDeadline,
-		}
+		milestones[i] = milestoneTuple(m)
 	}
 	tuple := createParamsTuple{
 		Buyer:                    p.Buyer,

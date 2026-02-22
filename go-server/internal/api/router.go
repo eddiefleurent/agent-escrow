@@ -7,12 +7,15 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/ap2"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/x402"
 )
 
-func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Indexer, cfg *config.Config) http.Handler {
+// NewRouter creates the HTTP handler with all API routes.
+// The bus parameter may be nil when event streaming is disabled.
+func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Indexer, cfg *config.Config, bus *events.EventBus) http.Handler {
 	h := &Handlers{
 		db:    db,
 		chain: chainClient,
@@ -46,7 +49,7 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	mux.HandleFunc("POST /api/v1/rfqs/{id}/accept", h.AcceptBid)
 
 	if cfg.WebhookMode() {
-		wh := NewWebhookHandler(idx, cfg.CDPWebhookSecret)
+		wh := NewWebhookHandler(idx, cfg.CDPWebhookSecret, bus)
 		mux.HandleFunc("POST /webhooks/cdp", wh.HandleCDPWebhook)
 	}
 
@@ -67,6 +70,14 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 		mux.HandleFunc("POST /api/v1/ap2/fund", ap2Handler.FundViaMandate)
 		mux.HandleFunc("POST /api/v1/ap2/validate", ap2Handler.ValidateMandate)
 		mux.HandleFunc("GET /api/v1/ap2/mandates/{id}", ap2Handler.GetMandate)
+	}
+
+	// Real-time event subscriptions (paper §4.5: configurable granularity L0-L3)
+	if bus != nil && cfg.EventsEnabled {
+		sh := NewStreamHandler(bus, cfg.CORSOrigins)
+		mux.HandleFunc("GET /api/v1/events", sh.HandleSSE)
+		mux.HandleFunc("GET /api/v1/escrows/{id}/events", sh.HandleSSE)
+		mux.HandleFunc("GET /api/v1/events/ws", sh.HandleWebSocket)
 	}
 
 	// A2A settlement adapter routes (paper §6: A2A Task object extension)

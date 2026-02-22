@@ -124,42 +124,11 @@ Four integration paths, in priority order:
 
 ## System Architecture
 
-```
-                                        ┌──────────────┐
-                                        │ CDP Webhooks │ (optional)
-                                        │  (real-time  │
-                                        │  factory     │
-                                        │  events)     │
-                                        └──────┬───────┘
-                                               │ HMAC-signed POST
-┌──────────────────────────────────────────────┼──────┐
-│                   Go Server Binary            │      │
-│                                               │      │
-│  ┌─────────────┐  ┌──────────┐  ┌────────────┴──┐   │
-│  │  MCP Server  │  │ HTTP API │  │Webhook Handler│   │
-│  │   (stdio)    │  │ (JSON)   │  │(/webhooks/cdp)│   │
-│  └──────┬───────┘  └────┬─────┘  └───────┬───────┘   │
-│         │               │                │           │
-│         └───────────┬───┘                │           │
-│                     │                    │           │
-│  ┌──────────────────┤         ┌───────────────┐      │
-│  │  A2A Adapter     │         │ Event Indexer  │      │
-│  │  (/.well-known/  │         │ (background    │      │
-│  │   agent.json +   │         │  poller)       │      │
-│  │   POST /a2a)     │         └───────┬───────┘      │
-│  └──────┬───────────┤          ┌──────┴────────┐     │
-│         │    ┌──────┴──────┐   │   SQLite DB   │     │
-│         │    │ Chain Client│   │               │     │
-│         │    │(go-ethereum)│   └───────────────┘     │
-│         │    └──────┬──────┘                         │
-│         └───────────┘                                │
-└─────────────────────┼────────────────────────────────┘
-                      │
-              ┌───────┴────────┐
-              │  Base Sepolia  │
-              │  Contracts     │
-              └────────────────┘
-```
+![System Architecture](diagrams/architecture.png)
+
+For internal component wiring (which handler talks to which shared component, event bus publish/subscribe flows, indexer polling paths), see the detail view:
+
+![Go Server — Internal Detail](diagrams/architecture-detail.png)
 
 ### Scope Boundary
 
@@ -429,14 +398,18 @@ go-server/
       types.go                     AP2 mandate types
       service.go                   Mandate validation, binding, fund orchestration
       handler.go                   HTTP handlers (validate, fund, get mandate)
+    events/
+      types.go                     Event types, GranularityLevel enum, on-chain event name mapping
+      bus.go                       In-process pub/sub EventBus (publish, subscribe, heartbeat, recent events ring buffer)
     mcpserver/
       server.go                    MCP server setup
-      tools.go                     18 tool handlers
+      tools.go                     19 tool handlers (includes subscribe_events)
     api/
       router.go                    HTTP mux with middleware
       handlers.go                  JSON request/response handlers
+      stream.go                    SSE + WebSocket event stream handlers
       webhook.go                   CDP webhook receiver (factory events)
-      middleware.go                Logging, recovery, CORS
+      middleware.go                Logging, recovery, CORS, streaming bypass
   abi/
     embed.go                       //go:embed for ABI JSON files
     TaskEscrowFactory.json         Copied from Foundry out/ at build time
@@ -505,6 +478,37 @@ After any write transaction (via MCP or API), `RunOnce()` is called synchronousl
 |---|---|---|---|
 | Factory events (`EscrowCreated`, `OutcomeRecorded`) | `TaskEscrowFactory` | Real-time push (webhook) + 15s poll (fallback) | CDP Webhooks + polling indexer |
 | Escrow events (~15 types) | Individual `TaskEscrow` contracts | 15s poll | Polling indexer only |
+| Client subscriptions (L0-L1) | EventBus (fed by indexer + webhooks) | Real-time push (SSE/WebSocket) or polling (MCP tool) | In-process event bus |
+
+### Real-Time Event Subscriptions (Paper §4.5)
+
+The event bus provides client-facing real-time streaming of escrow lifecycle events with the paper's configurable granularity levels (Section 4.5, Section 6.1):
+
+- **L0** (`IS_OPERATIONAL`): heartbeat/liveness signals at configurable intervals
+- **L1** (`HIGH_LEVEL_PLAN_UPDATES`): on-chain state transitions (funded, submitted, approved, disputed, etc.)
+- **L2** (`COT_TRACE`): chain-of-thought reasoning traces (future, V3)
+- **L3** (`FULL_STATE`): complete state snapshots (future, V3)
+
+**Architecture:** An in-process `EventBus` (`internal/events/`) receives events from three sources:
+
+1. **Polling indexer** -- publishes L1 events after processing each on-chain event
+2. **CDP webhook handler** -- publishes L1 events after processing webhook-delivered factory events
+3. **Heartbeat goroutine** -- publishes L0 heartbeat events at `EVENTS_HEARTBEAT_INTERVAL`
+
+Subscribers connect via SSE or WebSocket and declare a maximum granularity level and optional escrow address filter. The bus delivers matching events in real-time via buffered channels with non-blocking sends (slow consumers drop events rather than blocking publishers).
+
+**Client transports:**
+
+| Transport | Endpoint | Use Case |
+|---|---|---|
+| SSE | `GET /api/v1/events` | All escrows, browser-friendly |
+| SSE | `GET /api/v1/escrows/{id}/events` | Single escrow, scoped |
+| WebSocket | `GET /api/v1/events/ws` | Bidirectional (future L2/L3) |
+| MCP polling | `subscribe_events` tool | Cursor-based for MCP stdio |
+
+**MCP tool:** Since MCP stdio transport doesn't support persistent push streams, the `subscribe_events` tool uses a polling model -- it returns recent events since a given cursor (event ID), similar to how `get_escrow` works but returning a time-ordered event log.
+
+**Design:** The bus maintains a ring buffer of recent events (up to 1000) for the MCP polling tool. SSE and WebSocket clients receive events in real-time via channel subscriptions. The bus is a lightweight in-process struct with mutex-protected subscriber maps -- no external message broker needed at V2 scale.
 
 ### Bidding Protocol (Task_RFQ + Bid_Object)
 
@@ -569,6 +573,7 @@ The AP2 mandate bridge enables gasless ERC20 escrow funding via the [x402](https
 | `list_bids` | rfq_id or bidder | DB query |
 | `accept_bid` | rfq_id, bid_id, caller | `Factory.createEscrow` (on acceptance) |
 | `fund_via_mandate` | escrow_id, mandate_id, authorization params | x402 validate + `Escrow.fundWithAuthorization` |
+| `subscribe_events` | escrow_id (optional), since_id, granularity, limit | EventBus polling (cursor-based) |
 | `get_agent_card` | (none) | Returns A2A agent card JSON |
 
 ### HTTP API (Secondary Interface)
@@ -598,6 +603,9 @@ The AP2 mandate bridge enables gasless ERC20 escrow funding via the [x402](https
 | POST | `/api/v1/rfqs/{id}/bids` | Place bid on RFQ |
 | GET | `/api/v1/rfqs/{id}/bids` | List bids for RFQ |
 | POST | `/api/v1/rfqs/{id}/accept` | Accept bid and create escrow |
+| GET | `/api/v1/events` | SSE event stream for all escrows (query: granularity) |
+| GET | `/api/v1/escrows/{id}/events` | SSE event stream for specific escrow (query: granularity) |
+| GET | `/api/v1/events/ws` | WebSocket event stream (subscription message protocol) |
 | POST | `/webhooks/cdp` | CDP webhook receiver (factory events; requires `CDP_WEBHOOK_SECRET`) |
 | GET | `/.well-known/agent.json` | A2A agent card (capabilities, skills, endpoint URL) |
 | POST | `/a2a` | A2A JSON-RPC 2.0 endpoint (`tasks/send`, `tasks/get`, `tasks/cancel`) |
@@ -623,6 +631,9 @@ The AP2 mandate bridge enables gasless ERC20 escrow funding via the [x402](https
 | `A2A_ENABLED` | No | `true` | Enable A2A settlement adapter routes |
 | `A2A_AGENT_NAME` | No | `Escrow Settlement Agent` | Agent card display name |
 | `A2A_AGENT_URL` | No | `http://localhost:{PORT}` | Agent card URL |
+| `EVENTS_ENABLED` | No | `true` | Enable SSE/WebSocket event streaming and `subscribe_events` MCP tool |
+| `EVENTS_BUFFER_SIZE` | No | `64` | Per-subscriber channel buffer size |
+| `EVENTS_HEARTBEAT_INTERVAL` | No | `30s` | L0 heartbeat interval for liveness signals |
 
 ### Design Decisions
 
@@ -633,3 +644,4 @@ The AP2 mandate bridge enables gasless ERC20 escrow funding via the [x402](https
 - **Shared logic**: MCP tools and HTTP handlers call the same chain + storage + indexer methods.
 - **Synchronous indexer after writes**: `RunOnce()` triggered after transaction submission for immediate event pickup.
 - **Dual-mode event ingestion**: CDP Webhooks for real-time factory events + polling for dynamically-deployed escrow contracts. Both paths deduplicate via `chain_logs` (tx_hash + log_index), so overlapping coverage is safe. Webhook mode is opt-in via `CDP_WEBHOOK_SECRET`.
+- **In-process event bus**: Lightweight pub/sub for real-time client streaming. No external message broker at V2 scale. Publishers (indexer, webhooks) call `Publish()`; subscribers receive on buffered channels with non-blocking sends. SSE as primary transport (proxy/CDN friendly, aligns with MCP SSE reference), WebSocket as secondary for future bidirectional use cases (L2/L3).

@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +44,7 @@ func setup(t *testing.T) *testEnv {
 	}
 
 	idx := indexer.New(db, mock, cfg.FactoryAddress)
-	mux := NewRouter(db, mock, idx, cfg)
+	mux := NewRouter(db, mock, idx, cfg, nil)
 
 	return &testEnv{db: db, mock: mock, idx: idx, cfg: cfg, mux: mux}
 }
@@ -54,7 +56,7 @@ func (e *testEnv) request(t *testing.T, method, path, body string) *httptest.Res
 		req = httptest.NewRequest(method, path, strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 	} else {
-		req = httptest.NewRequest(method, path, nil)
+		req = httptest.NewRequest(method, path, http.NoBody)
 	}
 	rr := httptest.NewRecorder()
 	e.mux.ServeHTTP(rr, req)
@@ -147,7 +149,7 @@ func TestCreateEscrow_Success(t *testing.T) {
 
 	// Verify the escrow was persisted with on-chain fields
 	escrowID := int64(resp["escrow_id"].(float64))
-	escrow, err := env.db.GetEscrow(escrowID)
+	escrow, err := env.db.GetEscrow(context.Background(), escrowID)
 	if err != nil {
 		t.Fatalf("get escrow from db: %v", err)
 	}
@@ -191,12 +193,13 @@ func TestCreateEscrow_InvalidJSON(t *testing.T) {
 
 func TestGetEscrow_Success(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	task, err := env.db.CreateTask("Task", "desc", "0xabc")
+	task, err := env.db.CreateTask(ctx, "Task", "desc", "0xabc")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	_, err = env.db.CreateEscrow(&storage.Escrow{
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE1",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "created",
@@ -240,12 +243,13 @@ func TestGetEscrow_InvalidID(t *testing.T) {
 
 func TestListEscrows_All(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	task, err := env.db.CreateTask("Task", "", "0x1")
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	_, err = env.db.CreateEscrow(&storage.Escrow{
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE1",
 		Buyer: "0xB1", Worker: "0xW1", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "created",
@@ -253,7 +257,7 @@ func TestListEscrows_All(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup escrow: %v", err)
 	}
-	_, err = env.db.CreateEscrow(&storage.Escrow{
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE2",
 		Buyer: "0xB2", Worker: "0xW2", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "200", Status: "funded",
@@ -278,12 +282,13 @@ func TestListEscrows_All(t *testing.T) {
 
 func TestListEscrows_FilterByStatus(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	task, err := env.db.CreateTask("Task", "", "0x1")
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	_, err = env.db.CreateEscrow(&storage.Escrow{
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE1",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "created",
@@ -291,7 +296,7 @@ func TestListEscrows_FilterByStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup escrow: %v", err)
 	}
-	_, err = env.db.CreateEscrow(&storage.Escrow{
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE2",
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "200", Status: "funded",
@@ -316,12 +321,13 @@ func TestListEscrows_FilterByStatus(t *testing.T) {
 
 func TestFundEscrow_Success(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	task, err := env.db.CreateTask("Task", "", "0x1")
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	_, err = env.db.CreateEscrow(&storage.Escrow{
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
@@ -353,12 +359,13 @@ func TestFundEscrow_NotFound(t *testing.T) {
 
 func TestSubmitWork_Success(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	task, err := env.db.CreateTask("Task", "", "0x1")
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	_, err = env.db.CreateEscrow(&storage.Escrow{
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
@@ -376,12 +383,13 @@ func TestSubmitWork_Success(t *testing.T) {
 
 func TestApproveWork_Buyer(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	task, err := env.db.CreateTask("Task", "", "0x1")
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	_, err = env.db.CreateEscrow(&storage.Escrow{
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
@@ -399,12 +407,13 @@ func TestApproveWork_Buyer(t *testing.T) {
 
 func TestApproveWork_Verifier(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	task, err := env.db.CreateTask("Task", "", "0x1")
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	_, err = env.db.CreateEscrow(&storage.Escrow{
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
@@ -422,12 +431,13 @@ func TestApproveWork_Verifier(t *testing.T) {
 
 func TestApproveWork_InvalidRole(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	task, err := env.db.CreateTask("Task", "", "0x1")
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	_, err = env.db.CreateEscrow(&storage.Escrow{
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
@@ -445,12 +455,13 @@ func TestApproveWork_InvalidRole(t *testing.T) {
 
 func TestDisputeWork_Buyer(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	task, err := env.db.CreateTask("Task", "", "0x1")
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	escrow, err := env.db.CreateEscrow(&storage.Escrow{
+	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr1",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
@@ -469,12 +480,13 @@ func TestDisputeWork_Buyer(t *testing.T) {
 
 func TestDisputeWork_Verifier(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	task, err := env.db.CreateTask("Task", "", "0x1")
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	escrow, err := env.db.CreateEscrow(&storage.Escrow{
+	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr2",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
@@ -493,12 +505,13 @@ func TestDisputeWork_Verifier(t *testing.T) {
 
 func TestDisputeWork_Worker(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	task, err := env.db.CreateTask("Task", "", "0x1")
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	escrow, err := env.db.CreateEscrow(&storage.Escrow{
+	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr3",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
@@ -517,12 +530,13 @@ func TestDisputeWork_Worker(t *testing.T) {
 
 func TestDisputeWork_InvalidRole(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	task, err := env.db.CreateTask("Task", "", "0x1")
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	_, err = env.db.CreateEscrow(&storage.Escrow{
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
@@ -540,12 +554,13 @@ func TestDisputeWork_InvalidRole(t *testing.T) {
 
 func TestResolveDispute_Success(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	task, err := env.db.CreateTask("Task", "", "0x1")
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	_, err = env.db.CreateEscrow(&storage.Escrow{
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
@@ -565,7 +580,7 @@ func TestResolveDispute_Success(t *testing.T) {
 func TestCORS_Preflight_WildcardDefault(t *testing.T) {
 	env := setup(t)
 
-	req := httptest.NewRequest("OPTIONS", "/api/v1/health", nil)
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/health", http.NoBody)
 	rr := httptest.NewRecorder()
 	env.mux.ServeHTTP(rr, req)
 
@@ -577,12 +592,27 @@ func TestCORS_Preflight_WildcardDefault(t *testing.T) {
 	}
 }
 
+func TestCORS_ExplicitWildcard(t *testing.T) {
+	env := setup(t)
+	env.cfg.CORSOrigins = []string{"*"}
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", http.NoBody)
+	req.Header.Set("Origin", "https://anything.example.com")
+	rr := httptest.NewRecorder()
+	env.mux.ServeHTTP(rr, req)
+
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("expected wildcard CORS header when origins=[\"*\"], got %q", got)
+	}
+}
+
 func TestCORS_RestrictedOrigins_Allowed(t *testing.T) {
 	env := setup(t)
 	env.cfg.CORSOrigins = []string{"https://example.com", "https://app.example.com"}
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
-	req := httptest.NewRequest("GET", "/api/v1/health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", http.NoBody)
 	req.Header.Set("Origin", "https://example.com")
 	rr := httptest.NewRecorder()
 	env.mux.ServeHTTP(rr, req)
@@ -598,9 +628,9 @@ func TestCORS_RestrictedOrigins_Allowed(t *testing.T) {
 func TestCORS_RestrictedOrigins_Rejected(t *testing.T) {
 	env := setup(t)
 	env.cfg.CORSOrigins = []string{"https://example.com"}
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
-	req := httptest.NewRequest("GET", "/api/v1/health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", http.NoBody)
 	req.Header.Set("Origin", "https://evil.com")
 	rr := httptest.NewRecorder()
 	env.mux.ServeHTTP(rr, req)
@@ -613,9 +643,9 @@ func TestCORS_RestrictedOrigins_Rejected(t *testing.T) {
 func TestCORS_RestrictedOrigins_Preflight(t *testing.T) {
 	env := setup(t)
 	env.cfg.CORSOrigins = []string{"https://app.example.com"}
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
-	req := httptest.NewRequest("OPTIONS", "/api/v1/escrows", nil)
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/escrows", http.NoBody)
 	req.Header.Set("Origin", "https://app.example.com")
 	rr := httptest.NewRecorder()
 	env.mux.ServeHTTP(rr, req)
@@ -635,7 +665,7 @@ func TestTimeout_GET_Exceeded(t *testing.T) {
 	// Reconfigure with a very short read timeout
 	env.cfg.RequestTimeout = 50 * time.Millisecond
 	env.cfg.TxTimeout = 90 * time.Second
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
 	// Delay longer than the read timeout
 	env.mock.Delay = 200 * time.Millisecond
@@ -656,7 +686,7 @@ func TestTimeout_GET_WithinLimit(t *testing.T) {
 
 	env.cfg.RequestTimeout = 2 * time.Second
 	env.cfg.TxTimeout = 90 * time.Second
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
 	rr := env.request(t, "GET", "/api/v1/health", "")
 	if rr.Code != http.StatusOK {
@@ -666,12 +696,13 @@ func TestTimeout_GET_WithinLimit(t *testing.T) {
 
 func TestTimeout_POST_UsesLongerTxTimeout(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	task, err := env.db.CreateTask("Task", "", "0x1")
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	_, err = env.db.CreateEscrow(&storage.Escrow{
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
@@ -684,7 +715,7 @@ func TestTimeout_POST_UsesLongerTxTimeout(t *testing.T) {
 	// Short read timeout but long tx timeout; delay is between them
 	env.cfg.RequestTimeout = 50 * time.Millisecond
 	env.cfg.TxTimeout = 2 * time.Second
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
 	env.mock.Delay = 100 * time.Millisecond
 
@@ -696,12 +727,13 @@ func TestTimeout_POST_UsesLongerTxTimeout(t *testing.T) {
 
 func TestTimeout_POST_TxTimeoutExceeded(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	task, err := env.db.CreateTask("Task", "", "0x1")
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
 	if err != nil {
 		t.Fatalf("setup task: %v", err)
 	}
-	_, err = env.db.CreateEscrow(&storage.Escrow{
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
 		EscrowAddress: "0xEscrowAddr",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
@@ -713,7 +745,7 @@ func TestTimeout_POST_TxTimeoutExceeded(t *testing.T) {
 
 	env.cfg.RequestTimeout = 50 * time.Millisecond
 	env.cfg.TxTimeout = 50 * time.Millisecond
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
 	env.mock.Delay = 200 * time.Millisecond
 
@@ -726,7 +758,7 @@ func TestTimeout_POST_TxTimeoutExceeded(t *testing.T) {
 func TestCreateEscrow_BelowComplexityFloor(t *testing.T) {
 	env := setup(t)
 	env.cfg.ComplexityFloor = "1000000000000000000" // 1 ETH
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
 	body := `{
 		"title": "Test", "description": "x",
@@ -754,7 +786,7 @@ func TestCreateEscrow_BelowComplexityFloor(t *testing.T) {
 func TestCreateEscrow_AtComplexityFloor(t *testing.T) {
 	env := setup(t)
 	env.cfg.ComplexityFloor = "100"
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
 	escrowAddr := common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12")
 	buyerAddr := common.HexToAddress("0x1000000000000000000000000000000000000001")
@@ -781,7 +813,7 @@ func TestCreateEscrow_AtComplexityFloor(t *testing.T) {
 func TestCreateEscrow_EmptyComplexityFloorAllowsAny(t *testing.T) {
 	env := setup(t)
 	env.cfg.ComplexityFloor = ""
-	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg)
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 
 	escrowAddr := common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12")
 	buyerAddr := common.HexToAddress("0x1000000000000000000000000000000000000001")
@@ -808,11 +840,11 @@ func TestCreateEscrow_EmptyComplexityFloorAllowsAny(t *testing.T) {
 // RFQ Bidding Protocol Tests
 
 func futureTimestamp() string {
-	return fmt.Sprintf("%d", time.Now().Unix()+86400)
+	return strconv.FormatInt(time.Now().Unix()+86400, 10)
 }
 
 func farFutureTimestamp() string {
-	return fmt.Sprintf("%d", time.Now().Unix()+172800)
+	return strconv.FormatInt(time.Now().Unix()+172800, 10)
 }
 
 func TestCreateRFQ_Success(t *testing.T) {
@@ -871,8 +903,9 @@ func TestCreateRFQ_InvalidBudget(t *testing.T) {
 
 func TestListRFQs_Success(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	_, err := env.db.CreateRFQ(&storage.RFQ{
+	_, err := env.db.CreateRFQ(ctx, &storage.RFQ{
 		Title: "RFQ 1", Description: "desc", SpecHash: "0x1",
 		Buyer: "0xBuyer", BudgetMin: "100", BudgetMax: "500",
 		Deadline: 1800000000, ReviewPeriodSeconds: 86400,
@@ -900,8 +933,9 @@ func TestListRFQs_Success(t *testing.T) {
 
 func TestListRFQs_FilterByStatus(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	_, err := env.db.CreateRFQ(&storage.RFQ{
+	_, err := env.db.CreateRFQ(ctx, &storage.RFQ{
 		Title: "RFQ 1", Description: "desc", SpecHash: "0x1",
 		Buyer: "0xBuyer", BudgetMin: "100", BudgetMax: "500",
 		Deadline: 1800000000, ReviewPeriodSeconds: 86400,
@@ -912,7 +946,7 @@ func TestListRFQs_FilterByStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup rfq: %v", err)
 	}
-	_, err = env.db.CreateRFQ(&storage.RFQ{
+	_, err = env.db.CreateRFQ(ctx, &storage.RFQ{
 		Title: "RFQ 2", Description: "desc", SpecHash: "0x2",
 		Buyer: "0xBuyer", BudgetMin: "200", BudgetMax: "600",
 		Deadline: 1800000000, ReviewPeriodSeconds: 86400,
@@ -940,8 +974,9 @@ func TestListRFQs_FilterByStatus(t *testing.T) {
 
 func TestGetRFQ_Success(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
 		Title: "RFQ 1", Description: "desc", SpecHash: "0x1",
 		Buyer: "0xBuyer", BudgetMin: "100", BudgetMax: "500",
 		Deadline: 1800000000, ReviewPeriodSeconds: 86400,
@@ -979,8 +1014,9 @@ func TestGetRFQ_NotFound(t *testing.T) {
 
 func TestCancelRFQ_Success(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
 		Title: "RFQ 1", Description: "desc", SpecHash: "0x1",
 		Buyer: "0xBuyer", BudgetMin: "100", BudgetMax: "500",
 		Deadline: 1800000000, ReviewPeriodSeconds: 86400,
@@ -1005,8 +1041,9 @@ func TestCancelRFQ_Success(t *testing.T) {
 
 func TestCancelRFQ_AlreadyClosed(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
 		Title: "RFQ", Description: "desc", SpecHash: "0x1",
 		Buyer: "0xBuyer", BudgetMin: "100", BudgetMax: "500",
 		Deadline: 1800000000, ReviewPeriodSeconds: 86400,
@@ -1026,8 +1063,9 @@ func TestCancelRFQ_AlreadyClosed(t *testing.T) {
 
 func TestPlaceBid_Success(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
 		Title: "RFQ", Description: "desc", SpecHash: "0x1",
 		Buyer:     "0x1000000000000000000000000000000000000001",
 		BudgetMin: "100", BudgetMax: "500",
@@ -1061,8 +1099,9 @@ func TestPlaceBid_Success(t *testing.T) {
 
 func TestPlaceBid_OutOfBudgetRange(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
 		Title: "RFQ", Description: "desc", SpecHash: "0x1",
 		Buyer:     "0x1000000000000000000000000000000000000001",
 		BudgetMin: "100", BudgetMax: "500",
@@ -1089,8 +1128,9 @@ func TestPlaceBid_OutOfBudgetRange(t *testing.T) {
 
 func TestPlaceBid_BidderIsBuyer(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
 		Title: "RFQ", Description: "desc", SpecHash: "0x1",
 		Buyer:     "0x1000000000000000000000000000000000000001",
 		BudgetMin: "100", BudgetMax: "500",
@@ -1117,8 +1157,9 @@ func TestPlaceBid_BidderIsBuyer(t *testing.T) {
 
 func TestListBids_Success(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
 		Title: "RFQ", Description: "desc", SpecHash: "0x1",
 		Buyer: "0xBuyer", BudgetMin: "100", BudgetMax: "500",
 		Deadline: 1800000000, ReviewPeriodSeconds: 86400,
@@ -1130,7 +1171,7 @@ func TestListBids_Success(t *testing.T) {
 		t.Fatalf("setup rfq: %v", err)
 	}
 
-	_, err = env.db.CreateBid(&storage.Bid{
+	_, err = env.db.CreateBid(ctx, &storage.Bid{
 		RFQID: rfq.ID, Bidder: "0xWorker", Amount: "200",
 		Status: "pending", ExpiresAt: 1850000000, MilestonesJSON: "[]",
 	})
@@ -1154,12 +1195,13 @@ func TestListBids_Success(t *testing.T) {
 
 func TestAcceptBid_Success(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
 	escrowAddr := common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12")
 	buyer := common.HexToAddress("0x1000000000000000000000000000000000000001")
 	env.mock.Receipt = chain.MakeEscrowCreatedReceipt(7, escrowAddr, buyer)
 
-	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
 		Title: "Build widget", Description: "Build a high-quality widget", SpecHash: "0x1",
 		Buyer:     "0x1000000000000000000000000000000000000001",
 		BudgetMin: "100", BudgetMax: "500",
@@ -1174,7 +1216,7 @@ func TestAcceptBid_Success(t *testing.T) {
 		t.Fatalf("setup rfq: %v", err)
 	}
 
-	bid, err := env.db.CreateBid(&storage.Bid{
+	bid, err := env.db.CreateBid(ctx, &storage.Bid{
 		RFQID: rfq.ID, Bidder: "0x2000000000000000000000000000000000000002",
 		Amount: "300", Status: "pending", ExpiresAt: time.Now().Unix() + 86400,
 		MilestonesJSON: "[]",
@@ -1198,7 +1240,7 @@ func TestAcceptBid_Success(t *testing.T) {
 	}
 
 	// Verify RFQ is now closed
-	updatedRFQ, err := env.db.GetRFQ(rfq.ID)
+	updatedRFQ, err := env.db.GetRFQ(ctx, rfq.ID)
 	if err != nil {
 		t.Fatalf("get rfq: %v", err)
 	}
@@ -1209,8 +1251,9 @@ func TestAcceptBid_Success(t *testing.T) {
 
 func TestAcceptBid_RFQNotOpen(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
-	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
 		Title: "RFQ", Description: "desc", SpecHash: "0x1",
 		Buyer: "0xBuyer", BudgetMin: "100", BudgetMax: "500",
 		Deadline: 1800000000, ReviewPeriodSeconds: 86400,
@@ -1230,12 +1273,13 @@ func TestAcceptBid_RFQNotOpen(t *testing.T) {
 
 func TestAcceptBid_RejectsOtherBids(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 
 	escrowAddr := common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12")
 	buyer := common.HexToAddress("0x1000000000000000000000000000000000000001")
 	env.mock.Receipt = chain.MakeEscrowCreatedReceipt(7, escrowAddr, buyer)
 
-	rfq, err := env.db.CreateRFQ(&storage.RFQ{
+	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
 		Title: "Build widget", Description: "desc", SpecHash: "0x1",
 		Buyer:     "0x1000000000000000000000000000000000000001",
 		BudgetMin: "100", BudgetMax: "500",
@@ -1250,7 +1294,7 @@ func TestAcceptBid_RejectsOtherBids(t *testing.T) {
 		t.Fatalf("setup rfq: %v", err)
 	}
 
-	bid1, err := env.db.CreateBid(&storage.Bid{
+	bid1, err := env.db.CreateBid(ctx, &storage.Bid{
 		RFQID: rfq.ID, Bidder: "0x2000000000000000000000000000000000000002",
 		Amount: "200", Status: "pending", ExpiresAt: time.Now().Unix() + 86400,
 		MilestonesJSON: "[]",
@@ -1258,7 +1302,7 @@ func TestAcceptBid_RejectsOtherBids(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup bid 1: %v", err)
 	}
-	bid2, err := env.db.CreateBid(&storage.Bid{
+	bid2, err := env.db.CreateBid(ctx, &storage.Bid{
 		RFQID: rfq.ID, Bidder: "0x5000000000000000000000000000000000000005",
 		Amount: "300", Status: "pending", ExpiresAt: time.Now().Unix() + 86400,
 		MilestonesJSON: "[]",
@@ -1274,7 +1318,7 @@ func TestAcceptBid_RejectsOtherBids(t *testing.T) {
 	}
 
 	// Verify bid2 was rejected
-	rejectedBid, err := env.db.GetBid(bid2.ID)
+	rejectedBid, err := env.db.GetBid(ctx, bid2.ID)
 	if err != nil {
 		t.Fatalf("get bid 2: %v", err)
 	}

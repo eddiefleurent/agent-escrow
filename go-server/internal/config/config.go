@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -11,7 +12,8 @@ import (
 )
 
 type Config struct {
-	RPCURL         string
+	RPCURL string
+	// #nosec G117 -- Field name matches env var PRIVATE_KEY; value is loaded at runtime and validated in Validate().
 	PrivateKey     string
 	ChainID        int64
 	FactoryAddress string
@@ -44,6 +46,11 @@ type Config struct {
 	// x402 / AP2 mandate-to-escrow bridge (paper §6: AP2 stake-on-bid + conditional settlement).
 	X402Enabled        bool   // Enable x402 gasless funding path (default false)
 	X402FacilitatorURL string // CDP x402 facilitator endpoint
+
+	// Real-time event subscriptions (paper §4.5: configurable granularity L0-L3).
+	EventsEnabled           bool          // Enable SSE/WebSocket event streaming (default true)
+	EventsBufferSize        int           // Per-subscriber channel buffer size (default 64)
+	EventsHeartbeatInterval time.Duration // Heartbeat interval for L0 liveness (default 30s)
 }
 
 // WebhookMode reports whether CDP webhook mode is enabled (secret is configured).
@@ -77,7 +84,7 @@ func Load() (*Config, error) {
 
 	var corsOrigins []string
 	if raw := os.Getenv("CORS_ORIGINS"); raw != "" {
-		for _, o := range strings.Split(raw, ",") {
+		for o := range strings.SplitSeq(raw, ",") {
 			if trimmed := strings.TrimSpace(o); trimmed != "" {
 				corsOrigins = append(corsOrigins, trimmed)
 			}
@@ -106,7 +113,7 @@ func Load() (*Config, error) {
 	if raw := os.Getenv("LOG_CHUNK_SIZE"); raw != "" {
 		v, err := strconv.ParseUint(raw, 10, 64)
 		if err != nil || v == 0 {
-			return nil, fmt.Errorf("invalid LOG_CHUNK_SIZE: must be a positive integer")
+			return nil, errors.New("invalid LOG_CHUNK_SIZE: must be a positive integer")
 		}
 		logChunkSize = v
 	}
@@ -124,10 +131,10 @@ func Load() (*Config, error) {
 	if complexityFloor != "" {
 		bi := new(big.Int)
 		if _, ok := bi.SetString(complexityFloor, 10); !ok {
-			return nil, fmt.Errorf("invalid COMPLEXITY_FLOOR: must be a non-negative integer")
+			return nil, errors.New("invalid COMPLEXITY_FLOOR: must be a non-negative integer")
 		}
 		if bi.Sign() < 0 {
-			return nil, fmt.Errorf("invalid COMPLEXITY_FLOOR: must be a non-negative integer")
+			return nil, errors.New("invalid COMPLEXITY_FLOOR: must be a non-negative integer")
 		}
 	}
 
@@ -164,26 +171,59 @@ func Load() (*Config, error) {
 		x402FacilitatorURL = "https://api.developer.coinbase.com/v2/x402"
 	}
 
+	eventsEnabled := true
+	if raw := os.Getenv("EVENTS_ENABLED"); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid EVENTS_ENABLED: %w", err)
+		}
+		eventsEnabled = v
+	}
+
+	eventsBufferSize := 64
+	if raw := os.Getenv("EVENTS_BUFFER_SIZE"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v <= 0 {
+			return nil, errors.New("invalid EVENTS_BUFFER_SIZE: must be a positive integer")
+		}
+		eventsBufferSize = v
+	}
+
+	eventsHeartbeatInterval := 30 * time.Second
+	if raw := os.Getenv("EVENTS_HEARTBEAT_INTERVAL"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid EVENTS_HEARTBEAT_INTERVAL: %w", err)
+		}
+		if d <= 0 {
+			return nil, errors.New("invalid EVENTS_HEARTBEAT_INTERVAL: must be positive")
+		}
+		eventsHeartbeatInterval = d
+	}
+
 	cfg := &Config{
-		RPCURL:             os.Getenv("RPC_URL"),
-		PrivateKey:         os.Getenv("PRIVATE_KEY"),
-		ChainID:            chainID,
-		FactoryAddress:     os.Getenv("FACTORY_ADDRESS"),
-		DatabaseURL:        dbURL,
-		Port:               port,
-		MCPTransport:       os.Getenv("MCP_TRANSPORT"),
-		CORSOrigins:        corsOrigins,
-		RequestTimeout:     requestTimeout,
-		TxTimeout:          txTimeout,
-		LogChunkSize:       logChunkSize,
-		StartBlock:         startBlock,
-		ComplexityFloor:    complexityFloor,
-		CDPWebhookSecret:   os.Getenv("CDP_WEBHOOK_SECRET"),
-		A2AEnabled:         a2aEnabled,
-		A2AAgentName:       a2aAgentName,
-		A2AAgentURL:        a2aAgentURL,
-		X402Enabled:        x402Enabled,
-		X402FacilitatorURL: x402FacilitatorURL,
+		RPCURL:                  os.Getenv("RPC_URL"),
+		PrivateKey:              os.Getenv("PRIVATE_KEY"),
+		ChainID:                 chainID,
+		FactoryAddress:          os.Getenv("FACTORY_ADDRESS"),
+		DatabaseURL:             dbURL,
+		Port:                    port,
+		MCPTransport:            os.Getenv("MCP_TRANSPORT"),
+		CORSOrigins:             corsOrigins,
+		RequestTimeout:          requestTimeout,
+		TxTimeout:               txTimeout,
+		LogChunkSize:            logChunkSize,
+		StartBlock:              startBlock,
+		ComplexityFloor:         complexityFloor,
+		CDPWebhookSecret:        os.Getenv("CDP_WEBHOOK_SECRET"),
+		A2AEnabled:              a2aEnabled,
+		A2AAgentName:            a2aAgentName,
+		A2AAgentURL:             a2aAgentURL,
+		X402Enabled:             x402Enabled,
+		X402FacilitatorURL:      x402FacilitatorURL,
+		EventsEnabled:           eventsEnabled,
+		EventsBufferSize:        eventsBufferSize,
+		EventsHeartbeatInterval: eventsHeartbeatInterval,
 	}
 
 	result := cfg.Validate()
@@ -248,6 +288,15 @@ func (c *Config) Validate() ValidationResult {
 		r.Errors = append(r.Errors, "TX_TIMEOUT must be positive")
 	}
 
+	if c.EventsEnabled {
+		if c.EventsBufferSize <= 0 {
+			r.Errors = append(r.Errors, "EVENTS_BUFFER_SIZE must be positive when events are enabled")
+		}
+		if c.EventsHeartbeatInterval <= 0 {
+			r.Errors = append(r.Errors, "EVENTS_HEARTBEAT_INTERVAL must be positive when events are enabled")
+		}
+	}
+
 	return r
 }
 
@@ -269,7 +318,7 @@ func validateHexKey(s string) error {
 // with a 0x prefix.
 func validateEthAddress(s string) error {
 	if !strings.HasPrefix(s, "0x") && !strings.HasPrefix(s, "0X") {
-		return fmt.Errorf("must start with 0x prefix")
+		return errors.New("must start with 0x prefix")
 	}
 	b, err := hex.DecodeString(s[2:])
 	if err != nil {

@@ -23,74 +23,177 @@ title System Architecture
 
 package "AI Agents" as agents #E8EAF6 {
   [MCP Client\n(Claude, GPT, etc.)] as mcp_client #C5CAE9
-  [HTTP Client\n(Dashboard, Scripts)] as http_client #C5CAE9
+  [HTTP Client\n(Scripts, Agents)] as http_client #C5CAE9
+  [SSE/WS Client\n(Event Subscribers)] as stream_client #C5CAE9
 }
 
 package "Go Server" as server #E3F2FD {
-  [MCP Server\n(stdio / streamable-HTTP)] as mcp_server #BBDEFB
-  [HTTP API\n(JSON REST)] as http_api #BBDEFB
-  [Webhook Handler\n(POST /webhooks/cdp)] as webhook #BBDEFB
-  [Event Indexer\n(background poller)] as indexer #BBDEFB
-  [AP2 Handler\n(POST /api/v1/ap2/*)] as ap2 #BBDEFB
+  package "Agent Interfaces" as ifaces #BBDEFB {
+    [MCP Server] as mcp_server #BBDEFB
+    [HTTP / AP2 API] as http_api #BBDEFB
+    [SSE / WebSocket] as stream_handler #BBDEFB
+  }
 
-  package "Shared Logic" as shared #E1F5FE {
+  package "Event Pipeline" as pipeline #BBDEFB {
+    [Indexer + Webhooks\n(on-chain -> off-chain)] as indexer #BBDEFB
+    [Event Bus\n(pub/sub)] as event_bus #BBDEFB
+  }
+
+  package "Data Layer" as data #E1F5FE {
+    [Chain Client\n(go-ethereum)] as chain_client #B3E5FC
+    [Storage\n(SQLite)] as storage #B3E5FC
+  }
+
+  ifaces -down-> data
+  pipeline -down-> data
+  event_bus -right-> stream_handler
+}
+
+package "Third-Party Services" as external #FFF3E0 {
+  [x402 Facilitator\n(payment verification)] as x402 #FFE0B2
+  [Coinbase Webhooks\n(on-chain event push)] as cdp #FFE0B2
+}
+
+package "Base (Ethereum L2)" as chain #E8F5E9 {
+  [TaskEscrowFactory\n+ reputation] as factory #A5D6A7
+  [TaskEscrow\ninstances] as escrow #A5D6A7
+  factory -right-> escrow : deploys
+}
+
+' --- Agent-to-server ---
+mcp_client -down-> mcp_server : stdio / HTTP
+http_client -down-> http_api : JSON
+stream_client -down-> stream_handler : SSE / WebSocket
+
+' --- Server-to-chain ---
+chain_client -down-> chain : JSON-RPC
+
+' --- External integrations ---
+http_api -right-> x402
+cdp -left-> chain : watches
+cdp -up-> indexer : push events
+
+note bottom of storage
+  Off-chain index; chain
+  is source of truth.
+end note
+
+@enduml
+
+@startuml architecture-detail
+skinparam backgroundColor #FFFFFF
+skinparam componentStyle rectangle
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam roundCorner 8
+skinparam ArrowColor #555555
+skinparam ArrowFontSize 10
+
+skinparam package {
+  BorderColor #BBBBBB
+  FontStyle bold
+}
+
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #E0D68A
+  FontSize 10
+}
+
+title Go Server — Internal Detail
+
+package "Go Server" as server #E3F2FD {
+  package "Agent Interfaces" as ifaces #BBDEFB {
+    [MCP Server\n(stdio / streamable-HTTP)] as mcp_server #BBDEFB
+    [HTTP API\n(JSON REST)] as http_api #BBDEFB
+    [AP2 Handler\n(/api/v1/ap2/*)] as ap2 #BBDEFB
+    [SSE/WS Handlers\n(stream.go)] as stream_handler #BBDEFB
+  }
+
+  package "Event Pipeline" as pipeline #BBDEFB {
+    [Event Indexer\n(background poller)] as indexer #BBDEFB
+    [Webhook Handler\n(/webhooks/cdp)] as webhook #BBDEFB
+    [Event Bus\n(in-process pub/sub)] as event_bus #BBDEFB
+  }
+
+  package "Data Layer" as data #E1F5FE {
     [Chain Client\n(go-ethereum)] as chain_client #B3E5FC
     [Storage\n(SQLite)] as storage #B3E5FC
   }
 
   mcp_server -down-> chain_client
   mcp_server -down-> storage
+  mcp_server -right-> event_bus : subscribe_events\n(polling)
   http_api -down-> chain_client
   http_api -down-> storage
   ap2 -down-> chain_client
   ap2 -down-> storage
   webhook -down-> storage
+  webhook -right-> event_bus : publish
   indexer -down-> chain_client
   indexer -down-> storage
+  indexer -right-> event_bus : publish
+  event_bus -right-> stream_handler : filtered\nevents
 }
 
-cloud "x402 Facilitator" as x402 #E8EAF6
-ap2 -down-> x402 : verify + settle\n(when X402_ENABLED)
+package "Third-Party Services" as external #FFF3E0 {
+  [x402 Facilitator\n(payment verification)] as x402 #FFE0B2
+  [Coinbase Webhooks\n(on-chain event push)] as cdp #FFE0B2
+}
 
-package "Base (Ethereum L2)" as chain #E8F5E9 {
+package "Base (Ethereum L2)" as chain_pkg #E8F5E9 {
   [TaskEscrowFactory\n+ reputation storage] as factory #A5D6A7
   [TaskEscrow\ninstances] as escrow #A5D6A7
   factory -right-> escrow : deploys
   escrow -left-> factory : recordOutcome()
 }
 
-cloud "CDP Webhooks" as cdp #FFF3E0
-
-mcp_client -down-> mcp_server : stdio / HTTP
-http_client -down-> http_api : JSON
-
+ap2 -down-> x402 : verify + settle
 chain_client -down-> factory : JSON-RPC
 chain_client -down-> escrow : JSON-RPC
 indexer ..down..> factory : poll events
 indexer ..down..> escrow : poll events
+cdp -left-> chain_pkg : watches
+cdp -up-> webhook : push events
 
-cdp -down-> webhook : HMAC-signed\nPOST
-cdp ..up..> factory : subscribes to\nfactory events
-
-note right of mcp_server
-  Primary agent interface.
-  18 tools covering escrow
-  lifecycle, bidding, AP2,
-  and reputation.
+note bottom of storage
+  Off-chain index; chain
+  is source of truth.
 end note
 
-note right of webhook
-  Receives real-time factory
-  events (EscrowCreated,
-  OutcomeRecorded) from CDP.
-  Optional: enabled by
-  CDP_WEBHOOK_SECRET.
+note left of event_bus
+  Pub/sub for real-time
+  state transitions (§4.5)
 end note
 
-note right of storage
-  Off-chain index of on-chain
-  state. Chain is source of
-  truth for funds.
+@enduml
+
+@startuml happy-path
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam sequenceArrowColor #555555
+skinparam sequenceLifeLineBorderColor #BBBBBB
+skinparam sequenceParticipantBackgroundColor #E3F2FD
+skinparam sequenceParticipantBorderColor #90CAF9
+skinparam sequenceActorBorderColor #90CAF9
+
+title How It Works
+
+actor Buyer
+participant "Escrow\n(smart contract)" as Escrow #E8F5E9
+actor Worker
+
+Buyer -> Escrow : create + fund
+Worker -> Escrow : submit work
+Buyer -> Escrow : approve
+Escrow -> Worker : payment released
+
+note over Buyer, Worker
+  Optional roles: a **verifier** can review and approve/reject
+  before the buyer. An **arbitrator** resolves disputes.
 end note
 
 @enduml

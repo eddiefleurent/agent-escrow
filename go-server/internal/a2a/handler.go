@@ -1,6 +1,7 @@
 package a2a
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -46,19 +47,20 @@ func (h *Handler) HandleJSONRPC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
 	switch req.Method {
 	case "tasks/send":
-		h.handleTasksSend(w, req)
+		h.handleTasksSend(ctx, w, req)
 	case "tasks/get":
-		h.handleTasksGet(w, req)
+		h.handleTasksGet(ctx, w, req)
 	case "tasks/cancel":
-		h.handleTasksCancel(w, req)
+		h.handleTasksCancel(ctx, w, req)
 	default:
 		writeJSONRPCError(w, req.ID, ErrCodeMethodNotFound, "method not found: "+req.Method)
 	}
 }
 
-func (h *Handler) handleTasksSend(w http.ResponseWriter, req JSONRPCRequest) {
+func (h *Handler) handleTasksSend(ctx context.Context, w http.ResponseWriter, req JSONRPCRequest) {
 	paramsBytes, err := json.Marshal(req.Params)
 	if err != nil {
 		writeJSONRPCError(w, req.ID, ErrCodeInvalidParams, "invalid params")
@@ -76,7 +78,7 @@ func (h *Handler) handleTasksSend(w http.ResponseWriter, req JSONRPCRequest) {
 		return
 	}
 
-	task, err := h.svc.HandleTaskSend(params)
+	task, err := h.svc.HandleTaskSend(ctx, params)
 	if err != nil {
 		if errors.Is(err, ErrInvalidParams) {
 			writeJSONRPCError(w, req.ID, ErrCodeInvalidParams, err.Error())
@@ -89,7 +91,7 @@ func (h *Handler) handleTasksSend(w http.ResponseWriter, req JSONRPCRequest) {
 	writeJSONRPCResult(w, req.ID, task)
 }
 
-func (h *Handler) handleTasksGet(w http.ResponseWriter, req JSONRPCRequest) {
+func (h *Handler) handleTasksGet(ctx context.Context, w http.ResponseWriter, req JSONRPCRequest) {
 	paramsBytes, err := json.Marshal(req.Params)
 	if err != nil {
 		writeJSONRPCError(w, req.ID, ErrCodeInvalidParams, "invalid params")
@@ -107,7 +109,7 @@ func (h *Handler) handleTasksGet(w http.ResponseWriter, req JSONRPCRequest) {
 		return
 	}
 
-	task, err := h.svc.GetTaskStatus(params.ID)
+	task, err := h.svc.GetTaskStatus(ctx, params.ID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSONRPCError(w, req.ID, ErrCodeTaskNotFound, err.Error())
@@ -120,7 +122,7 @@ func (h *Handler) handleTasksGet(w http.ResponseWriter, req JSONRPCRequest) {
 	writeJSONRPCResult(w, req.ID, task)
 }
 
-func (h *Handler) handleTasksCancel(w http.ResponseWriter, req JSONRPCRequest) {
+func (h *Handler) handleTasksCancel(ctx context.Context, w http.ResponseWriter, req JSONRPCRequest) {
 	paramsBytes, err := json.Marshal(req.Params)
 	if err != nil {
 		writeJSONRPCError(w, req.ID, ErrCodeInvalidParams, "invalid params")
@@ -138,7 +140,7 @@ func (h *Handler) handleTasksCancel(w http.ResponseWriter, req JSONRPCRequest) {
 		return
 	}
 
-	task, err := h.svc.CancelTask(params.ID)
+	task, err := h.svc.CancelTask(ctx, params.ID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSONRPCError(w, req.ID, ErrCodeTaskNotFound, err.Error())
@@ -151,7 +153,7 @@ func (h *Handler) handleTasksCancel(w http.ResponseWriter, req JSONRPCRequest) {
 	writeJSONRPCResult(w, req.ID, task)
 }
 
-func writeJSONRPCResult(w http.ResponseWriter, id interface{}, result interface{}) {
+func writeJSONRPCResult(w http.ResponseWriter, id any, result any) {
 	resp := JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,
@@ -163,7 +165,7 @@ func writeJSONRPCResult(w http.ResponseWriter, id interface{}, result interface{
 	}
 }
 
-func writeJSONRPCError(w http.ResponseWriter, id interface{}, code int, message string) {
+func writeJSONRPCError(w http.ResponseWriter, id any, code int, message string) {
 	resp := JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,

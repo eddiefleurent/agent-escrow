@@ -1,6 +1,7 @@
 package a2a
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -42,7 +43,7 @@ func setupHandler(t *testing.T) (*Handler, *Service) {
 func TestServeAgentCard(t *testing.T) {
 	h, _ := setupHandler(t)
 
-	req := httptest.NewRequest("GET", "/.well-known/agent.json", nil)
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/agent.json", http.NoBody)
 	rr := httptest.NewRecorder()
 	h.ServeAgentCard(rr, req)
 
@@ -86,7 +87,7 @@ func TestHandleJSONRPC_TasksSend(t *testing.T) {
 		}
 	}`
 
-	req := httptest.NewRequest("POST", "/a2a", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/a2a", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.HandleJSONRPC(rr, req)
@@ -110,8 +111,9 @@ func TestHandleJSONRPC_TasksSend(t *testing.T) {
 
 func TestHandleJSONRPC_TasksGet(t *testing.T) {
 	h, svc := setupHandler(t)
+	ctx := context.Background()
 
-	_, err := svc.HandleTaskSend(TaskSendParams{
+	_, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		ID: "get-test-task",
 		Message: Message{
 			Role:  "user",
@@ -129,7 +131,7 @@ func TestHandleJSONRPC_TasksGet(t *testing.T) {
 		"params": {"id": "get-test-task"}
 	}`
 
-	req := httptest.NewRequest("POST", "/a2a", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/a2a", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.HandleJSONRPC(rr, req)
@@ -146,8 +148,9 @@ func TestHandleJSONRPC_TasksGet(t *testing.T) {
 
 func TestHandleJSONRPC_TasksCancel(t *testing.T) {
 	h, svc := setupHandler(t)
+	ctx := context.Background()
 
-	_, err := svc.HandleTaskSend(TaskSendParams{
+	_, err := svc.HandleTaskSend(ctx, TaskSendParams{
 		ID: "cancel-test-task",
 		Message: Message{
 			Role:  "user",
@@ -165,7 +168,7 @@ func TestHandleJSONRPC_TasksCancel(t *testing.T) {
 		"params": {"id": "cancel-test-task"}
 	}`
 
-	req := httptest.NewRequest("POST", "/a2a", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/a2a", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.HandleJSONRPC(rr, req)
@@ -190,7 +193,7 @@ func TestHandleJSONRPC_MethodNotFound(t *testing.T) {
 		"params": {}
 	}`
 
-	req := httptest.NewRequest("POST", "/a2a", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/a2a", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.HandleJSONRPC(rr, req)
@@ -211,7 +214,7 @@ func TestHandleJSONRPC_MethodNotFound(t *testing.T) {
 func TestHandleJSONRPC_InvalidContentType(t *testing.T) {
 	h, _ := setupHandler(t)
 
-	req := httptest.NewRequest("POST", "/a2a", strings.NewReader(`{}`))
+	req := httptest.NewRequest(http.MethodPost, "/a2a", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "text/plain")
 	rr := httptest.NewRecorder()
 	h.HandleJSONRPC(rr, req)
@@ -232,7 +235,7 @@ func TestHandleJSONRPC_InvalidContentType(t *testing.T) {
 func TestHandleJSONRPC_InvalidJSON(t *testing.T) {
 	h, _ := setupHandler(t)
 
-	req := httptest.NewRequest("POST", "/a2a", strings.NewReader(`not json`))
+	req := httptest.NewRequest(http.MethodPost, "/a2a", strings.NewReader(`not json`))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.HandleJSONRPC(rr, req)
@@ -260,7 +263,7 @@ func TestHandleJSONRPC_InvalidVersion(t *testing.T) {
 		"params": {}
 	}`
 
-	req := httptest.NewRequest("POST", "/a2a", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/a2a", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.HandleJSONRPC(rr, req)
@@ -293,7 +296,7 @@ func TestHandleJSONRPC_TasksSendEmptyMessage(t *testing.T) {
 		}
 	}`
 
-	req := httptest.NewRequest("POST", "/a2a", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/a2a", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.HandleJSONRPC(rr, req)
@@ -321,7 +324,7 @@ func TestHandleJSONRPC_TasksGetNotFound(t *testing.T) {
 		"params": {"id": "nonexistent"}
 	}`
 
-	req := httptest.NewRequest("POST", "/a2a", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/a2a", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.HandleJSONRPC(rr, req)
@@ -349,7 +352,7 @@ func TestHandleJSONRPC_TasksGetMissingID(t *testing.T) {
 		"params": {}
 	}`
 
-	req := httptest.NewRequest("POST", "/a2a", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/a2a", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.HandleJSONRPC(rr, req)
@@ -386,7 +389,7 @@ func TestHandleJSONRPC_WithVerificationPolicy(t *testing.T) {
 		}
 	}`
 
-	req := httptest.NewRequest("POST", "/a2a", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/a2a", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.HandleJSONRPC(rr, req)
@@ -419,7 +422,7 @@ func TestHandleJSONRPC_TasksSendInvalidVerificationPolicy(t *testing.T) {
 		}
 	}`
 
-	req := httptest.NewRequest("POST", "/a2a", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/a2a", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.HandleJSONRPC(rr, req)
