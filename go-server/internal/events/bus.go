@@ -125,6 +125,23 @@ func (b *EventBus) RecentEvents(escrow string, maxLevel GranularityLevel, sinceI
 	var result []Event
 	pastSince := sinceID == ""
 
+	// If sinceID was provided, check whether it still exists in the buffer.
+	// If it has been evicted, treat it as a stale cursor and return from the oldest.
+	if !pastSince {
+		found := false
+		for _, ev := range b.recentEvents {
+			if ev.ID == sinceID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			slog.Debug("event bus: sinceID evicted from buffer, returning from oldest",
+				"since_id", sinceID)
+			pastSince = true
+		}
+	}
+
 	for _, ev := range b.recentEvents {
 		if !pastSince {
 			if ev.ID == sinceID {

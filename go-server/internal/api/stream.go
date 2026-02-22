@@ -12,12 +12,21 @@ import (
 
 // StreamHandler serves SSE and WebSocket event streams.
 type StreamHandler struct {
-	bus *events.EventBus
+	bus            *events.EventBus
+	allowedOrigins map[string]bool
 }
 
 // NewStreamHandler creates a handler wired to the given event bus.
-func NewStreamHandler(bus *events.EventBus) *StreamHandler {
-	return &StreamHandler{bus: bus}
+// allowedOrigins controls which origins are permitted for WebSocket upgrades;
+// an empty slice means all origins are allowed.
+func NewStreamHandler(bus *events.EventBus, allowedOrigins ...[]string) *StreamHandler {
+	allowed := make(map[string]bool)
+	if len(allowedOrigins) > 0 {
+		for _, o := range allowedOrigins[0] {
+			allowed[o] = true
+		}
+	}
+	return &StreamHandler{bus: bus, allowedOrigins: allowed}
 }
 
 // HandleSSE serves Server-Sent Events for a specific escrow or all escrows.
@@ -72,14 +81,18 @@ type wsSubscribeMsg struct {
 	Granularity string `json:"granularity"`
 }
 
-var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
-
 // HandleWebSocket upgrades the connection and streams events based on a
 // subscription message from the client.
 func (sh *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			if len(sh.allowedOrigins) == 0 {
+				return true
+			}
+			return sh.allowedOrigins[r.Header.Get("Origin")]
+		},
+	}
+	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Error("ws: upgrade failed", "error", err)
 		return

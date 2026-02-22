@@ -42,7 +42,15 @@ func TestSSEHandler_ReceivesEvents(t *testing.T) {
 		})
 	}()
 
-	scanner := bufio.NewScanner(resp.Body)
+	lineCh := make(chan string, 64)
+	go func() {
+		defer close(lineCh)
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			lineCh <- scanner.Text()
+		}
+	}()
+
 	var gotEvent, gotID, gotData bool
 	deadline := time.After(3 * time.Second)
 
@@ -50,33 +58,26 @@ func TestSSEHandler_ReceivesEvents(t *testing.T) {
 		select {
 		case <-deadline:
 			t.Fatal("timed out waiting for SSE event")
-		default:
-		}
-
-		if !scanner.Scan() {
-			break
-		}
-		line := scanner.Text()
-
-		if strings.HasPrefix(line, "event: ") {
-			if strings.TrimPrefix(line, "event: ") == events.EventEscrowFunded {
+		case line, ok := <-lineCh:
+			if !ok {
+				goto done
+			}
+			if strings.HasPrefix(line, "event: ") && strings.TrimPrefix(line, "event: ") == events.EventEscrowFunded {
 				gotEvent = true
 			}
-		}
-		if strings.HasPrefix(line, "id: ") {
-			if strings.TrimPrefix(line, "id: ") == "test-sse-1" {
+			if strings.HasPrefix(line, "id: ") && strings.TrimPrefix(line, "id: ") == "test-sse-1" {
 				gotID = true
 			}
-		}
-		if strings.HasPrefix(line, "data: ") {
-			gotData = true
-		}
-
-		if gotEvent && gotID && gotData {
-			break
+			if strings.HasPrefix(line, "data: ") {
+				gotData = true
+			}
+			if gotEvent && gotID && gotData {
+				goto done
+			}
 		}
 	}
 
+done:
 	if !gotEvent {
 		t.Error("did not receive event line")
 	}
@@ -123,7 +124,15 @@ func TestSSEHandler_EscrowFiltered(t *testing.T) {
 		})
 	}()
 
-	scanner := bufio.NewScanner(resp.Body)
+	lineCh := make(chan string, 64)
+	go func() {
+		defer close(lineCh)
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			lineCh <- scanner.Text()
+		}
+	}()
+
 	deadline := time.After(3 * time.Second)
 	var receivedID string
 
@@ -134,15 +143,14 @@ func TestSSEHandler_EscrowFiltered(t *testing.T) {
 				t.Fatal("timed out waiting for filtered SSE event")
 			}
 			goto check
-		default:
-		}
-		if !scanner.Scan() {
-			break
-		}
-		line := scanner.Text()
-		if strings.HasPrefix(line, "id: ") {
-			receivedID = strings.TrimPrefix(line, "id: ")
-			break
+		case line, ok := <-lineCh:
+			if !ok {
+				goto check
+			}
+			if strings.HasPrefix(line, "id: ") {
+				receivedID = strings.TrimPrefix(line, "id: ")
+				goto check
+			}
 		}
 	}
 

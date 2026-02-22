@@ -319,7 +319,11 @@ func (idx *Indexer) ProcessFactoryLog(lg types.Log) error {
 		handlerErr = idx.handleOutcomeRecorded(lg)
 	}
 	if handlerErr == nil {
-		idx.publishEvent(event.Name, lg.Address.Hex(), lg)
+		escrowAddr := ""
+		if event.Name == "EscrowCreated" && len(lg.Topics) >= 3 {
+			escrowAddr = common.BytesToAddress(lg.Topics[2].Bytes()).Hex()
+		}
+		idx.publishEvent(event.Name, escrowAddr, lg)
 	}
 	return handlerErr
 }

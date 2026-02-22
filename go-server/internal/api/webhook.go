@@ -201,13 +201,9 @@ func (wh *WebhookHandler) publishWebhookEvent(data cdpWebhookEventData, blockNum
 	if !ok {
 		return
 	}
-	escrow := data.Escrow
-	if escrow == "" {
-		escrow = data.ContractAddress
-	}
 	wh.bus.Publish(events.Event{
 		Name:   streamName,
-		Escrow: escrow,
+		Escrow: data.Escrow,
 		Level:  events.L1,
 		Block:  uint64(blockNum),
 		ID:     fmt.Sprintf("%s-%s", data.TransactionHash, data.LogIndex.String()),

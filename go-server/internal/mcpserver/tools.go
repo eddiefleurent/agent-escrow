@@ -146,10 +146,10 @@ type fundViaMandateArgs struct {
 }
 
 type subscribeEventsArgs struct {
-	EscrowID    string `json:"escrow_id,omitempty" jsonschema:"Filter to specific escrow address; omit for all"`
-	SinceID     string `json:"since_id,omitempty" jsonschema:"Return events after this event ID (cursor-based pagination)"`
-	Granularity string `json:"granularity,omitempty" jsonschema:"Granularity level: L0, L1, L2, L3 (default L1)"`
-	Limit       string `json:"limit,omitempty" jsonschema:"Max events to return (default 50, max 200)"`
+	EscrowAddress string `json:"escrow_address,omitempty" jsonschema:"Filter to specific escrow address; omit for all"`
+	SinceID       string `json:"since_id,omitempty" jsonschema:"Return events after this event ID (cursor-based pagination)"`
+	Granularity   string `json:"granularity,omitempty" jsonschema:"Granularity level: L0, L1, L2, L3 (default L1)"`
+	Limit         string `json:"limit,omitempty" jsonschema:"Max events to return (default 50, max 200)"`
 }
 
 type emptyArgs struct{}
@@ -1099,7 +1099,7 @@ func (s *Server) handleSubscribeEvents(ctx context.Context, req *mcp.CallToolReq
 		limit = v
 	}
 
-	recent := s.bus.RecentEvents(args.EscrowID, granularity, args.SinceID, limit)
+	recent := s.bus.RecentEvents(args.EscrowAddress, granularity, args.SinceID, limit)
 
 	type eventOut struct {
 		Event     string         `json:"event"`

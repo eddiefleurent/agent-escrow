@@ -74,7 +74,7 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 
 	// Real-time event subscriptions (paper §4.5: configurable granularity L0-L3)
 	if bus != nil && cfg.EventsEnabled {
-		sh := NewStreamHandler(bus)
+		sh := NewStreamHandler(bus, cfg.CORSOrigins)
 		mux.HandleFunc("GET /api/v1/events", sh.HandleSSE)
 		mux.HandleFunc("GET /api/v1/escrows/{id}/events", sh.HandleSSE)
 		mux.HandleFunc("GET /api/v1/events/ws", sh.HandleWebSocket)

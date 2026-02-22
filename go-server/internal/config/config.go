@@ -286,6 +286,15 @@ func (c *Config) Validate() ValidationResult {
 		r.Errors = append(r.Errors, "TX_TIMEOUT must be positive")
 	}
 
+	if c.EventsEnabled {
+		if c.EventsBufferSize <= 0 {
+			r.Errors = append(r.Errors, "EVENTS_BUFFER_SIZE must be positive when events are enabled")
+		}
+		if c.EventsHeartbeatInterval <= 0 {
+			r.Errors = append(r.Errors, "EVENTS_HEARTBEAT_INTERVAL must be positive when events are enabled")
+		}
+	}
+
 	return r
 }
 

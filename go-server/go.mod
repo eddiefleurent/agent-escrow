@@ -5,7 +5,7 @@ go 1.26
 require (
 	github.com/ethereum/go-ethereum v1.17.0
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/websocket v1.4.2
+	github.com/gorilla/websocket v1.5.3
 	github.com/modelcontextprotocol/go-sdk v1.3.1
 	modernc.org/sqlite v1.46.1
 )
