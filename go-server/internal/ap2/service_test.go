@@ -173,8 +173,11 @@ func TestFundViaMandate_HappyPath(t *testing.T) {
 func TestFundViaMandate_BuyerMismatch(t *testing.T) {
 	svc, db, _ := setupTestService(t)
 
-	task, _ := db.CreateTask("Test Task", "Description", "0xhash")
-	escrow, _ := db.CreateEscrow(&storage.Escrow{
+	task, err := db.CreateTask("Test Task", "Description", "0xhash")
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	escrow, err := db.CreateEscrow(&storage.Escrow{
 		TaskID:                   task.ID,
 		ChainID:                  84532,
 		FactoryAddress:           "0x1234567890123456789012345678901234567890",
@@ -194,6 +197,9 @@ func TestFundViaMandate_BuyerMismatch(t *testing.T) {
 		MilestoneCount:           1,
 		ActiveWorker:             "0x2222222222222222222222222222222222222222",
 	})
+	if err != nil {
+		t.Fatalf("create escrow: %v", err)
+	}
 
 	env := MandateEnvelope{
 		Type:          MandateTypePayment,
@@ -212,7 +218,7 @@ func TestFundViaMandate_BuyerMismatch(t *testing.T) {
 		},
 	}
 
-	_, err := svc.FundViaMandate(context.Background(), escrow.ID, env)
+	_, err = svc.FundViaMandate(context.Background(), escrow.ID, env)
 	if err == nil {
 		t.Fatal("expected error for buyer mismatch")
 	}
@@ -221,8 +227,11 @@ func TestFundViaMandate_BuyerMismatch(t *testing.T) {
 func TestFundViaMandate_InsufficientValue(t *testing.T) {
 	svc, db, _ := setupTestService(t)
 
-	task, _ := db.CreateTask("Test Task", "Description", "0xhash")
-	escrow, _ := db.CreateEscrow(&storage.Escrow{
+	task, err := db.CreateTask("Test Task", "Description", "0xhash")
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	escrow, err := db.CreateEscrow(&storage.Escrow{
 		TaskID:                   task.ID,
 		ChainID:                  84532,
 		FactoryAddress:           "0x1234567890123456789012345678901234567890",
@@ -242,6 +251,9 @@ func TestFundViaMandate_InsufficientValue(t *testing.T) {
 		MilestoneCount:           1,
 		ActiveWorker:             "0x2222222222222222222222222222222222222222",
 	})
+	if err != nil {
+		t.Fatalf("create escrow: %v", err)
+	}
 
 	env := MandateEnvelope{
 		Type:          MandateTypePayment,
@@ -260,7 +272,7 @@ func TestFundViaMandate_InsufficientValue(t *testing.T) {
 		},
 	}
 
-	_, err := svc.FundViaMandate(context.Background(), escrow.ID, env)
+	_, err = svc.FundViaMandate(context.Background(), escrow.ID, env)
 	if err == nil {
 		t.Fatal("expected error for insufficient value")
 	}

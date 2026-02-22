@@ -132,6 +132,7 @@ type fundViaMandateArgs struct {
 	MandateType     string `json:"mandate_type" jsonschema:"AP2 mandate type: intent, cart, or payment"`
 	SignerAddress   string `json:"signer_address" jsonschema:"Mandate signer address (must be escrow buyer)"`
 	Signature       string `json:"signature" jsonschema:"Cryptographic signature of the mandate"`
+	Payload         string `json:"payload,omitempty" jsonschema:"JSON string of mandate payload (budget, items, etc.)"`
 	AuthFrom        string `json:"auth_from" jsonschema:"EIP-3009 authorization from address"`
 	AuthValue       string `json:"auth_value" jsonschema:"EIP-3009 authorization value"`
 	AuthValidAfter  string `json:"auth_valid_after" jsonschema:"EIP-3009 validAfter timestamp"`
@@ -1007,9 +1008,16 @@ func (s *Server) handleFundViaMandate(ctx context.Context, req *mcp.CallToolRequ
 		return textResult(fmt.Sprintf("invalid auth_v: %v", err)), nil, nil
 	}
 
+	payload := map[string]any{}
+	if args.Payload != "" {
+		if err := json.Unmarshal([]byte(args.Payload), &payload); err != nil {
+			return textResult(fmt.Sprintf("invalid payload JSON: %v", err)), nil, nil
+		}
+	}
+
 	env := ap2.MandateEnvelope{
 		Type:          ap2.MandateType(args.MandateType),
-		Payload:       map[string]any{},
+		Payload:       payload,
 		Signature:     args.Signature,
 		SignerAddress: args.SignerAddress,
 		Authorization: ap2.EIP3009Authorization{

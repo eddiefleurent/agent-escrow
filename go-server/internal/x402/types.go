@@ -15,7 +15,7 @@ type PaymentPayload struct {
 	ChainID     int64  `json:"chainId"`
 }
 
-// VerifyRequest is sent to POST /v2/x402/verify.
+// VerifyRequest is sent to POST /verify on the x402 facilitator.
 type VerifyRequest struct {
 	Payment PaymentPayload `json:"payment"`
 }
@@ -26,7 +26,7 @@ type VerifyResponse struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// SettleRequest is sent to POST /v2/x402/settle.
+// SettleRequest is sent to POST /settle on the x402 facilitator.
 type SettleRequest struct {
 	Payment PaymentPayload `json:"payment"`
 }

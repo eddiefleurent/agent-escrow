@@ -1139,9 +1139,10 @@ func (d *DB) GetAP2Mandate(ctx context.Context, id string) (*AP2Mandate, error) 
 	}
 	if createdAt.Valid {
 		t, err := parseSQLiteTime(createdAt.String)
-		if err == nil {
-			m.CreatedAt = t
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
 		}
+		m.CreatedAt = t
 	}
 
 	return &m, nil

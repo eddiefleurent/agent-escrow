@@ -65,6 +65,46 @@ func (s *Service) ValidateMandate(_ context.Context, env MandateEnvelope) error 
 		return fmt.Errorf("invalid authorization.value: %s", env.Authorization.Value)
 	}
 
+	// Validate ValidAfter / ValidBefore are parseable non-negative integers
+	// and that ValidBefore >= ValidAfter. These are used by FundViaMandate
+	// for the EIP-3009 transferWithAuthorization call.
+	validAfter := new(big.Int)
+	if env.Authorization.ValidAfter != "" {
+		va, ok := validAfter.SetString(env.Authorization.ValidAfter, 10)
+		if !ok || va.Sign() < 0 {
+			return fmt.Errorf("invalid authorization.valid_after: %s", env.Authorization.ValidAfter)
+		}
+	}
+	if env.Authorization.ValidBefore == "" {
+		return fmt.Errorf("authorization.valid_before is required")
+	}
+	validBefore, ok := new(big.Int).SetString(env.Authorization.ValidBefore, 10)
+	if !ok || validBefore.Sign() < 0 {
+		return fmt.Errorf("invalid authorization.valid_before: %s", env.Authorization.ValidBefore)
+	}
+	if validBefore.Cmp(validAfter) < 0 {
+		return fmt.Errorf("authorization.valid_before (%s) must be >= valid_after (%s)", validBefore, validAfter)
+	}
+
+	if env.Authorization.Nonce == "" {
+		return fmt.Errorf("authorization.nonce is required")
+	}
+	if _, err := hexToBytes32(env.Authorization.Nonce); err != nil {
+		return fmt.Errorf("invalid authorization.nonce: %w", err)
+	}
+	if env.Authorization.R == "" {
+		return fmt.Errorf("authorization.r is required")
+	}
+	if _, err := hexToBytes32(env.Authorization.R); err != nil {
+		return fmt.Errorf("invalid authorization.r: %w", err)
+	}
+	if env.Authorization.S == "" {
+		return fmt.Errorf("authorization.s is required")
+	}
+	if _, err := hexToBytes32(env.Authorization.S); err != nil {
+		return fmt.Errorf("invalid authorization.s: %w", err)
+	}
+
 	return nil
 }
 
@@ -152,12 +192,12 @@ func (s *Service) FundViaMandate(ctx context.Context, escrowID int64, env Mandat
 	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
 	from := common.HexToAddress(env.Authorization.From)
 
-	validAfter, ok := new(big.Int).SetString(env.Authorization.ValidAfter, 10)
-	if !ok {
+	validAfter, _ := new(big.Int).SetString(env.Authorization.ValidAfter, 10)
+	if validAfter == nil {
 		validAfter = big.NewInt(0)
 	}
-	validBefore, ok := new(big.Int).SetString(env.Authorization.ValidBefore, 10)
-	if !ok {
+	validBefore, _ := new(big.Int).SetString(env.Authorization.ValidBefore, 10)
+	if validBefore == nil {
 		return nil, fmt.Errorf("invalid authorization.valid_before")
 	}
 
