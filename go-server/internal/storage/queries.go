@@ -710,7 +710,7 @@ func (d *DB) UpdateBidStatus(id int64, status string) error {
 
 func acceptBidOn(q dbExecer, bidID, escrowID int64) error {
 	res, err := q.Exec(
-		`UPDATE bids SET status = 'accepted', escrow_id = ?, updated_at = datetime('now') WHERE id = ?`,
+		`UPDATE bids SET status = 'accepted', escrow_id = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending'`,
 		escrowID, bidID,
 	)
 	if err != nil {
@@ -721,7 +721,7 @@ func acceptBidOn(q dbExecer, bidID, escrowID int64) error {
 		return fmt.Errorf("AcceptBid rows affected: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("AcceptBid id=%d: %w", bidID, sql.ErrNoRows)
+		return fmt.Errorf("AcceptBid bid=%d: not pending or does not exist: %w", bidID, sql.ErrNoRows)
 	}
 	return nil
 }
