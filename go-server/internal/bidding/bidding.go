@@ -142,7 +142,8 @@ func (s *Service) CreateRFQ(p CreateRFQParams) (*storage.RFQ, error) {
 	if p.WorkerStake == "" {
 		p.WorkerStake = "0"
 	}
-	if _, ok := new(big.Int).SetString(p.WorkerStake, 10); !ok {
+	ws, ok := new(big.Int).SetString(p.WorkerStake, 10)
+	if !ok || ws.Sign() < 0 {
 		return nil, fmt.Errorf("invalid worker_stake")
 	}
 
@@ -228,8 +229,12 @@ func (s *Service) PlaceBid(p PlaceBidParams) (*storage.Bid, error) {
 	if p.ReputationBond == "" {
 		p.ReputationBond = "0"
 	}
-	if _, ok := new(big.Int).SetString(p.ReputationBond, 10); !ok {
+	rb, ok := new(big.Int).SetString(p.ReputationBond, 10)
+	if !ok {
 		return nil, fmt.Errorf("invalid reputation_bond")
+	}
+	if rb.Sign() < 0 {
+		return nil, fmt.Errorf("invalid reputation_bond: negative value")
 	}
 
 	if p.MilestonesJSON == "" {
@@ -262,6 +267,13 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 	if rfq.Status != "open" {
 		return nil, fmt.Errorf("rfq is not open (status: %s)", rfq.Status)
 	}
+	now := time.Now().Unix()
+	if rfq.ExpiresAt <= now {
+		return nil, fmt.Errorf("rfq has expired")
+	}
+	if rfq.Deadline <= now {
+		return nil, fmt.Errorf("rfq deadline has passed")
+	}
 	if p.Caller == "" || p.Caller != rfq.Buyer {
 		return nil, fmt.Errorf("only the rfq buyer can accept bids")
 	}
@@ -277,7 +289,6 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 		return nil, fmt.Errorf("bid is not pending (status: %s)", bid.Status)
 	}
 
-	now := time.Now().Unix()
 	if bid.ExpiresAt <= now {
 		return nil, fmt.Errorf("bid has expired")
 	}
@@ -340,17 +351,23 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 		return nil, fmt.Errorf("receipt error: %w", err)
 	}
 
-	task, err := s.DB.CreateTask(rfq.Title, rfq.Description, specHash.Hex())
-	if err != nil {
-		return nil, fmt.Errorf("db CreateTask: %w", err)
-	}
-
 	milestoneCount := 1
 	if len(milestones) > 0 {
 		milestoneCount = len(milestones)
 	}
 
-	escrow, err := s.DB.CreateEscrow(&storage.Escrow{
+	dbTx, err := s.DB.BeginTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin db tx: %w", err)
+	}
+
+	task, err := s.DB.CreateTaskTx(dbTx, rfq.Title, rfq.Description, specHash.Hex())
+	if err != nil {
+		dbTx.Rollback()
+		return nil, fmt.Errorf("db CreateTask: %w", err)
+	}
+
+	escrow, err := s.DB.CreateEscrowTx(dbTx, &storage.Escrow{
 		TaskID:                   task.ID,
 		ChainID:                  s.Cfg.ChainID,
 		FactoryAddress:           s.Cfg.FactoryAddress,
@@ -373,11 +390,12 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 		ActiveWorker:             bid.Bidder,
 	})
 	if err != nil {
+		dbTx.Rollback()
 		return nil, fmt.Errorf("db CreateEscrow: %w", err)
 	}
 
 	for i, m := range milestones {
-		_, err := s.DB.CreateMilestone(&storage.MilestoneRecord{
+		_, err := s.DB.CreateMilestoneTx(dbTx, &storage.MilestoneRecord{
 			EscrowID:           escrow.ID,
 			MilestoneIndex:     i,
 			Amount:             m.Amount.String(),
@@ -385,18 +403,26 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 			Status:             "pending",
 		})
 		if err != nil {
+			dbTx.Rollback()
 			return nil, fmt.Errorf("db CreateMilestone[%d]: %w", i, err)
 		}
 	}
 
-	if err := s.DB.AcceptBid(bid.ID, escrow.ID); err != nil {
+	if err := s.DB.AcceptBidTx(dbTx, bid.ID, escrow.ID); err != nil {
+		dbTx.Rollback()
 		return nil, fmt.Errorf("db AcceptBid: %w", err)
 	}
-	if err := s.DB.UpdateRFQStatus(rfq.ID, "closed"); err != nil {
+	if err := s.DB.UpdateRFQStatusTx(dbTx, rfq.ID, "closed"); err != nil {
+		dbTx.Rollback()
 		return nil, fmt.Errorf("db UpdateRFQStatus: %w", err)
 	}
-	if err := s.DB.RejectPendingBids(rfq.ID, bid.ID); err != nil {
+	if err := s.DB.RejectPendingBidsTx(dbTx, rfq.ID, bid.ID); err != nil {
+		dbTx.Rollback()
 		return nil, fmt.Errorf("db RejectPendingBids: %w", err)
+	}
+
+	if err := dbTx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit db tx: %w", err)
 	}
 
 	if err := s.Idx.RunOnce(ctx); err != nil {

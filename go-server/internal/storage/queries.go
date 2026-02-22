@@ -6,10 +6,17 @@ import (
 	"time"
 )
 
+// dbExecer is satisfied by both *sql.DB and *sql.Tx, allowing shared query helpers
+// to run inside or outside a transaction.
+type dbExecer interface {
+	Exec(string, ...any) (sql.Result, error)
+	QueryRow(string, ...any) *sql.Row
+}
+
 // Task queries
 
-func (d *DB) CreateTask(title, description, specHash string) (*Task, error) {
-	res, err := d.db.Exec(
+func createTaskOn(q dbExecer, title, description, specHash string) (*Task, error) {
+	res, err := q.Exec(
 		`INSERT INTO tasks (title, description, spec_hash) VALUES (?, ?, ?)`,
 		title, description, specHash,
 	)
@@ -20,7 +27,27 @@ func (d *DB) CreateTask(title, description, specHash string) (*Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("last insert id: %w", err)
 	}
-	return d.GetTask(id)
+	t := &Task{}
+	var createdAt string
+	err = q.QueryRow(
+		`SELECT id, title, description, spec_hash, created_at FROM tasks WHERE id = ?`, id,
+	).Scan(&t.ID, &t.Title, &t.Description, &t.SpecHash, &createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("get task: %w", err)
+	}
+	t.CreatedAt, err = parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse created_at in CreateTask: %w", err)
+	}
+	return t, nil
+}
+
+func (d *DB) CreateTask(title, description, specHash string) (*Task, error) {
+	return createTaskOn(d.db, title, description, specHash)
+}
+
+func (d *DB) CreateTaskTx(tx *sql.Tx, title, description, specHash string) (*Task, error) {
+	return createTaskOn(tx, title, description, specHash)
 }
 
 func (d *DB) GetTask(id int64) (*Task, error) {
@@ -41,7 +68,7 @@ func (d *DB) GetTask(id int64) (*Task, error) {
 
 // Escrow queries
 
-func (d *DB) CreateEscrow(e *Escrow) (*Escrow, error) {
+func createEscrowOn(q dbExecer, e *Escrow) (*Escrow, error) {
 	msCount := e.MilestoneCount
 	if msCount == 0 {
 		msCount = 1
@@ -50,7 +77,7 @@ func (d *DB) CreateEscrow(e *Escrow) (*Escrow, error) {
 	if activeWorker == "" {
 		activeWorker = e.Worker
 	}
-	res, err := d.db.Exec(
+	res, err := q.Exec(
 		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.TaskID, e.ChainID, e.FactoryAddress, e.EscrowAddress, e.EscrowID,
@@ -66,7 +93,20 @@ func (d *DB) CreateEscrow(e *Escrow) (*Escrow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("last insert id: %w", err)
 	}
-	return d.GetEscrow(id)
+	row := q.QueryRow(`SELECT `+escrowColumns+` FROM escrows WHERE id = ?`, id)
+	out, err := scanEscrow(row)
+	if err != nil {
+		return nil, fmt.Errorf("get escrow: %w", err)
+	}
+	return out, nil
+}
+
+func (d *DB) CreateEscrow(e *Escrow) (*Escrow, error) {
+	return createEscrowOn(d.db, e)
+}
+
+func (d *DB) CreateEscrowTx(tx *sql.Tx, e *Escrow) (*Escrow, error) {
+	return createEscrowOn(tx, e)
 }
 
 const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, created_at, updated_at`
@@ -527,8 +567,8 @@ func (d *DB) ListRFQs(status, buyer string) ([]*RFQ, error) {
 	return rfqs, rows.Err()
 }
 
-func (d *DB) UpdateRFQStatus(id int64, status string) error {
-	res, err := d.db.Exec(
+func updateRFQStatusOn(q dbExecer, id int64, status string) error {
+	res, err := q.Exec(
 		`UPDATE rfqs SET status = ?, updated_at = datetime('now') WHERE id = ?`,
 		status, id,
 	)
@@ -543,6 +583,14 @@ func (d *DB) UpdateRFQStatus(id int64, status string) error {
 		return fmt.Errorf("UpdateRFQStatus id=%d: %w", id, sql.ErrNoRows)
 	}
 	return nil
+}
+
+func (d *DB) UpdateRFQStatus(id int64, status string) error {
+	return updateRFQStatusOn(d.db, id, status)
+}
+
+func (d *DB) UpdateRFQStatusTx(tx *sql.Tx, id int64, status string) error {
+	return updateRFQStatusOn(tx, id, status)
 }
 
 // Bid queries
@@ -660,8 +708,8 @@ func (d *DB) UpdateBidStatus(id int64, status string) error {
 	return nil
 }
 
-func (d *DB) AcceptBid(bidID, escrowID int64) error {
-	res, err := d.db.Exec(
+func acceptBidOn(q dbExecer, bidID, escrowID int64) error {
+	res, err := q.Exec(
 		`UPDATE bids SET status = 'accepted', escrow_id = ?, updated_at = datetime('now') WHERE id = ?`,
 		escrowID, bidID,
 	)
@@ -678,9 +726,17 @@ func (d *DB) AcceptBid(bidID, escrowID int64) error {
 	return nil
 }
 
+func (d *DB) AcceptBid(bidID, escrowID int64) error {
+	return acceptBidOn(d.db, bidID, escrowID)
+}
+
+func (d *DB) AcceptBidTx(tx *sql.Tx, bidID, escrowID int64) error {
+	return acceptBidOn(tx, bidID, escrowID)
+}
+
 // RejectPendingBids sets all pending bids on an RFQ to rejected, except the given bid.
-func (d *DB) RejectPendingBids(rfqID, exceptBidID int64) error {
-	_, err := d.db.Exec(
+func rejectPendingBidsOn(q dbExecer, rfqID, exceptBidID int64) error {
+	_, err := q.Exec(
 		`UPDATE bids SET status = 'rejected', updated_at = datetime('now')
 		 WHERE rfq_id = ? AND id != ? AND status = 'pending'`,
 		rfqID, exceptBidID,
@@ -689,6 +745,14 @@ func (d *DB) RejectPendingBids(rfqID, exceptBidID int64) error {
 		return fmt.Errorf("RejectPendingBids: %w", err)
 	}
 	return nil
+}
+
+func (d *DB) RejectPendingBids(rfqID, exceptBidID int64) error {
+	return rejectPendingBidsOn(d.db, rfqID, exceptBidID)
+}
+
+func (d *DB) RejectPendingBidsTx(tx *sql.Tx, rfqID, exceptBidID int64) error {
+	return rejectPendingBidsOn(tx, rfqID, exceptBidID)
 }
 
 // Chain log queries
@@ -735,8 +799,8 @@ func (d *DB) SetCursor(chainID int64, cursorKey string, blockNumber int64) error
 
 // Milestone queries
 
-func (d *DB) CreateMilestone(m *MilestoneRecord) (*MilestoneRecord, error) {
-	res, err := d.db.Exec(
+func createMilestoneOn(q dbExecer, m *MilestoneRecord) (*MilestoneRecord, error) {
+	res, err := q.Exec(
 		`INSERT INTO milestones (escrow_id, milestone_index, amount, submission_deadline, status)
 		 VALUES (?, ?, ?, ?, ?)`,
 		m.EscrowID, m.MilestoneIndex, m.Amount, m.SubmissionDeadline, m.Status,
@@ -748,7 +812,20 @@ func (d *DB) CreateMilestone(m *MilestoneRecord) (*MilestoneRecord, error) {
 	if err != nil {
 		return nil, fmt.Errorf("last insert id: %w", err)
 	}
-	return d.GetMilestone(id)
+	row := q.QueryRow(`SELECT `+milestoneColumns+` FROM milestones WHERE id = ?`, id)
+	out, err := scanMilestone(row)
+	if err != nil {
+		return nil, fmt.Errorf("get milestone: %w", err)
+	}
+	return out, nil
+}
+
+func (d *DB) CreateMilestone(m *MilestoneRecord) (*MilestoneRecord, error) {
+	return createMilestoneOn(d.db, m)
+}
+
+func (d *DB) CreateMilestoneTx(tx *sql.Tx, m *MilestoneRecord) (*MilestoneRecord, error) {
+	return createMilestoneOn(tx, m)
 }
 
 const milestoneColumns = `id, escrow_id, milestone_index, amount, submission_deadline, status,

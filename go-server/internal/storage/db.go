@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	_ "embed"
 	"fmt"
@@ -138,6 +139,10 @@ func Open(dsn string) (*DB, error) {
 
 func (d *DB) Close() error {
 	return d.db.Close()
+}
+
+func (d *DB) BeginTx(ctx context.Context) (*sql.Tx, error) {
+	return d.db.BeginTx(ctx, nil)
 }
 
 func (d *DB) SqlDB() *sql.DB {
