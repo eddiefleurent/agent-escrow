@@ -21,6 +21,10 @@ This project implements the ["Intelligent AI Delegation"](https://arxiv.org/abs/
 - **Agent interface**: MCP tools (16 tools) are the primary integration surface
 - **Target chain**: Base Sepolia (chain ID 84532)
 
+## Public Project -- Production Blockchain
+
+This is a **public, open-source project** that will be deployed live on Base (Ethereum L2) handling real funds. It is **not** an internal tool. Treat all code with production-grade rigor: security, correctness, and auditability matter. Do not cut corners on error handling, input validation, or access control.
+
 ## Constraints
 
 - Keep Solidity pinned to `0.8.34` unless explicitly requested.
@@ -41,11 +45,13 @@ make go-abi         # copy ABI artifacts from Foundry output to go-server/abi/
 make go-build       # compile Go binary (runs go-abi first)
 make go-test        # go test ./...
 make go-vet         # go vet ./...
+make go-lint        # golangci-lint run ./... (static analysis)
+make go-lint-fix    # golangci-lint run --fix ./... (auto-fix what it can)
 make go-run         # build and run the server locally
 make fmt            # forge fmt + gofmt -w (both Solidity and Go)
 make fmt-check      # lint formatting without writing (used in CI)
 make sizes          # show contract sizes (check proximity to 24KB limit)
-make test-all       # fmt-check + all Solidity + Go vet + Go tests
+make test-all       # fmt-check + all Solidity + Go vet + Go lint + Go tests
 ```
 
 Always run `make test-all` before finishing changes. If tests fail, fix the root cause, rerun, and report what changed.
@@ -60,6 +66,7 @@ Always run `make test-all` before finishing changes. If tests fail, fix the root
 
 ## Go Standards
 
+- **Linting**: `golangci-lint` v2 with config in `go-server/.golangci.yml`. Always run `make go-lint-fix` first (auto-fixes formatting, imports, and simple issues), then `make go-lint` to check for remaining issues. Lint is included in `make test-all`.
 - `gofmt` and standard Go conventions.
 - No ORM -- `database/sql` with hand-written queries.
 - ABI files embedded via `//go:embed` from `go-server/abi/`.
