@@ -790,6 +790,17 @@ func (d *DB) ChainLogExists(ctx context.Context, txHash string, logIndex int) (b
 	return count > 0, err
 }
 
+// EventExistsForContract returns true if a chain log with the given event name
+// exists for the specified contract address.
+func (d *DB) EventExistsForContract(ctx context.Context, contractAddress, eventName string) (bool, error) {
+	var count int
+	err := d.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM chain_logs WHERE contract_address = ? AND event_name = ?`,
+		contractAddress, eventName,
+	).Scan(&count)
+	return count > 0, err
+}
+
 // Cursor queries
 
 func (d *DB) GetCursor(ctx context.Context, chainID int64, cursorKey string) (int64, error) {

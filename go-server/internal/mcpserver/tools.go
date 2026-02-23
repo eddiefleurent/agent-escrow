@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/a2a"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/ap2"
@@ -23,57 +24,57 @@ import (
 )
 
 type milestoneArg struct {
-	Amount             string `json:"amount" jsonschema:"Milestone amount in wei or smallest unit"`
-	SubmissionDeadline string `json:"submission_deadline" jsonschema:"Unix timestamp for milestone submission deadline"`
+	Amount             FlexibleString `json:"amount" jsonschema:"Milestone amount in wei or smallest unit"`
+	SubmissionDeadline FlexibleString `json:"submission_deadline" jsonschema:"Unix timestamp for milestone submission deadline"`
 }
 
 type createEscrowArgs struct {
 	Title                    string         `json:"title" jsonschema:"Task title"`
 	Description              string         `json:"description" jsonschema:"Task description"`
-	Buyer                    string         `json:"buyer" jsonschema:"Buyer address"`
-	Worker                   string         `json:"worker" jsonschema:"Worker address"`
-	Verifier                 string         `json:"verifier" jsonschema:"Verifier address"`
-	Arbitrator               string         `json:"arbitrator" jsonschema:"Arbitrator address"`
-	Amount                   string         `json:"amount" jsonschema:"Total amount in wei (ETH) or smallest unit (ERC20)"`
-	WorkerStake              string         `json:"worker_stake,omitempty" jsonschema:"Worker anti-Sybil stake in wei or smallest unit; omit or 0 for no stake"`
-	SubmissionDeadline       string         `json:"submission_deadline" jsonschema:"Unix timestamp for submission deadline"`
-	ReviewPeriodSeconds      string         `json:"review_period_seconds" jsonschema:"Review period in seconds"`
-	DisputePeriodSeconds     string         `json:"dispute_period_seconds" jsonschema:"Dispute period in seconds"`
-	ArbitratorTimeoutSeconds string         `json:"arbitrator_timeout_seconds" jsonschema:"Arbitrator timeout in seconds"`
-	Token                    string         `json:"token,omitempty" jsonschema:"ERC20 token address; omit or use 0x0000000000000000000000000000000000000000 for ETH"`
+	Buyer                    string         `json:"buyer" jsonschema:"Buyer address (0x...)"`
+	Worker                   string         `json:"worker" jsonschema:"Worker address (0x...). Must be distinct from buyer, verifier, and arbitrator."`
+	Verifier                 string         `json:"verifier" jsonschema:"Verifier address (0x...). Must be distinct from buyer, worker, and arbitrator."`
+	Arbitrator               string         `json:"arbitrator" jsonschema:"Arbitrator address (0x...). Must be distinct from buyer, worker, and verifier."`
+	Amount                   FlexibleString `json:"amount" jsonschema:"Total amount in wei (ETH) or smallest unit (ERC20)"`
+	WorkerStake              FlexibleString `json:"worker_stake,omitempty" jsonschema:"Worker anti-Sybil stake in wei or smallest unit; omit or 0 for no stake"`
+	SubmissionDeadline       FlexibleString `json:"submission_deadline" jsonschema:"Unix timestamp for submission deadline"`
+	ReviewPeriodSeconds      FlexibleString `json:"review_period_seconds" jsonschema:"Review period in seconds"`
+	DisputePeriodSeconds     FlexibleString `json:"dispute_period_seconds" jsonschema:"Dispute period in seconds"`
+	ArbitratorTimeoutSeconds FlexibleString `json:"arbitrator_timeout_seconds" jsonschema:"Arbitrator timeout in seconds"`
+	Token                    string         `json:"token,omitempty" jsonschema:"Omit or leave empty for ETH. ERC20 token address otherwise."`
 	Milestones               []milestoneArg `json:"milestones,omitempty" jsonschema:"Optional array of milestones; omit for single-milestone (V1) escrow"`
 	BackupWorker             string         `json:"backup_worker,omitempty" jsonschema:"Optional backup worker address; omit for no backup agent"`
-	BackupDeadlineExtension  string         `json:"backup_deadline_extension,omitempty" jsonschema:"Seconds to extend deadline when backup activates; omit or 0 for no extension"`
+	BackupDeadlineExtension  FlexibleString `json:"backup_deadline_extension,omitempty" jsonschema:"Seconds to extend deadline when backup activates; omit or 0 for no extension"`
 }
 
 type escrowIDArgs struct {
-	EscrowID string `json:"escrow_id" jsonschema:"Database escrow ID"`
+	EscrowID FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID (from create_escrow response), or on-chain escrow address (0x...)"`
 }
 
 type submitArgs struct {
-	EscrowID       string `json:"escrow_id" jsonschema:"Database escrow ID"`
-	SubmissionURI  string `json:"submission_uri" jsonschema:"URI of submission"`
-	MilestoneIndex string `json:"milestone_index,omitempty" jsonschema:"Milestone index (required for multi-milestone escrows)"`
+	EscrowID       FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID or on-chain escrow address (0x...)"`
+	SubmissionURI  string         `json:"submission_uri" jsonschema:"URI of submission"`
+	MilestoneIndex FlexibleString `json:"milestone_index,omitempty" jsonschema:"Milestone index (required for multi-milestone escrows)"`
 }
 
 type approveArgs struct {
-	EscrowID       string `json:"escrow_id" jsonschema:"Database escrow ID"`
-	Role           string `json:"role" jsonschema:"Role: buyer or verifier"`
-	MilestoneIndex string `json:"milestone_index,omitempty" jsonschema:"Milestone index (required for multi-milestone escrows)"`
+	EscrowID       FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID or on-chain escrow address (0x...)"`
+	Role           string         `json:"role" jsonschema:"Role: buyer or verifier"`
+	MilestoneIndex FlexibleString `json:"milestone_index,omitempty" jsonschema:"Milestone index (required for multi-milestone escrows)"`
 }
 
 type disputeArgs struct {
-	EscrowID       string `json:"escrow_id" jsonschema:"Database escrow ID"`
-	Role           string `json:"role" jsonschema:"Role: buyer, verifier, or worker"`
-	ReasonURI      string `json:"reason_uri" jsonschema:"URI describing reason"`
-	MilestoneIndex string `json:"milestone_index,omitempty" jsonschema:"Milestone index (required for multi-milestone escrows)"`
+	EscrowID       FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID or on-chain escrow address (0x...)"`
+	Role           string         `json:"role" jsonschema:"Role: buyer, verifier, or worker"`
+	ReasonURI      string         `json:"reason_uri" jsonschema:"URI describing reason"`
+	MilestoneIndex FlexibleString `json:"milestone_index,omitempty" jsonschema:"Milestone index (required for multi-milestone escrows)"`
 }
 
 type resolveArgs struct {
-	EscrowID       string `json:"escrow_id" jsonschema:"Database escrow ID"`
-	WorkerAwardBps string `json:"worker_award_bps" jsonschema:"Worker award basis points 0-10000"`
-	ResolutionURI  string `json:"resolution_uri" jsonschema:"URI of resolution"`
-	MilestoneIndex string `json:"milestone_index,omitempty" jsonschema:"Milestone index (required for multi-milestone escrows)"`
+	EscrowID       FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID or on-chain escrow address (0x...)"`
+	WorkerAwardBps FlexibleString `json:"worker_award_bps" jsonschema:"Worker award basis points 0-10000"`
+	ResolutionURI  string         `json:"resolution_uri" jsonschema:"URI of resolution"`
+	MilestoneIndex FlexibleString `json:"milestone_index,omitempty" jsonschema:"Milestone index (required for multi-milestone escrows)"`
 }
 
 type listArgs struct {
@@ -83,45 +84,45 @@ type listArgs struct {
 }
 
 type createRFQArgs struct {
-	Title                    string `json:"title" jsonschema:"Task title for the RFQ"`
-	Description              string `json:"description" jsonschema:"Task description for the RFQ"`
-	Buyer                    string `json:"buyer" jsonschema:"Buyer address broadcasting the RFQ"`
-	Token                    string `json:"token,omitempty" jsonschema:"ERC20 token address; omit or 0x0 for ETH"`
-	BudgetMin                string `json:"budget_min" jsonschema:"Minimum budget in wei or smallest unit"`
-	BudgetMax                string `json:"budget_max" jsonschema:"Maximum budget in wei or smallest unit"`
-	Deadline                 string `json:"deadline" jsonschema:"Unix timestamp: latest acceptable submission deadline"`
-	ReviewPeriodSeconds      string `json:"review_period_seconds" jsonschema:"Review period in seconds"`
-	DisputePeriodSeconds     string `json:"dispute_period_seconds" jsonschema:"Dispute period in seconds"`
-	ArbitratorTimeoutSeconds string `json:"arbitrator_timeout_seconds" jsonschema:"Arbitrator timeout in seconds"`
-	Verifier                 string `json:"verifier,omitempty" jsonschema:"Designated verifier address"`
-	Arbitrator               string `json:"arbitrator,omitempty" jsonschema:"Designated arbitrator address"`
-	WorkerStake              string `json:"worker_stake,omitempty" jsonschema:"Required worker stake; omit or 0 for none"`
-	MilestonesJSON           string `json:"milestones_json,omitempty" jsonschema:"JSON array of milestone specs"`
-	RequirementsJSON         string `json:"requirements_json,omitempty" jsonschema:"JSON: capability requirements, tags, constraints"`
-	ExpiresAt                string `json:"expires_at" jsonschema:"Unix timestamp: RFQ expiry"`
+	Title                    string         `json:"title" jsonschema:"Task title for the RFQ"`
+	Description              string         `json:"description" jsonschema:"Task description for the RFQ"`
+	Buyer                    string         `json:"buyer" jsonschema:"Buyer address broadcasting the RFQ"`
+	Token                    string         `json:"token,omitempty" jsonschema:"Omit or leave empty for ETH. ERC20 token address otherwise."`
+	BudgetMin                FlexibleString `json:"budget_min" jsonschema:"Minimum budget in wei or smallest unit"`
+	BudgetMax                FlexibleString `json:"budget_max" jsonschema:"Maximum budget in wei or smallest unit"`
+	Deadline                 FlexibleString `json:"deadline" jsonschema:"Unix timestamp: task submission deadline (when work must be done by)"`
+	ReviewPeriodSeconds      FlexibleString `json:"review_period_seconds" jsonschema:"Review period in seconds"`
+	DisputePeriodSeconds     FlexibleString `json:"dispute_period_seconds" jsonschema:"Dispute period in seconds"`
+	ArbitratorTimeoutSeconds FlexibleString `json:"arbitrator_timeout_seconds" jsonschema:"Arbitrator timeout in seconds"`
+	Verifier                 string         `json:"verifier,omitempty" jsonschema:"Designated verifier address; omit if unknown at RFQ time"`
+	Arbitrator               string         `json:"arbitrator,omitempty" jsonschema:"Designated arbitrator address; omit if unknown at RFQ time"`
+	WorkerStake              FlexibleString `json:"worker_stake,omitempty" jsonschema:"Required worker stake; omit or 0 for none"`
+	MilestonesJSON           string         `json:"milestones_json,omitempty" jsonschema:"JSON array of milestone specs"`
+	RequirementsJSON         string         `json:"requirements_json,omitempty" jsonschema:"JSON: capability requirements, tags, constraints"`
+	ExpiresAt                FlexibleString `json:"expires_at" jsonschema:"Unix timestamp: when the RFQ stops accepting bids (distinct from deadline which is when work must be done)"`
 }
 
 type placeBidArgs struct {
-	RFQID             string `json:"rfq_id" jsonschema:"RFQ ID to bid on"`
-	Bidder            string `json:"bidder" jsonschema:"Worker agent address placing the bid"`
-	Amount            string `json:"amount" jsonschema:"Proposed total price in wei or smallest unit"`
-	EstimatedDuration string `json:"estimated_duration,omitempty" jsonschema:"Estimated seconds to complete"`
-	ReputationBond    string `json:"reputation_bond,omitempty" jsonschema:"Offered reputation bond in wei"`
-	MilestonesJSON    string `json:"milestones_json,omitempty" jsonschema:"JSON: proposed milestone breakdown"`
-	Message           string `json:"message,omitempty" jsonschema:"Free-form bid justification"`
-	ExpiresAt         string `json:"expires_at" jsonschema:"Unix timestamp: bid expiry"`
-	StakeMandateID    string `json:"stake_mandate_id,omitempty" jsonschema:"Optional AP2 mandate ID for Sybil-resistant stake-on-bid (paper §6)"`
+	RFQID             FlexibleString `json:"rfq_id" jsonschema:"RFQ ID to bid on"`
+	Bidder            string         `json:"bidder" jsonschema:"Worker agent address placing the bid"`
+	Amount            FlexibleString `json:"amount" jsonschema:"Proposed total price in wei or smallest unit"`
+	EstimatedDuration FlexibleString `json:"estimated_duration,omitempty" jsonschema:"Estimated seconds to complete"`
+	ReputationBond    FlexibleString `json:"reputation_bond,omitempty" jsonschema:"Offered reputation bond in wei"`
+	MilestonesJSON    string         `json:"milestones_json,omitempty" jsonschema:"JSON: proposed milestone breakdown"`
+	Message           string         `json:"message,omitempty" jsonschema:"Free-form bid justification"`
+	ExpiresAt         FlexibleString `json:"expires_at" jsonschema:"Unix timestamp: bid expiry (must not exceed RFQ expires_at)"`
+	StakeMandateID    string         `json:"stake_mandate_id,omitempty" jsonschema:"Optional AP2 mandate ID for Sybil-resistant stake-on-bid (paper §6)"`
 }
 
 type listBidsArgs struct {
-	RFQID  string `json:"rfq_id,omitempty" jsonschema:"List bids for this RFQ ID"`
-	Bidder string `json:"bidder,omitempty" jsonschema:"List bids by this bidder address"`
+	RFQID  FlexibleString `json:"rfq_id,omitempty" jsonschema:"List bids for this RFQ ID"`
+	Bidder string         `json:"bidder,omitempty" jsonschema:"List bids by this bidder address"`
 }
 
 type acceptBidArgs struct {
-	RFQID  string `json:"rfq_id" jsonschema:"RFQ ID"`
-	BidID  string `json:"bid_id" jsonschema:"Bid ID to accept"`
-	Caller string `json:"caller,omitempty" jsonschema:"Caller address (must match RFQ buyer)"`
+	RFQID  FlexibleString `json:"rfq_id" jsonschema:"RFQ ID"`
+	BidID  FlexibleString `json:"bid_id" jsonschema:"Bid ID to accept. WARNING: accepting a bid immediately deploys an escrow on-chain (irreversible). The next step is to fund the new escrow."`
+	Caller string         `json:"caller,omitempty" jsonschema:"Caller address (must match RFQ buyer)"`
 }
 
 type reputationArgs struct {
@@ -130,27 +131,27 @@ type reputationArgs struct {
 }
 
 type fundViaMandateArgs struct {
-	EscrowID        string `json:"escrow_id" jsonschema:"Database escrow ID to fund"`
-	MandateType     string `json:"mandate_type" jsonschema:"AP2 mandate type: intent, cart, or payment"`
-	SignerAddress   string `json:"signer_address" jsonschema:"Mandate signer address (must be escrow buyer)"`
-	Signature       string `json:"signature" jsonschema:"Cryptographic signature of the mandate"`
-	Payload         string `json:"payload,omitempty" jsonschema:"JSON string of mandate payload (budget, items, etc.)"`
-	AuthFrom        string `json:"auth_from" jsonschema:"EIP-3009 authorization from address"`
-	AuthTo          string `json:"auth_to" jsonschema:"EIP-3009 authorization to address (must match escrow address)"`
-	AuthValue       string `json:"auth_value" jsonschema:"EIP-3009 authorization value"`
-	AuthValidAfter  string `json:"auth_valid_after" jsonschema:"EIP-3009 validAfter timestamp"`
-	AuthValidBefore string `json:"auth_valid_before" jsonschema:"EIP-3009 validBefore timestamp"`
-	AuthNonce       string `json:"auth_nonce" jsonschema:"EIP-3009 nonce (hex)"`
-	AuthV           string `json:"auth_v" jsonschema:"EIP-3009 signature v"`
-	AuthR           string `json:"auth_r" jsonschema:"EIP-3009 signature r (hex)"`
-	AuthS           string `json:"auth_s" jsonschema:"EIP-3009 signature s (hex)"`
+	EscrowID        FlexibleString `json:"escrow_id" jsonschema:"Database escrow ID to fund"`
+	MandateType     string         `json:"mandate_type" jsonschema:"AP2 mandate type: intent, cart, or payment"`
+	SignerAddress   string         `json:"signer_address" jsonschema:"Mandate signer address (must be escrow buyer)"`
+	Signature       string         `json:"signature" jsonschema:"Cryptographic signature of the mandate"`
+	Payload         string         `json:"payload,omitempty" jsonschema:"JSON string of mandate payload (budget, items, etc.)"`
+	AuthFrom        string         `json:"auth_from" jsonschema:"EIP-3009 authorization from address"`
+	AuthTo          string         `json:"auth_to" jsonschema:"EIP-3009 authorization to address (must match escrow address)"`
+	AuthValue       string         `json:"auth_value" jsonschema:"EIP-3009 authorization value"`
+	AuthValidAfter  string         `json:"auth_valid_after" jsonschema:"EIP-3009 validAfter timestamp"`
+	AuthValidBefore string         `json:"auth_valid_before" jsonschema:"EIP-3009 validBefore timestamp"`
+	AuthNonce       string         `json:"auth_nonce" jsonschema:"EIP-3009 nonce (hex)"`
+	AuthV           FlexibleString `json:"auth_v" jsonschema:"EIP-3009 signature v"`
+	AuthR           string         `json:"auth_r" jsonschema:"EIP-3009 signature r (hex)"`
+	AuthS           string         `json:"auth_s" jsonschema:"EIP-3009 signature s (hex)"`
 }
 
 type subscribeEventsArgs struct {
-	EscrowAddress string `json:"escrow_address,omitempty" jsonschema:"Filter to specific escrow address; omit for all"`
-	SinceID       string `json:"since_id,omitempty" jsonschema:"Return events after this event ID (cursor-based pagination)"`
-	Granularity   string `json:"granularity,omitempty" jsonschema:"Granularity level: L0, L1, L2, L3 (default L1)"`
-	Limit         string `json:"limit,omitempty" jsonschema:"Max events to return (default 50, max 200)"`
+	EscrowAddress string         `json:"escrow_address,omitempty" jsonschema:"Filter to specific escrow address; omit for all"`
+	SinceID       string         `json:"since_id,omitempty" jsonschema:"Return events after this event ID (cursor-based pagination)"`
+	Granularity   string         `json:"granularity,omitempty" jsonschema:"Granularity level: L0 (heartbeats + all events), L1 (all events, no heartbeats, default), L2 (state changes only), L3 (terminal events only)"`
+	Limit         FlexibleString `json:"limit,omitempty" jsonschema:"Max events to return (default 50, max 200)"`
 }
 
 type emptyArgs struct{}
@@ -160,59 +161,59 @@ type addressArgs struct {
 }
 
 type emergencyResolveArgs struct {
-	EscrowID       string `json:"escrow_id" jsonschema:"Database escrow ID"`
-	WorkerAwardBps string `json:"worker_award_bps" jsonschema:"Worker award basis points 0-10000"`
+	EscrowID       FlexibleString `json:"escrow_id" jsonschema:"Database escrow ID"`
+	WorkerAwardBps FlexibleString `json:"worker_award_bps" jsonschema:"Worker award basis points 0-10000"`
 }
 
 type emergencyListArgs struct {
-	Limit  string `json:"limit,omitempty" jsonschema:"Max results to return (default 50)"`
-	Offset string `json:"offset,omitempty" jsonschema:"Offset for pagination (default 0)"`
+	Limit  FlexibleString `json:"limit,omitempty" jsonschema:"Max results to return (default 50)"`
+	Offset FlexibleString `json:"offset,omitempty" jsonschema:"Offset for pagination (default 0)"`
 }
 
 func (s *Server) registerTools(srv *mcp.Server) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "create_escrow",
-		Description: "Create a new task and escrow contract via the factory",
+		Description: "Create a new task escrow contract via the factory. All amounts (amount, worker_stake, milestone amounts) are in wei for ETH or the smallest token unit for ERC20. All four roles (buyer, worker, verifier, arbitrator) must be distinct addresses. Returns escrow_id for subsequent calls.",
 	}, s.handleCreateEscrow)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "fund_escrow",
-		Description: "Fund an escrow as the buyer",
+		Description: "Fund an escrow as the buyer. For ETH escrows, sends the exact amount on-chain. For ERC20 escrows, automatically approves and transfers the token. After funding, call deposit_stake if the escrow has worker_stake > 0.",
 	}, s.handleFundEscrow)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "deposit_stake",
-		Description: "Deposit worker anti-Sybil stake into escrow (required before submission when workerStake > 0)",
+		Description: "Deposit the worker anti-Sybil stake into an escrow. Required before submit_work when worker_stake > 0 (check stake_required in get_escrow response). Handles both ETH and ERC20 stakes automatically.",
 	}, s.handleDepositStake)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "submit_work",
-		Description: "Submit work as the worker",
+		Description: "Submit work as the worker. Provide a URI pointing to the deliverable. For multi-milestone escrows, milestone_index is required (0-based). NOTE: The server must be running with the worker's private key (PRIVATE_KEY must match the escrow's worker address).",
 	}, s.handleSubmitWork)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "approve_work",
-		Description: "Approve work as buyer or verifier",
+		Description: "Approve submitted work as buyer or verifier. For multi-milestone escrows, milestone_index is required (0-based). Both buyer and verifier must approve for dual-approval escrows.",
 	}, s.handleApproveWork)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "dispute_work",
-		Description: "Dispute or reject submitted work",
+		Description: "Dispute or reject submitted work. role='buyer': open a dispute on submitted work. role='verifier': reject the submission. role='worker': escalate buyer/verifier silence to the arbitrator — use this when the buyer or verifier has not responded within the review period (calls escalateSilence on-chain). For multi-milestone escrows, milestone_index is required.",
 	}, s.handleDisputeWork)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "resolve_dispute",
-		Description: "Resolve a dispute as the arbitrator",
+		Description: "Resolve a dispute as the arbitrator. worker_award_bps is 0–10000 (basis points): 10000 = full payment to worker, 0 = full refund to buyer.",
 	}, s.handleResolveDispute)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "get_escrow",
-		Description: "Get escrow details",
+		Description: "Get escrow details including current status, participants, amounts, and deadlines. Accepts either a numeric database ID or an on-chain escrow address (0x...). Returns stake_required=true when worker_stake > 0 and the escrow is funded but stake not yet deposited — the worker must call deposit_stake before submit_work. Note: status updates are eventually consistent (~15s indexer lag after on-chain transactions).",
 	}, s.handleGetEscrow)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_escrows",
-		Description: "List escrows, optionally filtered by role and status",
+		Description: "List escrows, optionally filtered by role (buyer/worker/verifier/arbitrator), address, and status.",
 	}, s.handleListEscrows)
 
 	mcp.AddTool(srv, &mcp.Tool{
@@ -232,7 +233,7 @@ func (s *Server) registerTools(srv *mcp.Server) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "create_rfq",
-		Description: "Broadcast a Task_RFQ (Request for Quote) describing a task for agents to bid on. Paper §6.1: Task_RFQ broadcast.",
+		Description: "Broadcast a Task_RFQ (Request for Quote) describing a task for agents to bid on. 'deadline' is the task submission deadline (when work must be done). 'expires_at' is when the RFQ stops accepting bids. Verifier/arbitrator can be omitted if unknown at RFQ time. Paper §6.1: Task_RFQ broadcast.",
 	}, s.handleCreateRFQ)
 
 	mcp.AddTool(srv, &mcp.Tool{
@@ -242,12 +243,12 @@ func (s *Server) registerTools(srv *mcp.Server) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_bids",
-		Description: "List bids for an RFQ (buyer view) or by bidder address (worker view).",
+		Description: "List bids for an RFQ (buyer view) or by bidder address (worker view). Each bid includes an expired field indicating whether its expiry has passed.",
 	}, s.handleListBids)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "accept_bid",
-		Description: "Accept a bid on an RFQ; triggers on-chain escrow creation with bid parameters. Paper §6.1: bid acceptance formalizes into escrow.",
+		Description: "Accept a bid on an RFQ. WARNING: This immediately deploys a new escrow contract on-chain (irreversible, costs gas). Returns escrow_id — the next step is to call fund_escrow. Paper §6.1: bid acceptance formalizes into escrow.",
 	}, s.handleAcceptBid)
 
 	mcp.AddTool(srv, &mcp.Tool{
@@ -307,34 +308,48 @@ func (s *Server) registerTools(srv *mcp.Server) {
 	}
 }
 
+// resolveEscrowID accepts either a numeric DB ID ("3") or an on-chain address ("0x...")
+// and returns the storage.Escrow. This eliminates the friction of callers needing to
+// know which identifier type to use.
+func (s *Server) resolveEscrowID(ctx context.Context, raw string) (*storage.Escrow, error) {
+	if common.IsHexAddress(raw) {
+		return s.db.GetEscrowByAddress(ctx, common.HexToAddress(raw).Hex())
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("escrow_id must be a numeric database ID or an on-chain address (0x...); got %q", raw)
+	}
+	return s.db.GetEscrow(ctx, id)
+}
+
 func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolRequest, args createEscrowArgs) (*mcp.CallToolResult, any, error) {
-	amount, ok := new(big.Int).SetString(args.Amount, 10)
+	amount, ok := new(big.Int).SetString(args.Amount.String(), 10)
 	if !ok {
 		return textResult("invalid amount"), nil, nil
 	}
 	if err := chain.ValidateComplexityFloor(amount, s.cfg.ComplexityFloor); err != nil {
 		return textResult(err.Error()), nil, nil
 	}
-	deadline, err := strconv.ParseUint(args.SubmissionDeadline, 10, 64)
+	deadline, err := strconv.ParseUint(args.SubmissionDeadline.String(), 10, 64)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid submission_deadline: %v", err)), nil, nil
 	}
-	review, err := strconv.ParseUint(args.ReviewPeriodSeconds, 10, 64)
+	review, err := strconv.ParseUint(args.ReviewPeriodSeconds.String(), 10, 64)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid review_period_seconds: %v", err)), nil, nil
 	}
-	dispute, err := strconv.ParseUint(args.DisputePeriodSeconds, 10, 64)
+	dispute, err := strconv.ParseUint(args.DisputePeriodSeconds.String(), 10, 64)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid dispute_period_seconds: %v", err)), nil, nil
 	}
-	arbTimeout, err := strconv.ParseUint(args.ArbitratorTimeoutSeconds, 10, 64)
+	arbTimeout, err := strconv.ParseUint(args.ArbitratorTimeoutSeconds.String(), 10, 64)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid arbitrator_timeout_seconds: %v", err)), nil, nil
 	}
 
 	workerStakeVal := big.NewInt(0)
-	if args.WorkerStake != "" {
-		ws, ok := new(big.Int).SetString(args.WorkerStake, 10)
+	if args.WorkerStake.String() != "" {
+		ws, ok := new(big.Int).SetString(args.WorkerStake.String(), 10)
 		if !ok {
 			return textResult("invalid worker_stake"), nil, nil
 		}
@@ -353,11 +368,11 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 
 	var milestones []chain.MilestoneParam
 	for _, m := range args.Milestones {
-		msAmount, ok := new(big.Int).SetString(m.Amount, 10)
+		msAmount, ok := new(big.Int).SetString(m.Amount.String(), 10)
 		if !ok {
-			return textResult("invalid milestone amount: " + m.Amount), nil, nil
+			return textResult("invalid milestone amount: " + m.Amount.String()), nil, nil
 		}
-		msDeadline, err := strconv.ParseUint(m.SubmissionDeadline, 10, 64)
+		msDeadline, err := strconv.ParseUint(m.SubmissionDeadline.String(), 10, 64)
 		if err != nil {
 			return textResult(fmt.Sprintf("invalid milestone submission_deadline: %v", err)), nil, nil
 		}
@@ -375,8 +390,8 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		backupWorkerAddr = common.HexToAddress(args.BackupWorker)
 	}
 	var backupDeadlineExt uint64
-	if args.BackupDeadlineExtension != "" {
-		bde, err := strconv.ParseUint(args.BackupDeadlineExtension, 10, 64)
+	if args.BackupDeadlineExtension.String() != "" {
+		bde, err := strconv.ParseUint(args.BackupDeadlineExtension.String(), 10, 64)
 		if err != nil {
 			return textResult(fmt.Sprintf("invalid backup_deadline_extension: %v", err)), nil, nil
 		}
@@ -437,7 +452,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 
 	tx, err := s.chain.CreateEscrow(ctx, factory, params)
 	if err != nil {
-		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+		return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 	}
 
 	result, err := chain.WaitMinedAndParseEscrow(ctx, s.chain, tx.Hash())
@@ -465,7 +480,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		Worker:                   args.Worker,
 		Verifier:                 args.Verifier,
 		Arbitrator:               args.Arbitrator,
-		Amount:                   args.Amount,
+		Amount:                   args.Amount.String(),
 		WorkerStake:              workerStakeVal.String(),
 		Token:                    tokenAddr.Hex(),
 		Status:                   "created",
@@ -505,15 +520,12 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		"escrow_address":  result.EscrowAddress.Hex(),
 		"chain_escrow_id": result.EscrowID,
 		"milestone_count": milestoneCount,
+		"next_steps":      "Call fund_escrow with escrow_id to fund this escrow. After funding, the worker can submit_work.",
 	})
 }
 
 func (s *Server) handleFundEscrow(ctx context.Context, req *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
-	if err != nil {
-		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
-	}
-	escrow, err := s.db.GetEscrow(ctx, escrowID)
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
@@ -524,13 +536,13 @@ func (s *Server) handleFundEscrow(ctx context.Context, req *mcp.CallToolRequest,
 	}
 
 	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
-	isERC20 := escrow.Token != "" && escrow.Token != "0x0000000000000000000000000000000000000000"
+	isERC20 := isERC20Token(escrow.Token)
 
 	if isERC20 {
 		tokenAddr := common.HexToAddress(escrow.Token)
 		approveTx, err := s.chain.ApproveERC20(ctx, tokenAddr, escrowAddr, amount)
 		if err != nil {
-			return textResult(fmt.Sprintf("approve error: %v", err)), nil, nil
+			return textResult(fmt.Sprintf("approve error: %v", chain.HumanizeError(err))), nil, nil
 		}
 		approveReceipt, err := chain.WaitMined(ctx, s.chain, approveTx.Hash())
 		if err != nil {
@@ -541,27 +553,37 @@ func (s *Server) handleFundEscrow(ctx context.Context, req *mcp.CallToolRequest,
 		}
 		tx, err := s.chain.Fund(ctx, escrowAddr, nil)
 		if err != nil {
-			return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 		}
 		_ = s.idx.RunOnce(ctx)
-		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+		stakeHint := "The worker can now call submit_work."
+		if hasStake(escrow) {
+			stakeHint = "Worker must call deposit_stake before submit_work (stake_required=true)."
+		}
+		return jsonResult(map[string]any{
+			"tx_hash":    tx.Hash().Hex(),
+			"next_steps": "Status updates are eventually consistent (~15s indexer lag). Poll get_escrow until status=funded. " + stakeHint,
+		})
 	}
 
 	tx, err := s.chain.Fund(ctx, escrowAddr, amount)
 	if err != nil {
-		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+		return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 	}
 
 	_ = s.idx.RunOnce(ctx)
-	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+	stakeHint := "The worker can now call submit_work."
+	if hasStake(escrow) {
+		stakeHint = "Worker must call deposit_stake before submit_work (stake_required=true)."
+	}
+	return jsonResult(map[string]any{
+		"tx_hash":    tx.Hash().Hex(),
+		"next_steps": "Status updates are eventually consistent (~15s indexer lag). Poll get_escrow until status=funded. " + stakeHint,
+	})
 }
 
 func (s *Server) handleDepositStake(ctx context.Context, req *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
-	if err != nil {
-		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
-	}
-	escrow, err := s.db.GetEscrow(ctx, escrowID)
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
@@ -572,13 +594,12 @@ func (s *Server) handleDepositStake(ctx context.Context, req *mcp.CallToolReques
 	}
 
 	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
-	isERC20 := escrow.Token != "" && escrow.Token != "0x0000000000000000000000000000000000000000"
 
-	if isERC20 {
+	if isERC20Token(escrow.Token) {
 		tokenAddr := common.HexToAddress(escrow.Token)
 		approveTx, err := s.chain.ApproveERC20(ctx, tokenAddr, escrowAddr, stakeAmount)
 		if err != nil {
-			return textResult(fmt.Sprintf("approve error: %v", err)), nil, nil
+			return textResult(fmt.Sprintf("approve error: %v", chain.HumanizeError(err))), nil, nil
 		}
 		approveReceipt, err := chain.WaitMined(ctx, s.chain, approveTx.Hash())
 		if err != nil {
@@ -589,29 +610,39 @@ func (s *Server) handleDepositStake(ctx context.Context, req *mcp.CallToolReques
 		}
 		tx, err := s.chain.DepositStake(ctx, escrowAddr, nil)
 		if err != nil {
-			return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 		}
 		_ = s.idx.RunOnce(ctx)
-		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Worker can now call submit_work."})
 	}
 
 	tx, err := s.chain.DepositStake(ctx, escrowAddr, stakeAmount)
 	if err != nil {
-		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+		return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 	}
 
 	_ = s.idx.RunOnce(ctx)
-	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Worker can now call submit_work."})
 }
 
 func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest, args submitArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
-	if err != nil {
-		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
-	}
-	escrow, err := s.db.GetEscrow(ctx, escrowID)
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
+	}
+
+	// Warn if the server's signing key doesn't match the worker address.
+	signerAddr := strings.ToLower(s.chain.Address().Hex())
+	workerAddr := strings.ToLower(escrow.ActiveWorker)
+	if workerAddr == "" {
+		workerAddr = strings.ToLower(escrow.Worker)
+	}
+	if signerAddr != workerAddr {
+		return textResult(fmt.Sprintf(
+			"submit_work requires the worker's signature. The server is configured with key for %s, but the escrow worker is %s. "+
+				"Set PRIVATE_KEY in the environment or run a server instance with the worker's private key.",
+			signerAddr, workerAddr,
+		)), nil, nil
 	}
 
 	hash := crypto.Keccak256Hash([]byte(args.SubmissionURI))
@@ -621,36 +652,32 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 	addr := common.HexToAddress(escrow.EscrowAddress)
 
 	if escrow.MilestoneCount > 1 {
-		if args.MilestoneIndex == "" {
+		if args.MilestoneIndex.String() == "" {
 			return textResult("milestone_index required for multi-milestone escrow"), nil, nil
 		}
-		msIdx, err := parseMilestoneIndex(args.MilestoneIndex)
+		msIdx, err := parseMilestoneIndex(args.MilestoneIndex.String())
 		if err != nil {
 			return textResult(err.Error()), nil, nil
 		}
 		tx, err := s.chain.SubmitMilestone(ctx, addr, msIdx, hashBytes, args.SubmissionURI)
 		if err != nil {
-			return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 		}
 		_ = s.idx.RunOnce(ctx)
-		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Buyer/verifier should call approve_work to approve the submission."})
 	}
 
 	tx, err := s.chain.Submit(ctx, addr, hashBytes, args.SubmissionURI)
 	if err != nil {
-		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+		return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 	}
 
 	_ = s.idx.RunOnce(ctx)
-	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Buyer/verifier should call approve_work to approve the submission."})
 }
 
 func (s *Server) handleApproveWork(ctx context.Context, req *mcp.CallToolRequest, args approveArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
-	if err != nil {
-		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
-	}
-	escrow, err := s.db.GetEscrow(ctx, escrowID)
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
@@ -658,10 +685,10 @@ func (s *Server) handleApproveWork(ctx context.Context, req *mcp.CallToolRequest
 	addr := common.HexToAddress(escrow.EscrowAddress)
 
 	if escrow.MilestoneCount > 1 {
-		if args.MilestoneIndex == "" {
+		if args.MilestoneIndex.String() == "" {
 			return textResult("milestone_index required for multi-milestone escrow"), nil, nil
 		}
-		msIdx, err := parseMilestoneIndex(args.MilestoneIndex)
+		msIdx, err := parseMilestoneIndex(args.MilestoneIndex.String())
 		if err != nil {
 			return textResult(err.Error()), nil, nil
 		}
@@ -669,17 +696,17 @@ func (s *Server) handleApproveWork(ctx context.Context, req *mcp.CallToolRequest
 		case "buyer":
 			tx, err := s.chain.ApproveMilestoneByBuyer(ctx, addr, msIdx)
 			if err != nil {
-				return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+				return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 			}
 			_ = s.idx.RunOnce(ctx)
-			return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+			return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Check get_reputation to see updated counters once the indexer settles (~15s)."})
 		case "verifier":
 			tx, err := s.chain.ApproveMilestoneByVerifier(ctx, addr, msIdx)
 			if err != nil {
-				return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+				return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 			}
 			_ = s.idx.RunOnce(ctx)
-			return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+			return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Check get_reputation to see updated counters once the indexer settles (~15s)."})
 		default:
 			return textResult("role must be 'buyer' or 'verifier'"), nil, nil
 		}
@@ -689,28 +716,24 @@ func (s *Server) handleApproveWork(ctx context.Context, req *mcp.CallToolRequest
 	case "buyer":
 		tx, err := s.chain.ApproveByBuyer(ctx, addr)
 		if err != nil {
-			return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 		}
 		_ = s.idx.RunOnce(ctx)
-		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Check get_reputation to see updated counters once the indexer settles (~15s)."})
 	case "verifier":
 		tx, err := s.chain.ApproveByVerifier(ctx, addr)
 		if err != nil {
-			return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 		}
 		_ = s.idx.RunOnce(ctx)
-		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Check get_reputation to see updated counters once the indexer settles (~15s)."})
 	default:
 		return textResult("role must be 'buyer' or 'verifier'"), nil, nil
 	}
 }
 
 func (s *Server) handleDisputeWork(ctx context.Context, req *mcp.CallToolRequest, args disputeArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
-	if err != nil {
-		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
-	}
-	escrow, err := s.db.GetEscrow(ctx, escrowID)
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
@@ -718,10 +741,10 @@ func (s *Server) handleDisputeWork(ctx context.Context, req *mcp.CallToolRequest
 	addr := common.HexToAddress(escrow.EscrowAddress)
 
 	if escrow.MilestoneCount > 1 {
-		if args.MilestoneIndex == "" {
+		if args.MilestoneIndex.String() == "" {
 			return textResult("milestone_index required for multi-milestone escrow"), nil, nil
 		}
-		msIdx, err := parseMilestoneIndex(args.MilestoneIndex)
+		msIdx, err := parseMilestoneIndex(args.MilestoneIndex.String())
 		if err != nil {
 			return textResult(err.Error()), nil, nil
 		}
@@ -729,24 +752,33 @@ func (s *Server) handleDisputeWork(ctx context.Context, req *mcp.CallToolRequest
 		case "buyer":
 			tx, err := s.chain.DisputeMilestone(ctx, addr, msIdx, args.ReasonURI)
 			if err != nil {
-				return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+				return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 			}
 			_ = s.idx.RunOnce(ctx)
-			return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+			return jsonResult(map[string]any{
+				"tx_hash":    tx.Hash().Hex(),
+				"next_steps": "Check get_escrow for updated status after indexer settles (~15s).",
+			})
 		case "verifier":
 			tx, err := s.chain.RejectMilestoneByVerifier(ctx, addr, msIdx, args.ReasonURI)
 			if err != nil {
-				return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+				return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 			}
 			_ = s.idx.RunOnce(ctx)
-			return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+			return jsonResult(map[string]any{
+				"tx_hash":    tx.Hash().Hex(),
+				"next_steps": "Check get_escrow for updated status after indexer settles (~15s).",
+			})
 		case "worker":
 			tx, err := s.chain.EscalateMilestoneSilence(ctx, addr, msIdx, args.ReasonURI)
 			if err != nil {
-				return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+				return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 			}
 			_ = s.idx.RunOnce(ctx)
-			return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+			return jsonResult(map[string]any{
+				"tx_hash":    tx.Hash().Hex(),
+				"next_steps": "Check get_escrow for updated status after indexer settles (~15s).",
+			})
 		default:
 			return textResult("role must be 'buyer', 'verifier', or 'worker'"), nil, nil
 		}
@@ -756,35 +788,40 @@ func (s *Server) handleDisputeWork(ctx context.Context, req *mcp.CallToolRequest
 	case "buyer":
 		tx, err := s.chain.Dispute(ctx, addr, args.ReasonURI)
 		if err != nil {
-			return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 		}
 		_ = s.idx.RunOnce(ctx)
-		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+		return jsonResult(map[string]any{
+			"tx_hash":    tx.Hash().Hex(),
+			"next_steps": "Check get_escrow for updated status after indexer settles (~15s).",
+		})
 	case "verifier":
 		tx, err := s.chain.RejectByVerifier(ctx, addr, args.ReasonURI)
 		if err != nil {
-			return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 		}
 		_ = s.idx.RunOnce(ctx)
-		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+		return jsonResult(map[string]any{
+			"tx_hash":    tx.Hash().Hex(),
+			"next_steps": "Check get_escrow for updated status after indexer settles (~15s).",
+		})
 	case "worker":
 		tx, err := s.chain.EscalateSilence(ctx, addr, args.ReasonURI)
 		if err != nil {
-			return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 		}
 		_ = s.idx.RunOnce(ctx)
-		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+		return jsonResult(map[string]any{
+			"tx_hash":    tx.Hash().Hex(),
+			"next_steps": "Check get_escrow for updated status after indexer settles (~15s).",
+		})
 	default:
 		return textResult("role must be 'buyer', 'verifier', or 'worker'"), nil, nil
 	}
 }
 
 func (s *Server) handleResolveDispute(ctx context.Context, req *mcp.CallToolRequest, args resolveArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
-	if err != nil {
-		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
-	}
-	bps, err := strconv.ParseUint(args.WorkerAwardBps, 10, 16)
+	bps, err := strconv.ParseUint(args.WorkerAwardBps.String(), 10, 16)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid worker_award_bps: %v", err)), nil, nil
 	}
@@ -792,7 +829,7 @@ func (s *Server) handleResolveDispute(ctx context.Context, req *mcp.CallToolRequ
 		return textResult("worker_award_bps must be between 0 and 10000"), nil, nil
 	}
 
-	escrow, err := s.db.GetEscrow(ctx, escrowID)
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
@@ -800,46 +837,60 @@ func (s *Server) handleResolveDispute(ctx context.Context, req *mcp.CallToolRequ
 	addr := common.HexToAddress(escrow.EscrowAddress)
 
 	if escrow.MilestoneCount > 1 {
-		if args.MilestoneIndex == "" {
+		if args.MilestoneIndex.String() == "" {
 			return textResult("milestone_index required for multi-milestone escrow"), nil, nil
 		}
-		msIdx, err := parseMilestoneIndex(args.MilestoneIndex)
+		msIdx, err := parseMilestoneIndex(args.MilestoneIndex.String())
 		if err != nil {
 			return textResult(err.Error()), nil, nil
 		}
 		tx, err := s.chain.ResolveMilestoneDispute(ctx, addr, msIdx, uint16(bps), args.ResolutionURI)
 		if err != nil {
-			return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 		}
 		_ = s.idx.RunOnce(ctx)
-		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+		return jsonResult(map[string]any{
+			"tx_hash":    tx.Hash().Hex(),
+			"next_steps": "Check get_escrow for updated status after indexer settles (~15s).",
+		})
 	}
 
 	tx, err := s.chain.ResolveDispute(ctx, addr, uint16(bps), args.ResolutionURI)
 	if err != nil {
-		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+		return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 	}
 
 	_ = s.idx.RunOnce(ctx)
-	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+	return jsonResult(map[string]any{
+		"tx_hash":    tx.Hash().Hex(),
+		"next_steps": "Check get_escrow for updated status after indexer settles (~15s).",
+	})
 }
 
 func (s *Server) handleGetEscrow(ctx context.Context, req *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
-	if err != nil {
-		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
-	}
-	escrow, err := s.db.GetEscrow(ctx, escrowID)
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
 
-	result := map[string]any{"escrow": escrow}
+	stakeRequired := false
+	if hasStake(escrow) && escrow.Status == "funded" {
+		deposited, err := s.db.EventExistsForContract(ctx, escrow.EscrowAddress, "WorkerStakeDeposited")
+		if err != nil {
+			return textResult(fmt.Sprintf("failed to check stake status: %v", err)), nil, nil
+		}
+		stakeRequired = !deposited
+	}
+
+	result := map[string]any{
+		"escrow":         escrow,
+		"stake_required": stakeRequired,
+	}
 
 	if escrow.MilestoneCount > 1 {
-		milestones, err := s.db.GetMilestonesByEscrow(ctx, escrowID)
+		milestones, err := s.db.GetMilestonesByEscrow(ctx, escrow.ID)
 		if err != nil {
-			return textResult(fmt.Sprintf("failed to fetch milestones for escrow %d: %v", escrowID, err)), nil, nil
+			return textResult(fmt.Sprintf("failed to fetch milestones for escrow %d: %v", escrow.ID, err)), nil, nil
 		}
 		result["milestones"] = milestones
 	}
@@ -856,11 +907,7 @@ func (s *Server) handleListEscrows(ctx context.Context, req *mcp.CallToolRequest
 }
 
 func (s *Server) handleAbortRemainingMilestones(ctx context.Context, req *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
-	if err != nil {
-		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
-	}
-	escrow, err := s.db.GetEscrow(ctx, escrowID)
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
@@ -870,7 +917,7 @@ func (s *Server) handleAbortRemainingMilestones(ctx context.Context, req *mcp.Ca
 
 	tx, err := s.chain.AbortRemainingMilestones(ctx, common.HexToAddress(escrow.EscrowAddress))
 	if err != nil {
-		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+		return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 	}
 
 	_ = s.idx.RunOnce(ctx)
@@ -878,11 +925,7 @@ func (s *Server) handleAbortRemainingMilestones(ctx context.Context, req *mcp.Ca
 }
 
 func (s *Server) handleActivateBackup(ctx context.Context, req *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
-	if err != nil {
-		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
-	}
-	escrow, err := s.db.GetEscrow(ctx, escrowID)
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
@@ -896,7 +939,7 @@ func (s *Server) handleActivateBackup(ctx context.Context, req *mcp.CallToolRequ
 
 	tx, err := s.chain.ActivateBackup(ctx, common.HexToAddress(escrow.EscrowAddress))
 	if err != nil {
-		return textResult(fmt.Sprintf("chain error: %v", err)), nil, nil
+		return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 	}
 
 	_ = s.idx.RunOnce(ctx)
@@ -935,12 +978,16 @@ func (s *Server) handleGetReputation(ctx context.Context, req *mcp.CallToolReque
 		return nil, nil, fmt.Errorf("get reputation by address: %w", err)
 	}
 	if len(reps) == 0 {
-		return jsonResult([]map[string]any{
-			{"address": addr, "role": "worker", "completed": 0, "disputed": 0, "failed": 0},
-			{"address": addr, "role": "buyer", "completed": 0, "disputed": 0, "failed": 0},
+		return jsonResult(map[string]any{
+			"address": addr,
+			"roles":   []any{},
+			"note":    "No on-chain reputation recorded yet. Reputation counters update after the indexer processes OutcomeRecorded events (~15s after settlement).",
 		})
 	}
-	return jsonResult(reps)
+	return jsonResult(map[string]any{
+		"address": addr,
+		"roles":   reps,
+	})
 }
 
 func (s *Server) biddingService() *bidding.Service {
@@ -953,42 +1000,45 @@ func (s *Server) biddingService() *bidding.Service {
 }
 
 func (s *Server) handleCreateRFQ(ctx context.Context, req *mcp.CallToolRequest, args createRFQArgs) (*mcp.CallToolResult, any, error) {
-	deadline, err := strconv.ParseInt(args.Deadline, 10, 64)
+	deadline, err := strconv.ParseInt(args.Deadline.String(), 10, 64)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid deadline: %v", err)), nil, nil
 	}
-	review, err := strconv.ParseInt(args.ReviewPeriodSeconds, 10, 64)
+	review, err := strconv.ParseInt(args.ReviewPeriodSeconds.String(), 10, 64)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid review_period_seconds: %v", err)), nil, nil
 	}
-	dispute, err := strconv.ParseInt(args.DisputePeriodSeconds, 10, 64)
+	dispute, err := strconv.ParseInt(args.DisputePeriodSeconds.String(), 10, 64)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid dispute_period_seconds: %v", err)), nil, nil
 	}
-	arbTimeout, err := strconv.ParseInt(args.ArbitratorTimeoutSeconds, 10, 64)
+	arbTimeout, err := strconv.ParseInt(args.ArbitratorTimeoutSeconds.String(), 10, 64)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid arbitrator_timeout_seconds: %v", err)), nil, nil
 	}
-	expiresAt, err := strconv.ParseInt(args.ExpiresAt, 10, 64)
+	expiresAt, err := strconv.ParseInt(args.ExpiresAt.String(), 10, 64)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid expires_at: %v", err)), nil, nil
 	}
+
+	// Normalize token field.
+	token := normalizeToken(args.Token)
 
 	svc := s.biddingService()
 	rfq, err := svc.CreateRFQ(ctx, bidding.CreateRFQParams{
 		Title:                    args.Title,
 		Description:              args.Description,
 		Buyer:                    args.Buyer,
-		Token:                    args.Token,
-		BudgetMin:                args.BudgetMin,
-		BudgetMax:                args.BudgetMax,
+		Token:                    token,
+		BudgetMin:                args.BudgetMin.String(),
+		BudgetMax:                args.BudgetMax.String(),
 		Deadline:                 deadline,
 		ReviewPeriodSeconds:      review,
 		DisputePeriodSeconds:     dispute,
 		ArbitratorTimeoutSeconds: arbTimeout,
 		Verifier:                 args.Verifier,
 		Arbitrator:               args.Arbitrator,
-		WorkerStake:              args.WorkerStake,
+		WorkerStake:              args.WorkerStake.String(),
 		MilestonesJSON:           args.MilestonesJSON,
 		RequirementsJSON:         args.RequirementsJSON,
 		ExpiresAt:                expiresAt,
@@ -998,24 +1048,25 @@ func (s *Server) handleCreateRFQ(ctx context.Context, req *mcp.CallToolRequest, 
 	}
 
 	return jsonResult(map[string]any{
-		"rfq_id": rfq.ID,
-		"status": rfq.Status,
+		"rfq_id":     rfq.ID,
+		"status":     rfq.Status,
+		"next_steps": "Workers can now call place_bid with this rfq_id. Use list_bids to see incoming bids, then accept_bid to finalize.",
 	})
 }
 
 func (s *Server) handlePlaceBid(ctx context.Context, req *mcp.CallToolRequest, args placeBidArgs) (*mcp.CallToolResult, any, error) {
-	rfqID, err := strconv.ParseInt(args.RFQID, 10, 64)
+	rfqID, err := strconv.ParseInt(args.RFQID.String(), 10, 64)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid rfq_id: %v", err)), nil, nil
 	}
 	var estimatedDuration int64
-	if args.EstimatedDuration != "" {
-		estimatedDuration, err = strconv.ParseInt(args.EstimatedDuration, 10, 64)
+	if args.EstimatedDuration.String() != "" {
+		estimatedDuration, err = strconv.ParseInt(args.EstimatedDuration.String(), 10, 64)
 		if err != nil {
 			return textResult(fmt.Sprintf("invalid estimated_duration: %v", err)), nil, nil
 		}
 	}
-	expiresAt, err := strconv.ParseInt(args.ExpiresAt, 10, 64)
+	expiresAt, err := strconv.ParseInt(args.ExpiresAt.String(), 10, 64)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid expires_at: %v", err)), nil, nil
 	}
@@ -1024,9 +1075,9 @@ func (s *Server) handlePlaceBid(ctx context.Context, req *mcp.CallToolRequest, a
 	bid, err := svc.PlaceBid(ctx, bidding.PlaceBidParams{
 		RFQID:             rfqID,
 		Bidder:            args.Bidder,
-		Amount:            args.Amount,
+		Amount:            args.Amount.String(),
 		EstimatedDuration: estimatedDuration,
-		ReputationBond:    args.ReputationBond,
+		ReputationBond:    args.ReputationBond.String(),
 		MilestonesJSON:    args.MilestonesJSON,
 		Message:           args.Message,
 		ExpiresAt:         expiresAt,
@@ -1037,39 +1088,50 @@ func (s *Server) handlePlaceBid(ctx context.Context, req *mcp.CallToolRequest, a
 	}
 
 	return jsonResult(map[string]any{
-		"bid_id": bid.ID,
-		"status": bid.Status,
+		"bid_id":     bid.ID,
+		"status":     bid.Status,
+		"next_steps": "The RFQ buyer can call accept_bid to accept this bid and create an on-chain escrow.",
 	})
 }
 
 func (s *Server) handleListBids(ctx context.Context, req *mcp.CallToolRequest, args listBidsArgs) (*mcp.CallToolResult, any, error) {
-	if args.RFQID != "" {
-		rfqID, err := strconv.ParseInt(args.RFQID, 10, 64)
-		if err != nil {
-			return textResult(fmt.Sprintf("invalid rfq_id: %v", err)), nil, nil
+	var bids []*storage.Bid
+	var err error
+
+	switch {
+	case args.RFQID.String() != "":
+		rfqID, parseErr := strconv.ParseInt(args.RFQID.String(), 10, 64)
+		if parseErr != nil {
+			return textResult(fmt.Sprintf("invalid rfq_id: %v", parseErr)), nil, nil
 		}
-		bids, err := s.db.ListBidsByRFQ(ctx, rfqID)
-		if err != nil {
-			return textResult(fmt.Sprintf("error: %v", err)), nil, nil
-		}
-		return jsonResult(bids)
+		bids, err = s.db.ListBidsByRFQ(ctx, rfqID)
+	case args.Bidder != "":
+		bids, err = s.db.ListBidsByBidder(ctx, args.Bidder)
+	default:
+		return textResult("provide either rfq_id or bidder"), nil, nil
 	}
-	if args.Bidder != "" {
-		bids, err := s.db.ListBidsByBidder(ctx, args.Bidder)
-		if err != nil {
-			return textResult(fmt.Sprintf("error: %v", err)), nil, nil
-		}
-		return jsonResult(bids)
+	if err != nil {
+		return textResult(fmt.Sprintf("error: %v", err)), nil, nil
 	}
-	return textResult("provide either rfq_id or bidder"), nil, nil
+
+	now := time.Now().Unix()
+	type bidWithExpiry struct {
+		*storage.Bid
+		Expired bool `json:"expired"`
+	}
+	out := make([]bidWithExpiry, len(bids))
+	for i, b := range bids {
+		out[i] = bidWithExpiry{Bid: b, Expired: b.ExpiresAt <= now}
+	}
+	return jsonResult(out)
 }
 
 func (s *Server) handleAcceptBid(ctx context.Context, req *mcp.CallToolRequest, args acceptBidArgs) (*mcp.CallToolResult, any, error) {
-	rfqID, err := strconv.ParseInt(args.RFQID, 10, 64)
+	rfqID, err := strconv.ParseInt(args.RFQID.String(), 10, 64)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid rfq_id: %v", err)), nil, nil
 	}
-	bidID, err := strconv.ParseInt(args.BidID, 10, 64)
+	bidID, err := strconv.ParseInt(args.BidID.String(), 10, 64)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid bid_id: %v", err)), nil, nil
 	}
@@ -1081,7 +1143,7 @@ func (s *Server) handleAcceptBid(ctx context.Context, req *mcp.CallToolRequest, 
 		Caller: args.Caller,
 	})
 	if err != nil {
-		return textResult(err.Error()), nil, nil
+		return textResult(fmt.Sprintf("accept_bid error: %v", chain.HumanizeError(err))), nil, nil
 	}
 
 	return jsonResult(map[string]any{
@@ -1092,16 +1154,18 @@ func (s *Server) handleAcceptBid(ctx context.Context, req *mcp.CallToolRequest, 
 		"chain_escrow_id": result.Escrow.EscrowID,
 		"bid_id":          result.Bid.ID,
 		"bid_status":      result.Bid.Status,
+		"next_steps":      "An escrow has been deployed on-chain. Call fund_escrow with the escrow_id to fund it.",
 	})
 }
 
 func (s *Server) handleFundViaMandate(ctx context.Context, req *mcp.CallToolRequest, args fundViaMandateArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
 	if err != nil {
-		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
+	escrowID := escrow.ID
 
-	v, err := strconv.ParseUint(args.AuthV, 10, 8)
+	v, err := strconv.ParseUint(args.AuthV.String(), 10, 8)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid auth_v: %v", err)), nil, nil
 	}
@@ -1115,10 +1179,6 @@ func (s *Server) handleFundViaMandate(ctx context.Context, req *mcp.CallToolRequ
 
 	authTo := args.AuthTo
 	if authTo == "" {
-		escrow, err := s.db.GetEscrow(ctx, escrowID)
-		if err != nil {
-			return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
-		}
 		authTo = escrow.EscrowAddress
 	}
 
@@ -1170,8 +1230,8 @@ func (s *Server) handleSubscribeEvents(ctx context.Context, req *mcp.CallToolReq
 	granularity := events.ParseGranularity(args.Granularity)
 
 	limit := 50
-	if args.Limit != "" {
-		v, err := strconv.Atoi(args.Limit)
+	if args.Limit.String() != "" {
+		v, err := strconv.Atoi(args.Limit.String())
 		if err != nil || v <= 0 {
 			return textResult("invalid limit: must be a positive integer"), nil, nil //nolint:nilerr // err is from Atoi; we return a user-facing message, not the parse error
 		}
@@ -1283,14 +1343,11 @@ func (s *Server) handleUnfreezeAddress(ctx context.Context, _ *mcp.CallToolReque
 }
 
 func (s *Server) handleFreezeEscrow(ctx context.Context, _ *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
-	if err != nil {
-		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
-	}
-	escrow, err := s.db.GetEscrow(ctx, escrowID)
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
+	escrowID := escrow.ID
 
 	factory := s.idx.FactoryAddress()
 	tx, err := s.chain.FreezeEscrow(ctx, factory, big.NewInt(escrow.EscrowID))
@@ -1319,14 +1376,11 @@ func (s *Server) handleFreezeEscrow(ctx context.Context, _ *mcp.CallToolRequest,
 }
 
 func (s *Server) handleUnfreezeEscrow(ctx context.Context, _ *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
-	if err != nil {
-		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
-	}
-	escrow, err := s.db.GetEscrow(ctx, escrowID)
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
+	escrowID := escrow.ID
 
 	factory := s.idx.FactoryAddress()
 	tx, err := s.chain.UnfreezeEscrow(ctx, factory, big.NewInt(escrow.EscrowID))
@@ -1355,11 +1409,11 @@ func (s *Server) handleUnfreezeEscrow(ctx context.Context, _ *mcp.CallToolReques
 }
 
 func (s *Server) handleEmergencyResolve(ctx context.Context, _ *mcp.CallToolRequest, args emergencyResolveArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, err := strconv.ParseInt(args.EscrowID, 10, 64)
+	escrowID, err := strconv.ParseInt(args.EscrowID.String(), 10, 64)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
 	}
-	bps, err := strconv.ParseUint(args.WorkerAwardBps, 10, 16)
+	bps, err := strconv.ParseUint(args.WorkerAwardBps.String(), 10, 16)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid worker_award_bps: %v", err)), nil, nil
 	}
@@ -1409,15 +1463,15 @@ func (s *Server) handleListFrozenAddresses(ctx context.Context, _ *mcp.CallToolR
 
 func (s *Server) handleListEmergencyActions(ctx context.Context, _ *mcp.CallToolRequest, args emergencyListArgs) (*mcp.CallToolResult, any, error) {
 	limit := 50
-	if args.Limit != "" {
-		v, err := strconv.Atoi(args.Limit)
+	if args.Limit.String() != "" {
+		v, err := strconv.Atoi(args.Limit.String())
 		if err == nil && v > 0 {
 			limit = v
 		}
 	}
 	offset := 0
-	if args.Offset != "" {
-		v, err := strconv.Atoi(args.Offset)
+	if args.Offset.String() != "" {
+		v, err := strconv.Atoi(args.Offset.String())
 		if err == nil && v >= 0 {
 			offset = v
 		}
@@ -1436,6 +1490,25 @@ func parseMilestoneIndex(s string) (uint8, error) {
 		return 0, fmt.Errorf("invalid milestone_index: %w", err)
 	}
 	return uint8(v), nil
+}
+
+// isERC20Token returns true if the token field represents an ERC20 token (not ETH).
+func isERC20Token(token string) bool {
+	return token != "" && token != "0x0000000000000000000000000000000000000000"
+}
+
+// normalizeToken normalizes the canonical zero-address to an empty string (ETH).
+func normalizeToken(token string) string {
+	if token == "" || token == "0x0000000000000000000000000000000000000000" {
+		return ""
+	}
+	return token
+}
+
+// hasStake returns true if the escrow has a non-zero worker stake.
+func hasStake(escrow *storage.Escrow) bool {
+	amt, ok := new(big.Int).SetString(escrow.WorkerStake, 10)
+	return ok && amt.Sign() > 0
 }
 
 func textResult(text string) *mcp.CallToolResult {

@@ -19,3 +19,4 @@ node_modules/
 .python-version
 .claude/settings.local.json
 .codex-runs/
+.cursor/

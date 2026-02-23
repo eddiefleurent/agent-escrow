@@ -56,6 +56,22 @@ func (sh *StreamHandler) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
+
+	// Send a connected event immediately so the client knows the subscription is alive.
+	connData, err := json.Marshal(map[string]any{
+		"status":      "connected",
+		"sub_id":      sub.ID,
+		"escrow":      escrow,
+		"granularity": granularity.String(),
+	})
+	if err != nil {
+		slog.Error("sse: marshal connected event failed", "sub_id", sub.ID, "granularity", granularity.String(), "error", err)
+		return
+	}
+	if _, err := fmt.Fprintf(w, "event: connected\ndata: %s\n\n", connData); err != nil {
+		slog.Error("sse: write connected event failed", "error", err)
+		return
+	}
 	flusher.Flush()
 
 	ctx := r.Context()
