@@ -43,9 +43,9 @@ The paper defines intelligent delegation across five pillars (Section 4), nine t
 |---|---|---|---|
 | **Dynamic Assessment** | 4.1, 4.2 | Task decomposition, capability matching, smart-contract formalization | Settlement kernel (V1) → Bidding marketplace (V2) → Decomposition tooling (V3) |
 | **Adaptive Execution** | 4.4 | Runtime re-delegation, failure recovery, checkpoint-based re-allocation | Timeout/escalation (V1) → Milestones + backup agents (V2) → Checkpoint/resume (V3) |
-| **Structural Transparency** | 4.5, 4.8 | Monitoring (outcome + process), verifiable task completion, attestation chains | Events + hash commitments (V1) → Attestation chains (V2) → ZK verification (V3) |
-| **Scalable Market Coordination** | 4.3, 4.6 | Multi-objective optimization, reputation, trust calibration | Designated trust (V1) → Reputation + credentials (V2) → Market stability (V3) |
-| **Systemic Resilience** | 4.7, 4.9 | Permission handling, privilege attenuation, security defense-in-depth | Role gates + reentrancy guard (V1) → DCTs + Sybil resistance (V2) → Tiered assurance (V3) |
+| **Structural Transparency** | 4.5, 4.8 | Monitoring (outcome + process), verifiable task completion, attestation chains | Events + hash commitments (V1) → Milestones + L0-L3 subscriptions (V2) → Attestation chains + ZK verification (V3) |
+| **Scalable Market Coordination** | 4.3, 4.6 | Multi-objective optimization, reputation, trust calibration | Designated trust (V1) → Reputation + complexity floor + RFQ bidding (V2) → Credentials + market stability (V3) |
+| **Systemic Resilience** | 4.7, 4.9 | Permission handling, privilege attenuation, security defense-in-depth | Role gates + reentrancy guard (V1) → Emergency response + stake-based Sybil resistance (V2) → DCT attenuation + tiered assurance (V3) |
 
 The paper also defines ethical dimensions (Section 5):
 
@@ -170,7 +170,7 @@ Estimated gas costs per operation on Base (as of early 2026):
 
 > **Note**: Gas costs are estimates and will vary with network congestion and L1 gas prices. Use `cast estimate` or the [Foundry gas estimation tools](https://book.getfoundry.sh/reference/cast/cast-estimate) to check current costs for your transactions.
 
-The **complexity floor** planned for V2 (roadmap item 12) formalizes this: a minimum escrow amount that ensures the task value justifies the gas + protocol fee overhead. On Base, that floor can be low enough ($1-$5) to support micro-delegation between AI agents.
+The **complexity floor** implemented in V2 (roadmap item 6) formalizes this: a minimum escrow amount that ensures the task value justifies the gas + protocol fee overhead. On Base, that floor can be low enough ($1-$5) to support micro-delegation between AI agents.
 
 **Chain portability.** The contracts are standard EVM Solidity with no Base-specific dependencies. Deploying to other L2s (Arbitrum, Optimism mainnet, zkSync) or L1 requires only a new RPC URL and chain ID. The Go server's `CHAIN_ID` and `RPC_URL` configuration makes this a deployment decision, not a code change.
 
