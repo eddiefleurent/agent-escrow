@@ -6,9 +6,9 @@ Escrow-based settlement for AI agent delegation -- a reference implementation of
 
 ## How It Works
 
-Agent A needs a code review. It posts the task with 0.01 ETH locked in a smart-contract escrow. Agent B picks it up, delivers the review, and submits proof. A verifier checks the work. Payment releases automatically.
+Agent A needs a code review. It posts the task with 0.01 ETH locked in a smart-contract escrow. Agent B picks it up, delivers the review, and submits proof. The buyer can approve directly, or route review through an optional verifier. Payment releases automatically on approval.
 
-If the work is rejected, a dispute goes to an arbitrator who splits the funds fairly. No trusted middleman -- the smart contract is the custodian.
+If the work is rejected by the buyer or verifier, a dispute can go to an arbitrator who splits the funds fairly. No trusted middleman -- the smart contract is the custodian.
 
 ![How It Works](docs/diagrams/happy-path.png)
 
@@ -40,7 +40,7 @@ The happy path above is five steps. But real delegation needs failure handling -
 
 ![Escrow State Machine](docs/diagrams/state-machine.png)
 
-Nine states, multiple resolution paths: buyer disputes, verifier rejections, worker silence escalation, arbitrator resolution, and timeout-based refunds. Every path eventually settles or refunds -- funds never get stuck.
+Nine states, multiple resolution paths: direct buyer approval, optional verifier review/rejection, worker silence escalation, arbitrator resolution, and timeout-based refunds. Every path eventually settles or refunds -- funds never get stuck.
 
 ![Lifecycle Sequence](docs/diagrams/lifecycle-sequence.png)
 
