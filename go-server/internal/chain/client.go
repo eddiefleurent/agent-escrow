@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"sync"
 
 	"github.com/ethereum/go-ethereum"
@@ -126,6 +127,13 @@ func (c *Client) SendTx(ctx context.Context, to common.Address, data []byte, val
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	return c.sendTxLocked(ctx, to, data, value, true)
+}
+
+// sendTxLocked sends a transaction while the mutex is held. If allowRetry is true
+// and the send fails with "nonce too low", it refreshes the nonce from the chain
+// and retries once.
+func (c *Client) sendTxLocked(ctx context.Context, to common.Address, data []byte, value *big.Int, allowRetry bool) (*types.Transaction, error) {
 	if !c.nonceOK {
 		nonce, err := c.eth.PendingNonceAt(ctx, c.address)
 		if err != nil {
@@ -163,6 +171,16 @@ func (c *Client) SendTx(ctx context.Context, to common.Address, data []byte, val
 	}
 
 	if err := c.eth.SendTransaction(ctx, signedTx); err != nil {
+		errMsg := err.Error()
+		if allowRetry && (strings.Contains(errMsg, "nonce too low") || strings.Contains(errMsg, "already known")) {
+			nonce, fetchErr := c.eth.PendingNonceAt(ctx, c.address)
+			if fetchErr != nil {
+				return nil, fmt.Errorf("send tx: %w (nonce refresh also failed: %w)", err, fetchErr)
+			}
+			c.nonce = nonce
+			c.nonceOK = true
+			return c.sendTxLocked(ctx, to, data, value, false)
+		}
 		return nil, fmt.Errorf("send tx: %w", err)
 	}
 
