@@ -3,6 +3,7 @@ package ap2
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
@@ -38,6 +39,36 @@ func setupTestService(t *testing.T) (*Service, *storage.DB, *chain.MockClient) {
 		X402:  x402.NewClient("http://localhost:9999"),
 	}
 	return svc, db, mc
+}
+
+func TestBindToEscrow_GetEscrowErrorPrefix(t *testing.T) {
+	svc, _, _ := setupTestService(t)
+
+	env := MandateEnvelope{
+		Type:          MandateTypePayment,
+		Payload:       map[string]any{},
+		Signature:     "0xdeadbeef",
+		SignerAddress: "0x1111111111111111111111111111111111111111",
+		Authorization: EIP3009Authorization{
+			From:        "0x1111111111111111111111111111111111111111",
+			To:          "0xABCDABCDABCDABCDABCDABCDABCDABCDABCDABCD",
+			Value:       "1000000",
+			ValidAfter:  "0",
+			ValidBefore: "9999999999",
+			Nonce:       "0x0000000000000000000000000000000000000000000000000000000000000001",
+			V:           27,
+			R:           "0x0000000000000000000000000000000000000000000000000000000000000002",
+			S:           "0x0000000000000000000000000000000000000000000000000000000000000003",
+		},
+	}
+
+	_, err := svc.BindToEscrow(context.Background(), env, 999)
+	if err == nil {
+		t.Fatal("expected missing escrow error")
+	}
+	if !strings.Contains(err.Error(), "get escrow:") {
+		t.Fatalf("expected get escrow prefix, got: %v", err)
+	}
 }
 
 func TestValidateMandate_Valid(t *testing.T) {
@@ -346,5 +377,38 @@ func TestFundViaMandate_AuthToMismatch(t *testing.T) {
 	}
 	if !errors.Is(err, ErrInvalidMandate) {
 		t.Fatalf("expected ErrInvalidMandate, got: %v", err)
+	}
+}
+
+func TestFundViaMandate_BindDBErrorNotWrappedAsInvalidMandate(t *testing.T) {
+	svc, _, _ := setupTestService(t)
+
+	env := MandateEnvelope{
+		Type:          MandateTypePayment,
+		Payload:       map[string]any{},
+		Signature:     "0xdeadbeef",
+		SignerAddress: "0x1111111111111111111111111111111111111111",
+		Authorization: EIP3009Authorization{
+			From:        "0x1111111111111111111111111111111111111111",
+			To:          "0xABCDABCDABCDABCDABCDABCDABCDABCDABCDABCD",
+			Value:       "1000000",
+			ValidAfter:  "0",
+			ValidBefore: "9999999999",
+			Nonce:       "0x0000000000000000000000000000000000000000000000000000000000000001",
+			V:           27,
+			R:           "0x0000000000000000000000000000000000000000000000000000000000000002",
+			S:           "0x0000000000000000000000000000000000000000000000000000000000000003",
+		},
+	}
+
+	_, err := svc.FundViaMandate(context.Background(), 999, env)
+	if err == nil {
+		t.Fatal("expected bind-time get escrow error")
+	}
+	if errors.Is(err, ErrInvalidMandate) {
+		t.Fatalf("expected non-validation error to be unwrapped, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "get escrow:") {
+		t.Fatalf("expected get escrow prefix, got: %v", err)
 	}
 }

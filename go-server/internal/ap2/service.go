@@ -119,7 +119,7 @@ func (s *Service) ValidateMandate(_ context.Context, env MandateEnvelope) error 
 func (s *Service) BindToEscrow(ctx context.Context, env MandateEnvelope, escrowID int64) (*EscrowBinding, error) {
 	escrow, err := s.DB.GetEscrow(ctx, escrowID)
 	if err != nil {
-		return nil, fmt.Errorf("escrow not found: %w", err)
+		return nil, fmt.Errorf("get escrow: %w", err)
 	}
 
 	signerNorm := strings.ToLower(common.HexToAddress(env.SignerAddress).Hex())

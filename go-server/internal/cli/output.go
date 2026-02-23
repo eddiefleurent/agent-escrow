@@ -26,12 +26,13 @@ func WriteOutput(w io.Writer, format string, payload json.RawMessage) error {
 }
 
 func writePrettyJSON(w io.Writer, payload json.RawMessage) error {
-	if len(payload) == 0 {
+	payloadTrim := bytes.TrimSpace(payload)
+	if len(payloadTrim) == 0 {
 		_, err := fmt.Fprintln(w, "{}")
 		return err
 	}
 	var prettyJSON bytes.Buffer
-	if err := json.Indent(&prettyJSON, payload, "", "  "); err != nil {
+	if err := json.Indent(&prettyJSON, payloadTrim, "", "  "); err != nil {
 		return fmt.Errorf("invalid response json: %w", err)
 	}
 	_, err := fmt.Fprintln(w, prettyJSON.String())
@@ -39,19 +40,20 @@ func writePrettyJSON(w io.Writer, payload json.RawMessage) error {
 }
 
 func writeText(w io.Writer, payload json.RawMessage) error {
-	if len(payload) == 0 {
+	payloadTrim := bytes.TrimSpace(payload)
+	if len(payloadTrim) == 0 {
 		_, err := io.WriteString(w, "{}\n")
 		return err
 	}
 
 	var v any
-	if err := json.Unmarshal(payload, &v); err != nil {
+	if err := json.Unmarshal(payloadTrim, &v); err != nil {
 		return fmt.Errorf("invalid response json: %w", err)
 	}
 
 	obj, ok := v.(map[string]any)
 	if !ok {
-		return writePrettyJSON(w, payload)
+		return writePrettyJSON(w, payloadTrim)
 	}
 
 	keys := make([]string, 0, len(obj))
@@ -74,7 +76,7 @@ func writeText(w io.Writer, payload json.RawMessage) error {
 				return err
 			}
 		default:
-			return writePrettyJSON(w, payload)
+			return writePrettyJSON(w, payloadTrim)
 		}
 	}
 	_, err := io.Copy(w, &primitiveOutput)
