@@ -98,6 +98,7 @@ src/                      Solidity contracts
 test/                     Foundry tests
 script/                   Deploy scripts (Foundry/Solidity)
 scripts/                  Utility scripts (Python)
+demo/                     Demo scripts and results (ETH, USDC, AP2)
 go-server/
   cmd/server/main.go      Entrypoint
   internal/
