@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -14,18 +15,35 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
+const defaultFactoryAddress = "0x7006930a9d309ca476b5538800da16525ecb191d"
+
 func main() {
+	factoryFlag := flag.String("factory", "", "TaskEscrowFactory address (optional; overrides FACTORY_ADDRESS)")
+	flag.Parse()
+
 	rpcURL := os.Getenv("RPC_URL")
 	if rpcURL == "" {
 		log.Fatal("RPC_URL environment variable is required")
 	}
+
+	factoryAddress := *factoryFlag
+	if factoryAddress == "" {
+		factoryAddress = os.Getenv("FACTORY_ADDRESS")
+	}
+	if factoryAddress == "" {
+		factoryAddress = defaultFactoryAddress
+	}
+	if !common.IsHexAddress(factoryAddress) {
+		log.Fatalf("invalid factory address: %q", factoryAddress)
+	}
+	factory := common.HexToAddress(factoryAddress)
 
 	client, err := ethclient.Dial(rpcURL)
 	if err != nil {
 		log.Fatalf("failed to connect to RPC: %v", err)
 	}
 
-	code, err := fetchCode(client)
+	code, err := fetchCode(client, factory)
 	if err != nil {
 		client.Close()
 		log.Fatal(err)
@@ -61,10 +79,9 @@ func main() {
 	}
 }
 
-func fetchCode(client *ethclient.Client) ([]byte, error) {
+func fetchCode(client *ethclient.Client, factory common.Address) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	factory := common.HexToAddress("0x7006930a9d309ca476b5538800da16525ecb191d")
 	code, err := client.CodeAt(ctx, factory, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch code at %s: %w", factory.Hex(), err)

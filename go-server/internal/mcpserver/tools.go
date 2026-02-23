@@ -640,7 +640,7 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 	if signerAddr != workerAddr {
 		return textResult(fmt.Sprintf(
 			"submit_work requires the worker's signature. The server is configured with key for %s, but the escrow worker is %s. "+
-				"Set WORKER_KEY in the environment or run a server instance with the worker's private key.",
+				"Set PRIVATE_KEY in the environment or run a server instance with the worker's private key.",
 			signerAddr, workerAddr,
 		)), nil, nil
 	}
@@ -755,21 +755,30 @@ func (s *Server) handleDisputeWork(ctx context.Context, req *mcp.CallToolRequest
 				return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 			}
 			_ = s.idx.RunOnce(ctx)
-			return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+			return jsonResult(map[string]any{
+				"tx_hash":    tx.Hash().Hex(),
+				"next_steps": "Check get_escrow for updated status after indexer settles (~15s).",
+			})
 		case "verifier":
 			tx, err := s.chain.RejectMilestoneByVerifier(ctx, addr, msIdx, args.ReasonURI)
 			if err != nil {
 				return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 			}
 			_ = s.idx.RunOnce(ctx)
-			return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+			return jsonResult(map[string]any{
+				"tx_hash":    tx.Hash().Hex(),
+				"next_steps": "Check get_escrow for updated status after indexer settles (~15s).",
+			})
 		case "worker":
 			tx, err := s.chain.EscalateMilestoneSilence(ctx, addr, msIdx, args.ReasonURI)
 			if err != nil {
 				return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 			}
 			_ = s.idx.RunOnce(ctx)
-			return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+			return jsonResult(map[string]any{
+				"tx_hash":    tx.Hash().Hex(),
+				"next_steps": "Check get_escrow for updated status after indexer settles (~15s).",
+			})
 		default:
 			return textResult("role must be 'buyer', 'verifier', or 'worker'"), nil, nil
 		}
@@ -782,21 +791,30 @@ func (s *Server) handleDisputeWork(ctx context.Context, req *mcp.CallToolRequest
 			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 		}
 		_ = s.idx.RunOnce(ctx)
-		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+		return jsonResult(map[string]any{
+			"tx_hash":    tx.Hash().Hex(),
+			"next_steps": "Check get_escrow for updated status after indexer settles (~15s).",
+		})
 	case "verifier":
 		tx, err := s.chain.RejectByVerifier(ctx, addr, args.ReasonURI)
 		if err != nil {
 			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 		}
 		_ = s.idx.RunOnce(ctx)
-		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+		return jsonResult(map[string]any{
+			"tx_hash":    tx.Hash().Hex(),
+			"next_steps": "Check get_escrow for updated status after indexer settles (~15s).",
+		})
 	case "worker":
 		tx, err := s.chain.EscalateSilence(ctx, addr, args.ReasonURI)
 		if err != nil {
 			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 		}
 		_ = s.idx.RunOnce(ctx)
-		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+		return jsonResult(map[string]any{
+			"tx_hash":    tx.Hash().Hex(),
+			"next_steps": "Check get_escrow for updated status after indexer settles (~15s).",
+		})
 	default:
 		return textResult("role must be 'buyer', 'verifier', or 'worker'"), nil, nil
 	}
@@ -831,7 +849,10 @@ func (s *Server) handleResolveDispute(ctx context.Context, req *mcp.CallToolRequ
 			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 		}
 		_ = s.idx.RunOnce(ctx)
-		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+		return jsonResult(map[string]any{
+			"tx_hash":    tx.Hash().Hex(),
+			"next_steps": "Check get_escrow for updated status after indexer settles (~15s).",
+		})
 	}
 
 	tx, err := s.chain.ResolveDispute(ctx, addr, uint16(bps), args.ResolutionURI)
@@ -840,7 +861,10 @@ func (s *Server) handleResolveDispute(ctx context.Context, req *mcp.CallToolRequ
 	}
 
 	_ = s.idx.RunOnce(ctx)
-	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
+	return jsonResult(map[string]any{
+		"tx_hash":    tx.Hash().Hex(),
+		"next_steps": "Check get_escrow for updated status after indexer settles (~15s).",
+	})
 }
 
 func (s *Server) handleGetEscrow(ctx context.Context, req *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
@@ -1135,10 +1159,11 @@ func (s *Server) handleAcceptBid(ctx context.Context, req *mcp.CallToolRequest, 
 }
 
 func (s *Server) handleFundViaMandate(ctx context.Context, req *mcp.CallToolRequest, args fundViaMandateArgs) (*mcp.CallToolResult, any, error) {
-	escrowID, err := strconv.ParseInt(args.EscrowID.String(), 10, 64)
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
 	if err != nil {
-		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
+	escrowID := escrow.ID
 
 	v, err := strconv.ParseUint(args.AuthV.String(), 10, 8)
 	if err != nil {
@@ -1154,10 +1179,6 @@ func (s *Server) handleFundViaMandate(ctx context.Context, req *mcp.CallToolRequ
 
 	authTo := args.AuthTo
 	if authTo == "" {
-		escrow, err := s.db.GetEscrow(ctx, escrowID)
-		if err != nil {
-			return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
-		}
 		authTo = escrow.EscrowAddress
 	}
 
