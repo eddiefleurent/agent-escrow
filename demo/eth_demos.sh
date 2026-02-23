@@ -100,7 +100,17 @@ wait_tx_mined() {
     local receipt
     receipt=$(cast receipt "$tx_hash" --rpc-url "$RPC_URL" --json 2>/dev/null || echo "")
     if [ -n "$receipt" ]; then
-      return 0
+      local status
+      status=$(echo "$receipt" | python3 -c "import json,sys; s=json.load(sys.stdin).get('status'); print(int(s, 0) if isinstance(s, str) else int(s))" 2>/dev/null || echo "")
+      if [ "$status" = "1" ]; then
+        return 0
+      fi
+      if [ "$status" = "0" ]; then
+        echo "WARNING: tx $tx_hash reverted (status=0)" >&2
+      else
+        echo "WARNING: tx $tx_hash has unexpected receipt status (${status:-unknown})" >&2
+      fi
+      return 1
     fi
     sleep 2
   done

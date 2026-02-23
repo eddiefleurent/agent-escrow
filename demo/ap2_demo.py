@@ -18,7 +18,8 @@ from dotenv import load_dotenv
 from eth_account import Account
 from eth_account.messages import encode_typed_data
 
-BASE_URL = os.getenv("BASE_URL", "http://localhost:8080")
+DEFAULT_BASE_URL = "http://localhost:8080"
+BASE_URL = DEFAULT_BASE_URL
 RPC_URL = "https://sepolia.base.org"
 USDC = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
 CHAIN_ID = 84532
@@ -101,6 +102,8 @@ def require_env(name: str) -> str:
 
 def main():
     load_dotenv()
+    global BASE_URL
+    BASE_URL = os.getenv("BASE_URL", DEFAULT_BASE_URL).strip() or DEFAULT_BASE_URL
 
     buyer_key = require_env("PRIVATE_KEY")
     worker_key = require_env("WORKER_KEY")
