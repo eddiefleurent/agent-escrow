@@ -28,11 +28,11 @@ func HumanizeError(err error) error {
 	}
 
 	msg := err.Error()
+	lowerMsg := strings.ToLower(msg)
 
 	// Look for "execution reverted" pattern which often contains a selector.
-	if !strings.Contains(msg, "execution reverted") {
-		// Check for "nonce too low" for better messaging.
-		if strings.Contains(msg, "nonce too low") {
+	if !strings.Contains(lowerMsg, "execution reverted") {
+		if strings.Contains(lowerMsg, "nonce too low") {
 			return &humanError{
 				original: err,
 				message:  msg + " (hint: the server's nonce cache is stale — restart the server or wait for the pending transaction to confirm)",
@@ -41,9 +41,9 @@ func HumanizeError(err error) error {
 		return err
 	}
 
-	// Try to find a 4-byte selector in the error message.
+	// Try to find a 4-byte selector in the error message (case-insensitive).
 	for selector, description := range knownSelectors {
-		if strings.Contains(msg, selector) {
+		if strings.Contains(lowerMsg, strings.ToLower(selector)) {
 			return &humanError{
 				original: err,
 				message:  description,
@@ -52,9 +52,8 @@ func HumanizeError(err error) error {
 	}
 
 	// Try to extract and decode any 4-byte selector from hex data in the message.
-	if idx := strings.Index(msg, "0x"); idx >= 0 {
-		hexPart := msg[idx+2:]
-		// Take first 8 hex chars (4 bytes) if available.
+	if idx := strings.Index(lowerMsg, "0x"); idx >= 0 {
+		hexPart := lowerMsg[idx+2:]
 		if len(hexPart) >= 8 {
 			selectorHex := hexPart[:8]
 			if _, decErr := hex.DecodeString(selectorHex); decErr == nil {

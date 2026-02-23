@@ -172,7 +172,14 @@ func (c *Client) sendTxLocked(ctx context.Context, to common.Address, data []byt
 
 	if err := c.eth.SendTransaction(ctx, signedTx); err != nil {
 		errMsg := err.Error()
-		if allowRetry && (strings.Contains(errMsg, "nonce too low") || strings.Contains(errMsg, "already known")) {
+		// "already known" means the tx is already in the mempool — treat as success
+		// rather than retrying with a fresh nonce (which would submit a different tx).
+		if strings.Contains(errMsg, "already known") {
+			c.nonce++
+			c.nonceOK = true
+			return signedTx, nil
+		}
+		if allowRetry && strings.Contains(errMsg, "nonce too low") {
 			nonce, fetchErr := c.eth.PendingNonceAt(ctx, c.address)
 			if fetchErr != nil {
 				return nil, fmt.Errorf("send tx: %w (nonce refresh also failed: %w)", err, fetchErr)

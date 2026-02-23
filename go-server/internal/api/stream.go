@@ -62,7 +62,7 @@ func (sh *StreamHandler) HandleSSE(w http.ResponseWriter, r *http.Request) {
 		"status":      "connected",
 		"sub_id":      sub.ID,
 		"escrow":      escrow,
-		"granularity": r.URL.Query().Get("granularity"),
+		"granularity": granularity.String(),
 	})
 	if _, err := fmt.Fprintf(w, "event: connected\ndata: %s\n\n", connData); err != nil {
 		slog.Error("sse: write connected event failed", "error", err)

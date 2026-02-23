@@ -1,11 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -14,14 +15,22 @@ import (
 )
 
 func main() {
-	client, _ := ethclient.Dial(os.Getenv("RPC_URL"))
-	defer client.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	rpcURL := os.Getenv("RPC_URL")
+	if rpcURL == "" {
+		log.Fatal("RPC_URL environment variable is required")
+	}
 
-	factory := common.HexToAddress("0x7006930a9d309ca476b5538800da16525ecb191d")
-	code, _ := client.CodeAt(ctx, factory, nil)
-	codeHex := hex.EncodeToString(code)
+	client, err := ethclient.Dial(rpcURL)
+	if err != nil {
+		log.Fatalf("failed to connect to RPC: %v", err)
+	}
+
+	code, err := fetchCode(client)
+	if err != nil {
+		client.Close()
+		log.Fatal(err)
+	}
+	client.Close()
 
 	selectors := map[string]string{
 		"c229b1e9": "createEscrow (current ABI w/ milestones)",
@@ -41,7 +50,24 @@ func main() {
 
 	fmt.Printf("Code length: %d bytes\n", len(code))
 	for sel, name := range selectors {
-		found := strings.Contains(codeHex, sel)
+		selectorBytes, err := hex.DecodeString(sel)
+		if err != nil {
+			log.Fatalf("invalid selector hex %q: %v", sel, err)
+		}
+		// EVM uses PUSH4 (0x63) to load 4-byte selectors for dispatch
+		pattern := append([]byte{0x63}, selectorBytes...)
+		found := bytes.Contains(code, pattern)
 		fmt.Printf("  %s (%s): %v\n", sel, name, found)
 	}
+}
+
+func fetchCode(client *ethclient.Client) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	factory := common.HexToAddress("0x7006930a9d309ca476b5538800da16525ecb191d")
+	code, err := client.CodeAt(ctx, factory, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch code at %s: %w", factory.Hex(), err)
+	}
+	return code, nil
 }

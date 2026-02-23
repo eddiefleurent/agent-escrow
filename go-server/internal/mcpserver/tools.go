@@ -849,7 +849,14 @@ func (s *Server) handleGetEscrow(ctx context.Context, req *mcp.CallToolRequest, 
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
 
-	stakeRequired := hasStake(escrow) && escrow.Status == "funded"
+	stakeRequired := false
+	if hasStake(escrow) && escrow.Status == "funded" {
+		deposited, err := s.db.EventExistsForContract(ctx, escrow.EscrowAddress, "WorkerStakeDeposited")
+		if err != nil {
+			return textResult(fmt.Sprintf("failed to check stake status: %v", err)), nil, nil
+		}
+		stakeRequired = !deposited
+	}
 
 	result := map[string]any{
 		"escrow":         escrow,
@@ -1469,7 +1476,7 @@ func isERC20Token(token string) bool {
 	return token != "" && token != "0x0000000000000000000000000000000000000000"
 }
 
-// normalizeToken converts empty string to the canonical zero address for consistency.
+// normalizeToken normalizes the canonical zero-address to an empty string (ETH).
 func normalizeToken(token string) string {
 	if token == "" || token == "0x0000000000000000000000000000000000000000" {
 		return ""
