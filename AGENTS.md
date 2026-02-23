@@ -57,6 +57,8 @@ make test-all       # fmt-check + all Solidity + Go vet + Go lint + Go tests
 
 Always run `make test-all` before finishing changes. If tests fail, fix the root cause, rerun, and report what changed.
 
+Exception: if a change is strictly documentation-only (for example `*.md` files, diagrams, or other non-code docs), rerunning test suites is not required.
+
 ## Solidity Standards
 
 - Custom errors over string reverts.

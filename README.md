@@ -46,9 +46,13 @@ Nine states, multiple resolution paths: direct buyer approval, optional verifier
 
 ## Live Demo
 
-Deployed on Base Sepolia with verified ETH and USDC escrow lifecycles -- full create-fund-submit-approve-settle flows with real transactions.
+Deployed on Base Sepolia with verified ETH, USDC, and AP2 mandate-bridge flows.
 
-Factory: [`0x798830e2d3C25cF9296fe06a46D808CFB550e880`](https://sepolia.basescan.org/address/0x798830e2d3C25cF9296fe06a46D808CFB550e880). Full transaction details: [`demo/DEMO_RUN.md`](demo/DEMO_RUN.md)
+Factory: [`0x798830e2d3C25cF9296fe06a46D808CFB550e880`](https://sepolia.basescan.org/address/0x798830e2d3C25cF9296fe06a46D808CFB550e880)
+
+- Runbook + prerequisites: [`demo/README.md`](demo/README.md)
+- Full transaction logs: [`demo/DEMO_RUN.md`](demo/DEMO_RUN.md)
+- Demo scripts: [`demo/eth_demos.sh`](demo/eth_demos.sh), [`demo/usdc_demos.sh`](demo/usdc_demos.sh), [`demo/ap2_demo.py`](demo/ap2_demo.py)
 
 ## Paper Mapping
 
@@ -147,44 +151,25 @@ Full roadmap with paper traceability: [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Project Structure
 
-```text
-src/                    Solidity contracts (TaskEscrowFactory, TaskEscrow)
-test/                   Foundry tests (unit, fuzz, invariant)
-script/                 Deployment scripts
-go-server/
-  cmd/server/           Entrypoint
-  internal/
-    chain/              go-ethereum client, ABI bindings
-    storage/            SQLite schema, queries, models
-    indexer/            Event polling → DB reconciliation
-    mcpserver/          MCP server + tool handlers
-    api/                HTTP JSON API + middleware
-  abi/                  Embedded ABI artifacts
-docs/
-  diagrams/             PlantUML sources + generated PNGs
-  ARCHITECTURE.md       System design, paper grounding, scalability analysis
-  SPEC.md               Contract specification: state machine, interfaces, invariants
-  ROADMAP.md            Delivery phases, paper framework mapping
-  SETUP.md              Environment setup, configuration reference
-  DEPLOYMENTS.md        Deployed contract addresses
-  DEPLOY.md             Deployment guide and lifecycle walkthrough
-demo/
-  DEMO_RUN.md           Live demo — transactions on Base Sepolia
-  eth_demos.sh          ETH demo script (7 scenarios)
-  usdc_demos.sh         USDC demo script (7 scenarios)
-  ap2_demo.py           AP2 mandate bridge demo
-```
+- `src/`, `test/`, `script/`: Solidity contracts, Foundry tests, and deployment scripts.
+- `go-server/`: single Go service (MCP server, HTTP API, indexer, bidding, A2A/AP2 adapters, storage, chain client).
+- `docs/`: architecture/spec/roadmap/setup/deploy docs plus PlantUML diagrams.
+- `demo/`: executable ETH/USDC/AP2 demos and on-chain run logs.
+- `scripts/`: utility scripts (for example faucet helpers).
 
 ## Documentation
 
 | Document | Contents |
 |---|---|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System design, paper grounding, scalability analysis |
-| [`docs/SPEC.md`](docs/SPEC.md) | Contract specification: state machine, interfaces, invariants, security |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Implementation phases, paper framework mapping, success metrics |
-| [`docs/SETUP.md`](docs/SETUP.md) | Environment setup, configuration reference |
-| [`demo/DEMO_RUN.md`](demo/DEMO_RUN.md) | Live demo run with on-chain transactions |
-| [`docs/DEPLOYMENTS.md`](docs/DEPLOYMENTS.md) | Deployed contract addresses |
+| [`docs/SPEC.md`](docs/SPEC.md) | Contract design intent: lifecycle, settlement math, invariants |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System architecture, integrations, and scaling model |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Delivery phases and current roadmap status |
+| [`docs/SETUP.md`](docs/SETUP.md) | Local setup and configuration |
+| [`docs/DEPLOY.md`](docs/DEPLOY.md) | Deployment workflow |
+| [`docs/DEPLOYMENTS.md`](docs/DEPLOYMENTS.md) | Live deployed addresses |
+| [`docs/diagrams/`](docs/diagrams) | State machine, lifecycle, bidding, and architecture diagrams |
+| [`demo/README.md`](demo/README.md) | Demo prerequisites and run commands |
+| [`demo/DEMO_RUN.md`](demo/DEMO_RUN.md) | Demo transaction traces |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution guidelines |
 
 ## Quick Start
