@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/spf13/cobra"
 )
@@ -30,7 +31,8 @@ func newBidPlaceCmd(opts *Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runPost(cmd, opts, fmt.Sprintf("/api/v1/rfqs/%s/bids", args[0]), body)
+			rfqID := url.PathEscape(args[0])
+			return runPost(cmd, opts, fmt.Sprintf("/api/v1/rfqs/%s/bids", rfqID), body)
 		},
 	}
 	attachPayloadFlags(cmd, &pf)
@@ -43,7 +45,8 @@ func newBidListCmd(opts *Options) *cobra.Command {
 		Short: "List bids for an RFQ",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runGet(cmd, opts, fmt.Sprintf("/api/v1/rfqs/%s/bids", args[0]), nil)
+			rfqID := url.PathEscape(args[0])
+			return runGet(cmd, opts, fmt.Sprintf("/api/v1/rfqs/%s/bids", rfqID), nil)
 		},
 	}
 }
@@ -59,7 +62,8 @@ func newBidAcceptCmd(opts *Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runPost(cmd, opts, fmt.Sprintf("/api/v1/rfqs/%s/accept", args[0]), body)
+			rfqID := url.PathEscape(args[0])
+			return runPost(cmd, opts, fmt.Sprintf("/api/v1/rfqs/%s/accept", rfqID), body)
 		},
 	}
 	attachPayloadFlags(cmd, &pf)

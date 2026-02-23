@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/spf13/cobra"
 )
@@ -50,7 +51,7 @@ func newEscrowGetCmd(opts *Options) *cobra.Command {
 		Short: "Get escrow by local database id",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runGet(cmd, opts, "/api/v1/escrows/"+args[0], nil)
+			return runGet(cmd, opts, "/api/v1/escrows/"+url.PathEscape(args[0]), nil)
 		},
 	}
 }
@@ -119,7 +120,8 @@ func postByEscrowIDCmd(opts *Options, use, short, actionPath string, requiresPay
 			if err != nil {
 				return err
 			}
-			path := fmt.Sprintf("/api/v1/escrows/%s%s", args[0], actionPath)
+			escrowID := url.PathEscape(args[0])
+			path := fmt.Sprintf("/api/v1/escrows/%s%s", escrowID, actionPath)
 			return runPost(cmd, opts, path, body)
 		},
 	}

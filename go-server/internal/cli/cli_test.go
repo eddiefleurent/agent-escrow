@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"testing"
 	"time"
 
@@ -85,7 +86,7 @@ func TestCLIEscrowListAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
+	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID:                   task.ID,
 		ChainID:                  84532,
 		FactoryAddress:           "0xF",
@@ -117,7 +118,8 @@ func TestCLIEscrowListAndGet(t *testing.T) {
 		t.Fatalf("expected 1 escrow, got %d", len(escrows))
 	}
 
-	getOut, getErr, err := runCLI(t, env.server.URL, "escrow", "get", "1")
+	idStr := strconv.FormatInt(escrow.ID, 10)
+	getOut, getErr, err := runCLI(t, env.server.URL, "escrow", "get", idStr)
 	if err != nil {
 		t.Fatalf("execute escrow get: %v stderr=%s", err, getErr)
 	}

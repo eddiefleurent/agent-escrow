@@ -59,6 +59,7 @@ func streamSSE(ctx context.Context, out io.Writer, client *Client, path string, 
 	}
 	req.Header.Set("Accept", "text/event-stream")
 
+	// #nosec G704 -- This CLI intentionally connects to a user-configured API base URL.
 	resp, err := client.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
@@ -74,11 +75,13 @@ func streamSSE(ctx context.Context, out io.Writer, client *Client, path string, 
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimRight(scanner.Text(), "\r")
 		if line == "" || strings.HasPrefix(line, ":") {
 			continue
 		}
+		// #nosec G705 -- Stream lines are printed to terminal/stdout, not rendered as HTML.
 		if _, err := fmt.Fprintln(out, line); err != nil {
 			return fmt.Errorf("write stream output: %w", err)
 		}

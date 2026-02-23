@@ -39,6 +39,11 @@ func writePrettyJSON(w io.Writer, payload json.RawMessage) error {
 }
 
 func writeText(w io.Writer, payload json.RawMessage) error {
+	if len(payload) == 0 {
+		_, err := io.WriteString(w, "{}\n")
+		return err
+	}
+
 	var v any
 	if err := json.Unmarshal(payload, &v); err != nil {
 		return fmt.Errorf("invalid response json: %w", err)

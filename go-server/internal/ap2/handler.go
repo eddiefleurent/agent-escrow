@@ -2,6 +2,7 @@ package ap2
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 )
@@ -26,8 +27,12 @@ func (h *Handler) FundViaMandate(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.svc.FundViaMandate(r.Context(), req.EscrowID, req.MandateEnvelope)
 	if err != nil {
+		if errors.Is(err, ErrInvalidMandate) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid mandate or escrow binding"})
+			return
+		}
 		slog.Error("fund via mandate failed", "escrow_id", req.EscrowID, "error", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 

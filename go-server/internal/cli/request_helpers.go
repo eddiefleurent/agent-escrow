@@ -37,11 +37,11 @@ func payloadFromFlags(pf payloadFlags, required bool) (any, error) {
 	if pf.inline != "" {
 		raw = pf.inline
 	} else {
-		bytes, err := os.ReadFile(pf.file)
+		data, err := os.ReadFile(pf.file)
 		if err != nil {
 			return nil, fmt.Errorf("read data file: %w", err)
 		}
-		raw = string(bytes)
+		raw = string(data)
 	}
 
 	decoder := json.NewDecoder(strings.NewReader(raw))

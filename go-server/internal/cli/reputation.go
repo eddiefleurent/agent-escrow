@@ -15,7 +15,11 @@ func newReputationCmd(opts *Options) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := "/api/v1/reputation/" + args[0]
-			return runGet(cmd, opts, path, map[string]string{"role": role})
+			query := map[string]string{}
+			if role != "" {
+				query["role"] = role
+			}
+			return runGet(cmd, opts, path, query)
 		},
 	}
 	getCmd.Flags().StringVar(&role, "role", "", "Role filter: buyer|worker")

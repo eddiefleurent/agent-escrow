@@ -2,6 +2,7 @@ package ap2
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
@@ -336,5 +337,8 @@ func TestFundViaMandate_AuthToMismatch(t *testing.T) {
 	_, err = svc.FundViaMandate(context.Background(), escrow.ID, env)
 	if err == nil {
 		t.Fatal("expected error for authorization.to mismatch")
+	}
+	if !errors.Is(err, ErrInvalidMandate) {
+		t.Fatalf("expected ErrInvalidMandate, got: %v", err)
 	}
 }

@@ -1,6 +1,10 @@
 package cli
 
-import "github.com/spf13/cobra"
+import (
+	"net/url"
+
+	"github.com/spf13/cobra"
+)
 
 func newAP2Cmd(opts *Options) *cobra.Command {
 	ap2Cmd := &cobra.Command{
@@ -38,7 +42,7 @@ func newAP2MandateCmd(opts *Options) *cobra.Command {
 		Short: "Get AP2 mandate details",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path := "/api/v1/ap2/mandates/" + args[0]
+			path := "/api/v1/ap2/mandates/" + url.PathEscape(args[0])
 			return runGet(cmd, opts, path, nil)
 		},
 	}

@@ -20,6 +20,9 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
+// ErrInvalidMandate indicates invalid user-provided AP2 mandate input.
+var ErrInvalidMandate = errors.New("invalid mandate")
+
 // Service implements the AP2 mandate-to-escrow bridge.
 type Service struct {
 	DB    *storage.DB
@@ -187,12 +190,12 @@ func (s *Service) BindToEscrow(ctx context.Context, env MandateEnvelope, escrowI
 // FundViaMandate orchestrates the full flow: validate -> bind -> fund on-chain.
 func (s *Service) FundViaMandate(ctx context.Context, escrowID int64, env MandateEnvelope) (*FundViaMandateResponse, error) {
 	if err := s.ValidateMandate(ctx, env); err != nil {
-		return nil, fmt.Errorf("validate mandate: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidMandate, err)
 	}
 
 	binding, err := s.BindToEscrow(ctx, env, escrowID)
 	if err != nil {
-		return nil, fmt.Errorf("bind to escrow: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidMandate, err)
 	}
 
 	escrow, err := s.DB.GetEscrow(ctx, escrowID)

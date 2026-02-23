@@ -64,7 +64,11 @@ func (c *Client) Post(ctx context.Context, path string, body any) (json.RawMessa
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, query url.Values, body any) (json.RawMessage, error) {
-	fullURL := c.baseURL + path
+	normalizedPath := path
+	if normalizedPath != "" && !strings.HasPrefix(normalizedPath, "/") {
+		normalizedPath = "/" + normalizedPath
+	}
+	fullURL := c.baseURL + normalizedPath
 	if len(query) > 0 {
 		fullURL += "?" + query.Encode()
 	}
@@ -87,6 +91,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 	}
 	req.Header.Set("Accept", "application/json")
 
+	// #nosec G704 -- This CLI intentionally connects to a user-configured API base URL.
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)

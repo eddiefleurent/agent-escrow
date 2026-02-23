@@ -38,7 +38,6 @@ func NewRootCmd(stdout, stderr io.Writer) *cobra.Command {
 			if opts.Output != outputText && opts.Output != outputJSON {
 				return fmt.Errorf("invalid --output value %q (expected text or json)", opts.Output)
 			}
-			opts.ServerURL = strings.TrimRight(opts.ServerURL, "/")
 			return nil
 		},
 	}
@@ -72,7 +71,7 @@ func firstNonEmpty(values ...string) string {
 			return value
 		}
 	}
-	return defaultServerURL
+	return ""
 }
 
 func newClient(opts *Options) *Client {
