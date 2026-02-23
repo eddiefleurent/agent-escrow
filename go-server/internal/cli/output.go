@@ -60,15 +60,23 @@ func writeText(w io.Writer, payload json.RawMessage) error {
 	}
 	sort.Strings(keys)
 
+	var primitiveOutput bytes.Buffer
 	for _, key := range keys {
 		switch val := obj[key].(type) {
 		case string, float64, bool, nil:
-			if _, err := fmt.Fprintf(w, "%s: %v\n", key, val); err != nil {
+			if val == nil {
+				if _, err := fmt.Fprintf(&primitiveOutput, "%s: null\n", key); err != nil {
+					return err
+				}
+				continue
+			}
+			if _, err := fmt.Fprintf(&primitiveOutput, "%s: %v\n", key, val); err != nil {
 				return err
 			}
 		default:
 			return writePrettyJSON(w, payload)
 		}
 	}
-	return nil
+	_, err := io.Copy(w, &primitiveOutput)
+	return err
 }

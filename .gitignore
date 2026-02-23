@@ -3,7 +3,6 @@ cache/
 out/
 broadcast/
 go-server/bin/
-go-server/cli
 node_modules/
 
 *.db

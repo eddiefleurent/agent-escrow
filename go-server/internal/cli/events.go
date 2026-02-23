@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -25,7 +26,7 @@ func newEventsCmd(opts *Options) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			path := "/api/v1/events"
 			if escrowID != "" {
-				path = fmt.Sprintf("/api/v1/escrows/%s/events", escrowID)
+				path = fmt.Sprintf("/api/v1/escrows/%s/events", url.PathEscape(escrowID))
 			}
 			ctx, cancel := streamContext(opts)
 			defer cancel()

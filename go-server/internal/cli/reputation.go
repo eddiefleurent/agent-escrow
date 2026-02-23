@@ -1,6 +1,10 @@
 package cli
 
-import "github.com/spf13/cobra"
+import (
+	"net/url"
+
+	"github.com/spf13/cobra"
+)
 
 func newReputationCmd(opts *Options) *cobra.Command {
 	reputationCmd := &cobra.Command{
@@ -14,7 +18,7 @@ func newReputationCmd(opts *Options) *cobra.Command {
 		Short: "Get reputation for an address",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path := "/api/v1/reputation/" + args[0]
+			path := "/api/v1/reputation/" + url.PathEscape(args[0])
 			query := map[string]string{}
 			if role != "" {
 				query["role"] = role

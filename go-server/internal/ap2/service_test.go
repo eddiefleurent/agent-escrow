@@ -226,6 +226,9 @@ func TestFundViaMandate_BuyerMismatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for buyer mismatch")
 	}
+	if !errors.Is(err, ErrInvalidMandate) {
+		t.Fatalf("expected ErrInvalidMandate, got: %v", err)
+	}
 }
 
 func TestFundViaMandate_InsufficientValue(t *testing.T) {
@@ -281,6 +284,9 @@ func TestFundViaMandate_InsufficientValue(t *testing.T) {
 	_, err = svc.FundViaMandate(context.Background(), escrow.ID, env)
 	if err == nil {
 		t.Fatal("expected error for insufficient value")
+	}
+	if !errors.Is(err, ErrInvalidMandate) {
+		t.Fatalf("expected ErrInvalidMandate, got: %v", err)
 	}
 }
 
