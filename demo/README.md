@@ -17,9 +17,11 @@ Live demo scripts exercising the full escrow lifecycle on Base Sepolia. Each scr
    lsof -ti :8080 | xargs kill -9 2>/dev/null
    rm -f go-server/delegation.db*
    set -a && source .env && set +a
-   cd go-server && ./bin/server
+   # Run server in a separate terminal (recommended), or background it:
+   (cd go-server && ./bin/server)
+   # Alternative: (cd go-server && ./bin/server > /tmp/agent-escrow-server.log 2>&1 &)
    ```
-   Wait ~30s for the indexer to sync before running demos.
+   Keep your demo terminal at the repo root, then wait ~30s for the indexer to sync before running demos.
 
 2. **Environment variables** sourced from `.env` (see `.env.example`):
    - `PRIVATE_KEY` — buyer/owner key (server signs with this)

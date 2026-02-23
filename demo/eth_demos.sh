@@ -11,6 +11,8 @@ BASE_URL="${BASE_URL:-http://localhost:8080}"
 RPC_URL="https://sepolia.base.org"
 
 # Participant addresses and keys
+# BUYER_KEY and VERIFIER_KEY are kept for demo parity with other scripts.
+# Buyer actions are submitted via HTTP API (server signs), and verifier role is not cast-driven here.
 BUYER="0x458397fDDB048239Ab033054d3F70919a95cF4d3"
 BUYER_KEY="0x2e47cbbfcb4b01810e024950bed53debf698eae347d3bf4ada494f7c8e2c122d"
 
@@ -121,7 +123,7 @@ cast_tx() {
     echo "  cast_tx retry $attempt/5 ($(echo "$result" | head -c 120))..." >&2
     sleep 4
   done
-  echo "FAILED"
+  echo "cast_tx failed for $to" >&2
   return 1
 }
 
@@ -139,7 +141,7 @@ cast_tx_value() {
     echo "  cast_tx_value retry $attempt/5 ($(echo "$result" | head -c 120))..." >&2
     sleep 4
   done
-  echo "FAILED"
+  echo "cast_tx_value failed for $to" >&2
   return 1
 }
 
@@ -184,14 +186,14 @@ wait_tx_mined "$C_TX_FUND"
 wait_indexer
 
 step "Worker deposits stake (0.00005 ETH via cast)"
-C_TX_STAKE=$(cast_tx_value "$WORKER_KEY" "$C_ADDR" "depositStake()" "50000000000000")
+C_TX_STAKE=$(cast_tx_value "$WORKER_KEY" "$C_ADDR" "depositStake()" "50000000000000") || exit 1
 echo "  Stake tx: $C_TX_STAKE"
 
 wait_indexer
 
 step "Worker submits work (via cast)"
 SUB_HASH=$(cast keccak "ipfs://QmDemoC_worker_stake_happy_path")
-C_TX_SUBMIT=$(cast_tx "$WORKER_KEY" "$C_ADDR" "submit(bytes32,string)" "$SUB_HASH" "ipfs://QmDemoC_worker_stake_happy_path")
+C_TX_SUBMIT=$(cast_tx "$WORKER_KEY" "$C_ADDR" "submit(bytes32,string)" "$SUB_HASH" "ipfs://QmDemoC_worker_stake_happy_path") || exit 1
 echo "  Submit tx: $C_TX_SUBMIT"
 
 wait_indexer
@@ -268,7 +270,7 @@ wait_indexer
 
 step "M0: Worker submits"
 H=$(cast keccak "ipfs://QmDemoD_m0")
-D_TX_M0S=$(cast_tx "$WORKER_KEY" "$D_ADDR" "submitMilestone(uint8,bytes32,string)" 0 "$H" "ipfs://QmDemoD_m0")
+D_TX_M0S=$(cast_tx "$WORKER_KEY" "$D_ADDR" "submitMilestone(uint8,bytes32,string)" 0 "$H" "ipfs://QmDemoD_m0") || exit 1
 echo "  M0 submit tx: $D_TX_M0S"
 
 wait_indexer
@@ -282,7 +284,7 @@ wait_indexer
 
 step "M1: Worker submits"
 H=$(cast keccak "ipfs://QmDemoD_m1")
-D_TX_M1S=$(cast_tx "$WORKER_KEY" "$D_ADDR" "submitMilestone(uint8,bytes32,string)" 1 "$H" "ipfs://QmDemoD_m1")
+D_TX_M1S=$(cast_tx "$WORKER_KEY" "$D_ADDR" "submitMilestone(uint8,bytes32,string)" 1 "$H" "ipfs://QmDemoD_m1") || exit 1
 echo "  M1 submit tx: $D_TX_M1S"
 
 wait_indexer
@@ -296,7 +298,7 @@ wait_indexer
 
 step "M2: Worker submits"
 H=$(cast keccak "ipfs://QmDemoD_m2")
-D_TX_M2S=$(cast_tx "$WORKER_KEY" "$D_ADDR" "submitMilestone(uint8,bytes32,string)" 2 "$H" "ipfs://QmDemoD_m2")
+D_TX_M2S=$(cast_tx "$WORKER_KEY" "$D_ADDR" "submitMilestone(uint8,bytes32,string)" 2 "$H" "ipfs://QmDemoD_m2") || exit 1
 echo "  M2 submit tx: $D_TX_M2S"
 
 wait_indexer
@@ -378,14 +380,14 @@ wait_tx_mined "$E_TX_FUND"
 wait_indexer
 
 step "Worker deposits stake (0.00005 ETH)"
-E_TX_STAKE=$(cast_tx_value "$WORKER_KEY" "$E_ADDR" "depositStake()" "50000000000000")
+E_TX_STAKE=$(cast_tx_value "$WORKER_KEY" "$E_ADDR" "depositStake()" "50000000000000") || exit 1
 echo "  Stake tx: $E_TX_STAKE"
 
 wait_indexer
 
 step "M0: Worker submits"
 H=$(cast keccak "ipfs://QmDemoE_m0")
-E_TX_M0S=$(cast_tx "$WORKER_KEY" "$E_ADDR" "submitMilestone(uint8,bytes32,string)" 0 "$H" "ipfs://QmDemoE_m0")
+E_TX_M0S=$(cast_tx "$WORKER_KEY" "$E_ADDR" "submitMilestone(uint8,bytes32,string)" 0 "$H" "ipfs://QmDemoE_m0") || exit 1
 echo "  M0 submit tx: $E_TX_M0S"
 
 wait_indexer
@@ -399,7 +401,7 @@ wait_indexer
 
 step "M1: Worker submits"
 H=$(cast keccak "ipfs://QmDemoE_m1")
-E_TX_M1S=$(cast_tx "$WORKER_KEY" "$E_ADDR" "submitMilestone(uint8,bytes32,string)" 1 "$H" "ipfs://QmDemoE_m1")
+E_TX_M1S=$(cast_tx "$WORKER_KEY" "$E_ADDR" "submitMilestone(uint8,bytes32,string)" 1 "$H" "ipfs://QmDemoE_m1") || exit 1
 echo "  M1 submit tx: $E_TX_M1S"
 
 wait_indexer
@@ -412,7 +414,7 @@ echo "  M1 dispute tx: $E_TX_M1D"
 wait_indexer
 
 step "M1: Arbitrator resolves (50/50 split, 5000 bps)"
-E_TX_M1R=$(cast_tx "$ARBITRATOR_KEY" "$E_ADDR" "resolveMilestoneDispute(uint8,uint16,string)" 1 5000 "ipfs://QmDemoE_resolution_5050")
+E_TX_M1R=$(cast_tx "$ARBITRATOR_KEY" "$E_ADDR" "resolveMilestoneDispute(uint8,uint16,string)" 1 5000 "ipfs://QmDemoE_resolution_5050") || exit 1
 echo "  M1 resolve tx: $E_TX_M1R"
 
 wait_indexer
@@ -491,7 +493,7 @@ wait_tx_mined "$F_TX_FUND"
 wait_indexer
 
 step "Worker deposits stake (0.00005 ETH)"
-F_TX_STAKE=$(cast_tx_value "$WORKER_KEY" "$F_ADDR" "depositStake()" "50000000000000")
+F_TX_STAKE=$(cast_tx_value "$WORKER_KEY" "$F_ADDR" "depositStake()" "50000000000000") || exit 1
 echo "  Stake tx: $F_TX_STAKE"
 
 step "Waiting for primary worker deadline to expire (35s)..."
@@ -505,14 +507,14 @@ echo "  Backup activation tx: $F_TX_BACKUP"
 wait_indexer
 
 step "Backup worker deposits stake (required after activation)"
-F_TX_BSTAKE=$(cast_tx_value "$BACKUP_KEY" "$F_ADDR" "depositStake()" "50000000000000")
+F_TX_BSTAKE=$(cast_tx_value "$BACKUP_KEY" "$F_ADDR" "depositStake()" "50000000000000") || exit 1
 echo "  Backup stake tx: $F_TX_BSTAKE"
 
 wait_indexer
 
 step "Backup worker submits"
 H=$(cast keccak "ipfs://QmDemoF_backup_submission")
-F_TX_SUBMIT=$(cast_tx "$BACKUP_KEY" "$F_ADDR" "submit(bytes32,string)" "$H" "ipfs://QmDemoF_backup_submission")
+F_TX_SUBMIT=$(cast_tx "$BACKUP_KEY" "$F_ADDR" "submit(bytes32,string)" "$H" "ipfs://QmDemoF_backup_submission") || exit 1
 echo "  Submit tx: $F_TX_SUBMIT"
 
 wait_indexer
@@ -609,7 +611,7 @@ wait_indexer
 
 step "Worker submits"
 H=$(cast keccak "ipfs://QmDemoG_audit_report")
-G_TX_SUBMIT=$(cast_tx "$WORKER_KEY" "$G_ADDR" "submit(bytes32,string)" "$H" "ipfs://QmDemoG_audit_report")
+G_TX_SUBMIT=$(cast_tx "$WORKER_KEY" "$G_ADDR" "submit(bytes32,string)" "$H" "ipfs://QmDemoG_audit_report") || exit 1
 echo "  Submit tx: $G_TX_SUBMIT"
 
 wait_indexer

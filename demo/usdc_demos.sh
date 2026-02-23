@@ -12,6 +12,8 @@ RPC_URL="https://sepolia.base.org"
 USDC="0x036CbD53842c5426634e7929541eC2318f3dCF7e"
 
 # Participant addresses and keys
+# BUYER_KEY and VERIFIER_KEY are kept for demo parity with other scripts.
+# Buyer actions are submitted via HTTP API (server signs), and verifier role is not cast-driven here.
 BUYER="0x458397fDDB048239Ab033054d3F70919a95cF4d3"
 BUYER_KEY="0x2e47cbbfcb4b01810e024950bed53debf698eae347d3bf4ada494f7c8e2c122d"
 
@@ -129,18 +131,27 @@ cast_tx() {
     echo "  cast_tx retry $attempt/5 ($(echo "$result" | head -c 120))..." >&2
     sleep 4
   done
-  echo "FAILED"
+  echo "cast_tx failed for $to" >&2
   return 1
 }
 
 approve_usdc() {
   local key="$1" spender="$2" amount="$3"
-  local tx_hash
-  tx_hash=$(cast send "$USDC" "approve(address,uint256)" "$spender" "$amount" \
-    --private-key "$key" --rpc-url "$RPC_URL" --json 2>/dev/null \
-    | python3 -c "import sys,json; print(json.load(sys.stdin)['transactionHash'])")
-  wait_tx_mined "$tx_hash"
-  echo "$tx_hash"
+  local result tx_hash
+  for attempt in 1 2 3 4 5; do
+    result=$(cast send "$USDC" "approve(address,uint256)" "$spender" "$amount" \
+      --private-key "$key" --rpc-url "$RPC_URL" --json 2>&1)
+    tx_hash=$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin)['transactionHash'])" 2>/dev/null)
+    if [ -n "$tx_hash" ]; then
+      wait_tx_mined "$tx_hash"
+      echo "$tx_hash"
+      return 0
+    fi
+    echo "  approve_usdc retry $attempt/5 ($(echo "$result" | head -c 120))..." >&2
+    sleep 4
+  done
+  echo "approve_usdc failed for spender $spender" >&2
+  return 1
 }
 
 ########################################################################
@@ -185,18 +196,18 @@ wait_tx_mined "$C_TX_FUND"
 wait_indexer
 
 step "Worker approves USDC for stake deposit"
-C_TX_STAKE_APPROVE=$(approve_usdc "$WORKER_KEY" "$C_ADDR" "$STAKE_AMOUNT")
+C_TX_STAKE_APPROVE=$(approve_usdc "$WORKER_KEY" "$C_ADDR" "$STAKE_AMOUNT") || exit 1
 echo "  Stake approve tx: $C_TX_STAKE_APPROVE"
 
 step "Worker deposits stake (0.05 USDC via cast)"
-C_TX_STAKE=$(cast_tx "$WORKER_KEY" "$C_ADDR" "depositStake()")
+C_TX_STAKE=$(cast_tx "$WORKER_KEY" "$C_ADDR" "depositStake()") || exit 1
 echo "  Stake tx: $C_TX_STAKE"
 
 wait_indexer
 
 step "Worker submits work (via cast)"
 SUB_HASH=$(cast keccak "ipfs://QmUSDC_DemoC_worker_stake_happy_path")
-C_TX_SUBMIT=$(cast_tx "$WORKER_KEY" "$C_ADDR" "submit(bytes32,string)" "$SUB_HASH" "ipfs://QmUSDC_DemoC_worker_stake_happy_path")
+C_TX_SUBMIT=$(cast_tx "$WORKER_KEY" "$C_ADDR" "submit(bytes32,string)" "$SUB_HASH" "ipfs://QmUSDC_DemoC_worker_stake_happy_path") || exit 1
 echo "  Submit tx: $C_TX_SUBMIT"
 
 wait_indexer
@@ -275,7 +286,7 @@ wait_indexer
 
 step "M0: Worker submits"
 H=$(cast keccak "ipfs://QmUSDC_DemoD_m0")
-D_TX_M0S=$(cast_tx "$WORKER_KEY" "$D_ADDR" "submitMilestone(uint8,bytes32,string)" 0 "$H" "ipfs://QmUSDC_DemoD_m0")
+D_TX_M0S=$(cast_tx "$WORKER_KEY" "$D_ADDR" "submitMilestone(uint8,bytes32,string)" 0 "$H" "ipfs://QmUSDC_DemoD_m0") || exit 1
 echo "  M0 submit tx: $D_TX_M0S"
 
 wait_indexer
@@ -289,7 +300,7 @@ wait_indexer
 
 step "M1: Worker submits"
 H=$(cast keccak "ipfs://QmUSDC_DemoD_m1")
-D_TX_M1S=$(cast_tx "$WORKER_KEY" "$D_ADDR" "submitMilestone(uint8,bytes32,string)" 1 "$H" "ipfs://QmUSDC_DemoD_m1")
+D_TX_M1S=$(cast_tx "$WORKER_KEY" "$D_ADDR" "submitMilestone(uint8,bytes32,string)" 1 "$H" "ipfs://QmUSDC_DemoD_m1") || exit 1
 echo "  M1 submit tx: $D_TX_M1S"
 
 wait_indexer
@@ -303,7 +314,7 @@ wait_indexer
 
 step "M2: Worker submits"
 H=$(cast keccak "ipfs://QmUSDC_DemoD_m2")
-D_TX_M2S=$(cast_tx "$WORKER_KEY" "$D_ADDR" "submitMilestone(uint8,bytes32,string)" 2 "$H" "ipfs://QmUSDC_DemoD_m2")
+D_TX_M2S=$(cast_tx "$WORKER_KEY" "$D_ADDR" "submitMilestone(uint8,bytes32,string)" 2 "$H" "ipfs://QmUSDC_DemoD_m2") || exit 1
 echo "  M2 submit tx: $D_TX_M2S"
 
 wait_indexer
@@ -386,18 +397,18 @@ wait_tx_mined "$E_TX_FUND"
 wait_indexer
 
 step "Worker approves USDC for stake"
-E_TX_STAKE_APPROVE=$(approve_usdc "$WORKER_KEY" "$E_ADDR" "$STAKE_AMOUNT")
+E_TX_STAKE_APPROVE=$(approve_usdc "$WORKER_KEY" "$E_ADDR" "$STAKE_AMOUNT") || exit 1
 echo "  Stake approve tx: $E_TX_STAKE_APPROVE"
 
 step "Worker deposits stake (0.05 USDC)"
-E_TX_STAKE=$(cast_tx "$WORKER_KEY" "$E_ADDR" "depositStake()")
+E_TX_STAKE=$(cast_tx "$WORKER_KEY" "$E_ADDR" "depositStake()") || exit 1
 echo "  Stake tx: $E_TX_STAKE"
 
 wait_indexer
 
 step "M0: Worker submits"
 H=$(cast keccak "ipfs://QmUSDC_DemoE_m0")
-E_TX_M0S=$(cast_tx "$WORKER_KEY" "$E_ADDR" "submitMilestone(uint8,bytes32,string)" 0 "$H" "ipfs://QmUSDC_DemoE_m0")
+E_TX_M0S=$(cast_tx "$WORKER_KEY" "$E_ADDR" "submitMilestone(uint8,bytes32,string)" 0 "$H" "ipfs://QmUSDC_DemoE_m0") || exit 1
 echo "  M0 submit tx: $E_TX_M0S"
 
 wait_indexer
@@ -411,7 +422,7 @@ wait_indexer
 
 step "M1: Worker submits"
 H=$(cast keccak "ipfs://QmUSDC_DemoE_m1")
-E_TX_M1S=$(cast_tx "$WORKER_KEY" "$E_ADDR" "submitMilestone(uint8,bytes32,string)" 1 "$H" "ipfs://QmUSDC_DemoE_m1")
+E_TX_M1S=$(cast_tx "$WORKER_KEY" "$E_ADDR" "submitMilestone(uint8,bytes32,string)" 1 "$H" "ipfs://QmUSDC_DemoE_m1") || exit 1
 echo "  M1 submit tx: $E_TX_M1S"
 
 wait_indexer
@@ -424,7 +435,7 @@ echo "  M1 dispute tx: $E_TX_M1D"
 wait_indexer
 
 step "M1: Arbitrator resolves (50/50 split, 5000 bps)"
-E_TX_M1R=$(cast_tx "$ARBITRATOR_KEY" "$E_ADDR" "resolveMilestoneDispute(uint8,uint16,string)" 1 5000 "ipfs://QmUSDC_DemoE_resolution_5050")
+E_TX_M1R=$(cast_tx "$ARBITRATOR_KEY" "$E_ADDR" "resolveMilestoneDispute(uint8,uint16,string)" 1 5000 "ipfs://QmUSDC_DemoE_resolution_5050") || exit 1
 echo "  M1 resolve tx: $E_TX_M1R"
 
 wait_indexer
@@ -504,11 +515,11 @@ wait_tx_mined "$F_TX_FUND"
 wait_indexer
 
 step "Worker approves USDC for stake"
-F_TX_STAKE_APPROVE=$(approve_usdc "$WORKER_KEY" "$F_ADDR" "$STAKE_AMOUNT")
+F_TX_STAKE_APPROVE=$(approve_usdc "$WORKER_KEY" "$F_ADDR" "$STAKE_AMOUNT") || exit 1
 echo "  Stake approve tx: $F_TX_STAKE_APPROVE"
 
 step "Worker deposits stake (0.05 USDC)"
-F_TX_STAKE=$(cast_tx "$WORKER_KEY" "$F_ADDR" "depositStake()")
+F_TX_STAKE=$(cast_tx "$WORKER_KEY" "$F_ADDR" "depositStake()") || exit 1
 echo "  Stake tx: $F_TX_STAKE"
 
 step "Waiting for primary worker deadline to expire (35s)..."
@@ -522,18 +533,18 @@ echo "  Backup activation tx: $F_TX_BACKUP"
 wait_indexer
 
 step "Backup worker approves USDC for stake"
-F_TX_BSTAKE_APPROVE=$(approve_usdc "$BACKUP_KEY" "$F_ADDR" "$STAKE_AMOUNT")
+F_TX_BSTAKE_APPROVE=$(approve_usdc "$BACKUP_KEY" "$F_ADDR" "$STAKE_AMOUNT") || exit 1
 echo "  Backup stake approve tx: $F_TX_BSTAKE_APPROVE"
 
 step "Backup worker deposits stake (0.05 USDC)"
-F_TX_BSTAKE=$(cast_tx "$BACKUP_KEY" "$F_ADDR" "depositStake()")
+F_TX_BSTAKE=$(cast_tx "$BACKUP_KEY" "$F_ADDR" "depositStake()") || exit 1
 echo "  Backup stake tx: $F_TX_BSTAKE"
 
 wait_indexer
 
 step "Backup worker submits"
 H=$(cast keccak "ipfs://QmUSDC_DemoF_backup_submission")
-F_TX_SUBMIT=$(cast_tx "$BACKUP_KEY" "$F_ADDR" "submit(bytes32,string)" "$H" "ipfs://QmUSDC_DemoF_backup_submission")
+F_TX_SUBMIT=$(cast_tx "$BACKUP_KEY" "$F_ADDR" "submit(bytes32,string)" "$H" "ipfs://QmUSDC_DemoF_backup_submission") || exit 1
 echo "  Submit tx: $F_TX_SUBMIT"
 
 wait_indexer
@@ -633,7 +644,7 @@ wait_indexer
 
 step "Worker submits"
 H=$(cast keccak "ipfs://QmUSDC_DemoG_audit_report")
-G_TX_SUBMIT=$(cast_tx "$WORKER_KEY" "$G_ADDR" "submit(bytes32,string)" "$H" "ipfs://QmUSDC_DemoG_audit_report")
+G_TX_SUBMIT=$(cast_tx "$WORKER_KEY" "$G_ADDR" "submit(bytes32,string)" "$H" "ipfs://QmUSDC_DemoG_audit_report") || exit 1
 echo "  Submit tx: $G_TX_SUBMIT"
 
 wait_indexer

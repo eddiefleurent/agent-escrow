@@ -8,6 +8,7 @@ via POST /api/v1/ap2/fund, then completes the escrow lifecycle.
 import json
 import os
 import secrets
+import subprocess
 import sys
 import time
 
@@ -65,13 +66,10 @@ def api_post(path: str, data: dict | None = None, retries: int = 5) -> dict:
         else:
             print(f"  FAILED after {retries} attempts: {body}", file=sys.stderr)
             sys.exit(1)
-    return {}
 
 
 def cast_tx(private_key: str, to: str, sig: str, *args: str) -> str:
     """Send a transaction via cast and return the tx hash."""
-    import subprocess
-
     cmd = [
         "cast", "send", to, sig, *args,
         "--private-key", private_key,
@@ -138,7 +136,6 @@ def main():
     # Wait for create tx to be mined
     print("  → Waiting for create tx to be mined...")
     for _ in range(20):
-        import subprocess
         result = subprocess.run(
             ["cast", "receipt", tx_create, "--rpc-url", RPC_URL, "--json"],
             capture_output=True, text=True, timeout=10,
@@ -209,8 +206,8 @@ def main():
         },
     }
 
-    print(f"    Mandate envelope:")
-    print(f"      type: payment")
+    print("    Mandate envelope:")
+    print("      type: payment")
     print(f"      signer: {buyer_addr}")
     print(f"      authorization.to: {escrow_addr}")
     print(f"      authorization.value: {ESCROW_AMOUNT}")
@@ -243,7 +240,6 @@ def main():
 
     # Step 6: Complete lifecycle — worker submits
     print("  → Step 6: Worker submits work")
-    import subprocess
     sub_hash = subprocess.run(
         ["cast", "keccak", "ipfs://QmAP2_demo_submission"],
         capture_output=True, text=True, timeout=10,
