@@ -1,4 +1,4 @@
-.PHONY: build test test-unit test-invariant fmt fmt-check sizes snapshot clean deploy-base-sepolia go-abi go-build go-test go-vet go-lint go-lint-fix go-run go-fmt all test-all
+.PHONY: build test test-unit test-invariant fmt fmt-check sizes snapshot clean deploy-base-sepolia go-abi go-build go-cli-build go-cli-install go-test go-vet go-lint go-lint-fix go-run go-fmt all test-all
 
 GO_CACHE_DIR := $(CURDIR)/.cache/go-build
 GOLANGCI_LINT_CACHE_DIR := $(CURDIR)/.cache/golangci-lint
@@ -50,6 +50,13 @@ go-abi:
 go-build: go-abi
 	cd go-server && GOCACHE=$(GO_CACHE_DIR) go build -o bin/server ./cmd/server/
 
+go-cli-build:
+	cd go-server && GOCACHE=$(GO_CACHE_DIR) go build -o bin/escrow-cli ./cmd/cli/
+
+go-cli-install: go-cli-build
+	mkdir -p $(HOME)/.local/bin
+	install -m 0755 go-server/bin/escrow-cli $(HOME)/.local/bin/escrow-cli
+
 go-test: go-abi
 	cd go-server && GOCACHE=$(GO_CACHE_DIR) go test ./...
 
@@ -69,6 +76,6 @@ go-fmt:
 	cd go-server && gofmt -w .
 
 # Combined targets
-all: build go-build
+all: build go-build go-cli-build
 
-test-all: fmt-check test test-invariant go-vet go-lint go-test
+test-all: fmt-check test test-invariant go-vet go-lint go-test go-cli-build

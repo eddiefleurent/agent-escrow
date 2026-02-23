@@ -22,6 +22,9 @@ skinparam note {
 title System Architecture
 
 package "AI Agents" as agents #E8EAF6 {
+  [Shell Agent\n(Codex, Cursor, etc.)] as shell_agent #C5CAE9
+  [Skill File\n(skills/escrow-cli/SKILL.md)] as skill_file #C5CAE9
+  [escrow-cli\n(thin HTTP client)] as cli_client #C5CAE9
   [MCP Client\n(Claude, GPT, etc.)] as mcp_client #C5CAE9
   [HTTP Client\n(Scripts, Agents)] as http_client #C5CAE9
   [SSE/WS Client\n(Event Subscribers)] as stream_client #C5CAE9
@@ -61,6 +64,9 @@ package "Base (Ethereum L2)" as chain #E8F5E9 {
 }
 
 ' --- Agent-to-server ---
+shell_agent -down-> skill_file : reads
+shell_agent -down-> cli_client : runs
+cli_client -down-> http_api : JSON
 mcp_client -down-> mcp_server : stdio / HTTP
 http_client -down-> http_api : JSON
 stream_client -down-> stream_handler : SSE / WebSocket
@@ -105,8 +111,9 @@ title Go Server — Internal Detail
 
 package "Go Server" as server #E3F2FD {
   package "Agent Interfaces" as ifaces #BBDEFB {
-    [MCP Server\n(stdio / streamable-HTTP)] as mcp_server #BBDEFB
     [HTTP API\n(JSON REST)] as http_api #BBDEFB
+    [MCP Server\n(stdio / streamable-HTTP)] as mcp_server #BBDEFB
+    [CLI via HTTP\n(escrow-cli)] as cli_iface #BBDEFB
     [AP2 Handler\n(/api/v1/ap2/*)] as ap2 #BBDEFB
     [SSE/WS Handlers\n(stream.go)] as stream_handler #BBDEFB
   }
@@ -122,6 +129,7 @@ package "Go Server" as server #E3F2FD {
     [Storage\n(SQLite)] as storage #B3E5FC
   }
 
+  cli_iface -down-> http_api
   mcp_server -down-> chain_client
   mcp_server -down-> storage
   mcp_server -right-> event_bus : subscribe_events\n(polling)

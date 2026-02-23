@@ -20,6 +20,12 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
+// ErrInvalidMandate indicates invalid user-provided AP2 mandate input.
+var ErrInvalidMandate = errors.New("invalid mandate")
+
+// ErrBindValidation indicates user-provided bind inputs failed escrow validation checks.
+var ErrBindValidation = errors.New("bind validation failed")
+
 // Service implements the AP2 mandate-to-escrow bridge.
 type Service struct {
 	DB    *storage.DB
@@ -113,32 +119,32 @@ func (s *Service) ValidateMandate(_ context.Context, env MandateEnvelope) error 
 func (s *Service) BindToEscrow(ctx context.Context, env MandateEnvelope, escrowID int64) (*EscrowBinding, error) {
 	escrow, err := s.DB.GetEscrow(ctx, escrowID)
 	if err != nil {
-		return nil, fmt.Errorf("escrow not found: %w", err)
+		return nil, fmt.Errorf("get escrow: %w", err)
 	}
 
 	signerNorm := strings.ToLower(common.HexToAddress(env.SignerAddress).Hex())
 	buyerNorm := strings.ToLower(common.HexToAddress(escrow.Buyer).Hex())
 	if signerNorm != buyerNorm {
-		return nil, errors.New("mandate signer must be the escrow buyer")
+		return nil, fmt.Errorf("%w: mandate signer must be the escrow buyer", ErrBindValidation)
 	}
 
 	// EIP-3009 authorization recipient must match the escrow contract address
 	authToNorm := strings.ToLower(common.HexToAddress(env.Authorization.To).Hex())
 	escrowAddrNorm := strings.ToLower(common.HexToAddress(escrow.EscrowAddress).Hex())
 	if authToNorm != escrowAddrNorm {
-		return nil, fmt.Errorf("authorization.to (%s) does not match escrow address (%s)", authToNorm, escrowAddrNorm)
+		return nil, fmt.Errorf("%w: authorization.to (%s) does not match escrow address (%s)", ErrBindValidation, authToNorm, escrowAddrNorm)
 	}
 
 	authValue, ok := new(big.Int).SetString(env.Authorization.Value, 10)
 	if !ok {
-		return nil, errors.New("invalid authorization value")
+		return nil, fmt.Errorf("%w: invalid authorization value", ErrBindValidation)
 	}
 	escrowAmount, ok := new(big.Int).SetString(escrow.Amount, 10)
 	if !ok {
 		return nil, errors.New("invalid escrow amount")
 	}
 	if authValue.Cmp(escrowAmount) < 0 {
-		return nil, fmt.Errorf("authorization value (%s) is less than escrow amount (%s)", authValue, escrowAmount)
+		return nil, fmt.Errorf("%w: authorization value (%s) is less than escrow amount (%s)", ErrBindValidation, authValue, escrowAmount)
 	}
 
 	mandateHash, err := hashMandate(env)
@@ -187,12 +193,15 @@ func (s *Service) BindToEscrow(ctx context.Context, env MandateEnvelope, escrowI
 // FundViaMandate orchestrates the full flow: validate -> bind -> fund on-chain.
 func (s *Service) FundViaMandate(ctx context.Context, escrowID int64, env MandateEnvelope) (*FundViaMandateResponse, error) {
 	if err := s.ValidateMandate(ctx, env); err != nil {
-		return nil, fmt.Errorf("validate mandate: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidMandate, err)
 	}
 
 	binding, err := s.BindToEscrow(ctx, env, escrowID)
 	if err != nil {
-		return nil, fmt.Errorf("bind to escrow: %w", err)
+		if errors.Is(err, ErrBindValidation) {
+			return nil, fmt.Errorf("%w: %w", ErrInvalidMandate, err)
+		}
+		return nil, err
 	}
 
 	escrow, err := s.DB.GetEscrow(ctx, escrowID)

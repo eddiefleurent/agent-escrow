@@ -10,6 +10,8 @@ It does **not** duplicate information that lives authoritatively elsewhere:
 - Deployment procedures → `docs/SETUP.md`
 - Testing requirements → the test files (`test/`)
 
+Current off-chain integration surfaces (Skills + `escrow-cli`, MCP, HTTP API) do not change this contract-level specification. They are delivery interfaces for the same on-chain state machine and settlement math.
+
 ## 2) Paper Traceability
 
 Implements ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) (Tomašev, Franklin, Osindero -- Google DeepMind, 2026). V1 implements the settlement kernel: financial accountability and bounded authority. V2 adds market primitives. Adaptive delegation intelligence is deferred to subsequent phases.
