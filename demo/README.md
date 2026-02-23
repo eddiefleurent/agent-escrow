@@ -59,7 +59,7 @@ bash demo/usdc_demos.sh
 uv run demo/ap2_demo.py
 ```
 
-Results are saved to `/tmp/v2_demo_results.json` (ETH), `/tmp/v2_usdc_demo_results.json` (USDC), and `/tmp/ap2_demo_results.json` (AP2).
+Results are saved to `/tmp/v2_demo_results.json` (ETH), `/tmp/v2_usdc_demo_results.json` (USDC), and a secure temp file for AP2 (or `AP2_RESULTS_FILE`/`DEMO_OUTPUT_PATH`/`OUTPUT_PATH` if set).
 
 ## Results Documentation
 

@@ -10,6 +10,7 @@ import os
 import secrets
 import subprocess
 import sys
+import tempfile
 import time
 
 import requests
@@ -144,14 +145,22 @@ def main():
 
     # Wait for create tx to be mined
     print("  → Waiting for create tx to be mined...")
+    mined = False
     for _ in range(20):
         result = subprocess.run(
             ["cast", "receipt", tx_create, "--rpc-url", RPC_URL, "--json"],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode == 0 and result.stdout.strip():
+            mined = True
             break
         time.sleep(2)
+    if not mined:
+        print(
+            f"  Create tx not mined after 20 attempts: tx={tx_create} rpc={RPC_URL}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     time.sleep(3)
 
     # Step 2: Generate EIP-3009 authorization signature
@@ -293,7 +302,14 @@ def main():
         "eip3009_nonce": nonce_hex,
         "eip3009_valid_before": valid_before,
     }
-    results_file = "/tmp/ap2_demo_results.json"
+    results_file = (
+        os.getenv("AP2_RESULTS_FILE")
+        or os.getenv("DEMO_OUTPUT_PATH")
+        or os.getenv("OUTPUT_PATH")
+    )
+    if not results_file:
+        fd, results_file = tempfile.mkstemp(prefix="ap2_demo_", suffix=".json")
+        os.close(fd)
     with open(results_file, "w") as f:
         json.dump(results, f, indent=2)
     print(f"Results saved to: {results_file}")
