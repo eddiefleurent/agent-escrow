@@ -89,11 +89,20 @@ def cast_tx(private_key: str, to: str, sig: str, *args: str) -> str:
     sys.exit(1)
 
 
+def require_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        print(f"ERROR: missing required environment variable: {name}", file=sys.stderr)
+        print("Hint: set -a && source .env && set +a", file=sys.stderr)
+        sys.exit(1)
+    return value
+
+
 def main():
     load_dotenv()
 
-    buyer_key = os.environ["PRIVATE_KEY"]
-    worker_key = os.environ["WORKER_KEY"]
+    buyer_key = require_env("PRIVATE_KEY")
+    worker_key = require_env("WORKER_KEY")
     buyer_addr = Account.from_key(buyer_key).address
     worker_addr = os.environ.get(
         "WORKER_ADDRESS", "0x9A085AC334a38F0C2881615003FFeD3C7E5Ac7F6"

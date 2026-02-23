@@ -25,7 +25,8 @@ Live demo scripts exercising the full escrow lifecycle on Base Sepolia. Each scr
 
 2. **Environment variables** sourced from `.env` (see `.env.example`):
    - `PRIVATE_KEY` — buyer/owner key (server signs with this)
-   - `WORKER_KEY`, `VERIFIER_KEY`, `ARBITRATOR_KEY`, `BACKUP_WORKER_KEY` — used by `cast send`
+   - `WORKER_KEY`, `VERIFIER_KEY`, `ARBITRATOR_KEY`, `BACKUP_KEY` — required for `cast send` in demos
+   - `BACKUP_WORKER_KEY` is still accepted as a legacy alias for `BACKUP_KEY`
    - `FACTORY_ADDRESS` — deployed factory on Base Sepolia
 
 3. **Tooling installed**: `cast` (Foundry), `curl`, `jq`, `python3`

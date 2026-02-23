@@ -10,23 +10,42 @@ set -euo pipefail
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 RPC_URL="https://sepolia.base.org"
 
+require_env() {
+  local name="$1"
+  if [ -z "${!name:-}" ]; then
+    echo "ERROR: missing required environment variable: ${name}" >&2
+    echo "Hint: set -a && source .env && set +a" >&2
+    exit 1
+  fi
+}
+
 # Participant addresses and keys
 # BUYER_KEY and VERIFIER_KEY are kept for demo parity with other scripts.
 # Buyer actions are submitted via HTTP API (server signs), and verifier role is not cast-driven here.
 BUYER="0x458397fDDB048239Ab033054d3F70919a95cF4d3"
-BUYER_KEY="0x2e47cbbfcb4b01810e024950bed53debf698eae347d3bf4ada494f7c8e2c122d"
+BUYER_KEY="${PRIVATE_KEY:-}"
 
 WORKER="0x9A085AC334a38F0C2881615003FFeD3C7E5Ac7F6"
-WORKER_KEY="0x20774cf2501ebbdb48ecd5558bb007fc064c961a3a76dd4347e0c08d7340c5ba"
+WORKER_KEY="${WORKER_KEY:-}"
 
 VERIFIER="0xEa62Afd342704CF52A48A50BC5a7e57B45e3de7A"
-VERIFIER_KEY="0xe92ed807b7f32c0a13640773ff86b077cedbc73b6fb4d494956432ba87a4b600"
+VERIFIER_KEY="${VERIFIER_KEY:-}"
 
 ARBITRATOR="0x98586bC45A9D6B9D2C5F11292d4a9bfA4a50b097"
-ARBITRATOR_KEY="0x971f468e3c88a0eaa71025878984fdedf0eeea2bd845b27740079f9209f350f9"
+ARBITRATOR_KEY="${ARBITRATOR_KEY:-}"
 
 BACKUP_WORKER="0x3f044Bd753c7a40c385Cf80790c056C07138bA05"
-BACKUP_KEY="0xf2d3ee03da240e950da6f638dcc64d7db36c0071d11ecd82f69fe9ad3d98d2ad"
+BACKUP_KEY="${BACKUP_KEY:-${BACKUP_WORKER_KEY:-}}"
+
+require_env "PRIVATE_KEY"
+require_env "WORKER_KEY"
+require_env "VERIFIER_KEY"
+require_env "ARBITRATOR_KEY"
+if [ -z "$BACKUP_KEY" ]; then
+  echo "ERROR: missing required environment variable: BACKUP_KEY (or BACKUP_WORKER_KEY for compatibility)" >&2
+  echo "Hint: set -a && source .env && set +a" >&2
+  exit 1
+fi
 
 RESULTS_FILE="${RESULTS_FILE:-/tmp/v2_demo_results.json}"
 echo '{}' > "$RESULTS_FILE"
