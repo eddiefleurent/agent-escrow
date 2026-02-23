@@ -3,12 +3,14 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestReputationGetRejectsInvalidRole(t *testing.T) {
 	cmd := newReputationCmd(&Options{
 		ServerURL: "http://127.0.0.1:1",
 		Output:    outputJSON,
+		Timeout:   100 * time.Millisecond,
 	})
 	cmd.SetArgs([]string{"get", "0x1111111111111111111111111111111111111111", "--role", "admin"})
 

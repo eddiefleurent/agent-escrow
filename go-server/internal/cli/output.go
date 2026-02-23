@@ -61,6 +61,10 @@ func writeText(w io.Writer, payload json.RawMessage) error {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	if len(keys) == 0 {
+		_, err := io.WriteString(w, "{}\n")
+		return err
+	}
 
 	var primitiveOutput bytes.Buffer
 	for _, key := range keys {
