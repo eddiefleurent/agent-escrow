@@ -51,10 +51,6 @@ these are operational/distribution concerns.
 
 ## Minor
 
-- [ ] **REFERENCE.md for admin skill** -- `skills/escrow-admin/references/REFERENCE.md`
-  is missing. Create it (can be a trimmed copy of the participant reference covering
-  only emergency + AP2 commands).
-
 - [ ] **Check `escrow-cli` install target** -- `make go-cli-install` puts the binary
   in `~/.local/bin`. Confirm this is on PATH in typical agent environments, or add a
   note to the skill's setup section.

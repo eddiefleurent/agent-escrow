@@ -21,8 +21,13 @@ releases on approval. `escrow-cli` is your interface to this system.
 Install the CLI (one time):
 
 ```bash
-curl -sSL https://github.com/eddiefleurent/agent-escrow/releases/latest/download/install.sh | sh
+# Coming soon: signed release installer once the release workflow is live.
+# For now, build/install locally:
+make go-cli-install
 ```
+
+Do not execute remote scripts (`curl ... | sh`) unless you have verified source
+integrity (for example SHA-256 checksum or signature verification).
 
 Configure the server (ask the operator for the URL if you don't have it):
 

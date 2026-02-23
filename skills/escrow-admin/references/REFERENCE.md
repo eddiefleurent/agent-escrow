@@ -14,7 +14,7 @@ All global flags from the participant CLI apply here too:
 
 ## `health`
 
-```
+```text
 GET /api/v1/health
 ```
 
@@ -30,7 +30,7 @@ must be the factory owner.
 
 ### `emergency freeze-address` (body required)
 
-```
+```text
 POST /api/v1/emergency/freeze-address
 ```
 
@@ -46,7 +46,7 @@ Body fields:
 
 ### `emergency unfreeze-address` (body required)
 
-```
+```text
 POST /api/v1/emergency/unfreeze-address
 ```
 
@@ -54,7 +54,7 @@ Same body as `freeze-address`.
 
 ### `emergency freeze-escrow` (body required)
 
-```
+```text
 POST /api/v1/emergency/freeze-escrow
 ```
 
@@ -68,7 +68,7 @@ POST /api/v1/emergency/freeze-escrow
 
 ### `emergency unfreeze-escrow` (body required)
 
-```
+```text
 POST /api/v1/emergency/unfreeze-escrow
 ```
 
@@ -76,7 +76,7 @@ Same body as `freeze-escrow`.
 
 ### `emergency resolve` (body required)
 
-```
+```text
 POST /api/v1/emergency/resolve
 ```
 
@@ -98,7 +98,7 @@ Force-settles a frozen escrow. Irreversible.
 
 ### `emergency frozen-addresses`
 
-```
+```text
 GET /api/v1/emergency/frozen-addresses
 ```
 
@@ -106,7 +106,7 @@ No flags.
 
 ### `emergency actions`
 
-```
+```text
 GET /api/v1/emergency/actions
 ```
 
@@ -185,7 +185,7 @@ All AP2 requests wrap their payload in a `mandate_envelope`:
 
 ### `ap2 validate` (body required)
 
-```
+```text
 POST /api/v1/ap2/validate
 ```
 
@@ -197,7 +197,7 @@ Response: `{"valid": true}` or `{"valid": false, "reason": "..."}`
 
 ### `ap2 fund` (body required)
 
-```
+```text
 POST /api/v1/ap2/fund
 ```
 
@@ -227,7 +227,7 @@ Response:
 
 ### `ap2 mandate <id>`
 
-```
+```text
 GET /api/v1/ap2/mandates/{id}
 ```
 

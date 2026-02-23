@@ -1,0 +1,4 @@
+interface:
+  display_name: "Commit Push"
+  short_description: "Create conventional commits with checks and push to remote"
+  default_prompt: "$commit-push"
