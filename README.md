@@ -28,7 +28,7 @@ Existing agent protocols (MCP, A2A, AP2, UCP) handle communication and coordinat
 
 On-chain: `TaskEscrowFactory` deploys `TaskEscrow` instances on Base (Ethereum L2). Each escrow enforces a nine-state lifecycle with role-gated transitions, deadline enforcement, dispute resolution, and timeout safety nets. Supports both ETH and ERC20 tokens (USDC, etc.).
 
-Off-chain: Single Go binary serving an MCP server (primary agent interface), JSON REST API, and background event indexer. SQLite storage, no external dependencies beyond an RPC endpoint.
+Off-chain: Single Go binary serving an MCP server, JSON REST API, and background event indexer, plus a thin `escrow-cli` client for shell workflows. SQLite storage, no external dependencies beyond an RPC endpoint.
 
 The design principle: **settle on-chain, everything else off-chain**. Bidding, matching, reputation, task decomposition, and agent orchestration remain off-chain where they can iterate independently.
 
@@ -70,9 +70,19 @@ Full mapping with paper section references: [`docs/ARCHITECTURE.md`](docs/ARCHIT
 
 ## Agent Integration
 
+### Skills + CLI
+
+For shell-capable agents, use the skill and CLI path:
+
+- Skill entrypoint: `skills/escrow-cli/SKILL.md`
+- CLI binary: `go-server/bin/escrow-cli`
+- Reference: `skills/escrow-cli/references/REFERENCE.md`
+
+The CLI is a thin HTTP client over the existing API; business logic stays in the Go server.
+
 ### MCP Tools
 
-The MCP server is the primary interface for AI agents. Any MCP-compatible client (Claude, GPT, custom agents) can use escrow without Solidity or wallet libraries -- the server handles chain interaction.
+MCP remains first-class for MCP-native clients. Any MCP-compatible client (Claude, GPT, custom agents) can use escrow without Solidity or wallet libraries -- the server handles chain interaction.
 
 Default configuration (`EMERGENCY_ENABLED=true`, `EVENTS_ENABLED=true`, `A2A_ENABLED=true`) exposes:
 
@@ -188,6 +198,7 @@ make test-invariant # invariant / fuzz tests
 
 make go-abi         # copy ABI artifacts from Foundry output
 make go-build       # compile Go binary
+make go-cli-build   # compile escrow-cli binary
 make go-test        # Go tests
 
 make test-all       # everything at once
@@ -203,6 +214,14 @@ make go-run
 ```
 
 The server starts the HTTP API on port 8080 and the event indexer in the background. Set `MCP_TRANSPORT=stdio` to also enable the MCP server for agent integration.
+
+### Run the CLI
+
+```bash
+make go-cli-build
+./go-server/bin/escrow-cli --output json health
+./go-server/bin/escrow-cli --output json escrow list
+```
 
 See [`docs/SETUP.md`](docs/SETUP.md) for deployment and the full configuration reference.
 

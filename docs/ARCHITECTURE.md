@@ -112,13 +112,15 @@ The paper proposes specific protocol extensions (§6.1) that map to the roadmap:
 
 Four integration paths, in priority order:
 
-**Path A: MCP settlement server (V1, complete).** Any MCP-compatible agent can use escrow by connecting to the server. The agent does not need Solidity or wallet libraries -- the MCP server handles chain interaction.
+**Path A: Skills + CLI for shell agents (V2).** Shell-capable agents discover `skills/escrow-cli/SKILL.md` and execute `escrow-cli`, a thin HTTP client over the existing API. This keeps business logic centralized in the Go server while enabling low-friction agent workflows.
 
-**Path B: x402 funding and discovery (V2).** Agents with existing x402 wallets (including [Payments MCP](https://docs.cdp.coinbase.com/payments-mcp/welcome) users) can fund escrows via EIP-3009 gasless transfers through the x402 facilitator. Escrow-backed delegation services are discoverable via Bazaar alongside simple paid APIs, providing a natural on-ramp for agents already in the x402 ecosystem.
+**Path B: MCP settlement server (V1, complete).** Any MCP-compatible agent can use escrow by connecting to the server. The agent does not need Solidity or wallet libraries -- the MCP server handles chain interaction.
 
-**Path C: A2A settlement adapter (V2).** An A2A-compatible agent whose capability is on-chain settlement of delegated work. Other agents discover it via agent cards and Bazaar; it holds funds in escrow and releases them when work is verified.
+**Path C: x402 funding and discovery (V2).** Agents with existing x402 wallets (including [Payments MCP](https://docs.cdp.coinbase.com/payments-mcp/welcome) users) can fund escrows via EIP-3009 gasless transfers through the x402 facilitator. Escrow-backed delegation services are discoverable via Bazaar alongside simple paid APIs, providing a natural on-ramp for agents already in the x402 ecosystem.
 
-**Path D: Reference implementation (ongoing).** The paper proposes protocol extensions as "illustrative examples of the kinds of functionalities that would be possible to include in agentic protocols" (§6.1). A working implementation that demonstrates these ideas in practice can serve as a reference for the ecosystem.
+**Path D: A2A settlement adapter (V2).** An A2A-compatible agent whose capability is on-chain settlement of delegated work. Other agents discover it via agent cards and Bazaar; it holds funds in escrow and releases them when work is verified.
+
+**Path E: Reference implementation (ongoing).** The paper proposes protocol extensions as "illustrative examples of the kinds of functionalities that would be possible to include in agentic protocols" (§6.1). A working implementation that demonstrates these ideas in practice can serve as a reference for the ecosystem.
 
 ---
 
@@ -183,7 +185,7 @@ The current architecture -- single Go binary, SQLite, one factory contract -- is
 - **On-chain contracts.** Each escrow is an independent contract instance with no shared state bottleneck. The factory is a thin deployer. ETH/ERC20 support and worker-stake anti-Sybil bonding were originally planned for V2 and are now implemented in the current contract baseline. Milestone escrow (V2) extends the escrow contract with per-milestone state tracking and partial payouts; ZK verification slots (V3) add optional proof hashes per submission. Neither changes the factory pattern.
 - **On-chain/off-chain boundary.** The design principle -- settle on-chain, everything else off-chain -- is the correct long-term split. Bidding, matching, reputation scoring, task decomposition, and agent orchestration all remain off-chain where they can iterate independently.
 - **Go as the server language.** Go's concurrency model, low memory footprint, and single-binary deployment are well-suited through V4+. The go-ethereum client, the MCP SDK, and the HTTP server all scale to high concurrency without architectural changes.
-- **MCP + HTTP dual interface.** MCP is the primary agent integration surface; HTTP serves dashboards, external integrations, and tooling. This dual-surface pattern holds through V4 and beyond.
+- **Skills + CLI + MCP + HTTP interfaces.** Skills + CLI is the default for shell-capable agents, MCP remains first-class for MCP-native integrations, and HTTP serves dashboards/external tooling. This multi-surface pattern holds through V4 and beyond.
 
 **Components requiring evolution:**
 

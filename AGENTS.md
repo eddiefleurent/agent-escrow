@@ -18,7 +18,7 @@ This project implements the ["Intelligent AI Delegation"](https://arxiv.org/abs/
 - **On-chain**: `TaskEscrowFactory` + `TaskEscrow` (Solidity 0.8.34, Foundry)
 - **Off-chain**: Single Go binary -- MCP server + HTTP API + event indexer
 - **Storage**: SQLite via `modernc.org/sqlite` (pure Go, no CGO)
-- **Agent interface**: MCP tools (16 tools) are the primary integration surface
+- **Agent interfaces**: Skills + `escrow-cli` for shell agents, MCP tools (16 tools) for MCP-native agents, plus HTTP API
 - **Target chain**: Base Sepolia (chain ID 84532)
 
 ## Public Project -- Production Blockchain
@@ -44,6 +44,8 @@ make test-unit      # forge test for TaskEscrow*.t.sol only (faster)
 make test-invariant # invariant tests
 make go-abi         # copy ABI artifacts from Foundry output to go-server/abi/
 make go-build       # compile Go binary (runs go-abi first)
+make go-cli-build   # compile escrow-cli binary (runs go-abi first)
+make go-cli-install # install escrow-cli to ~/.local/bin
 make go-test        # go test ./...
 make go-vet         # go vet ./...
 make go-lint        # golangci-lint run ./... (static analysis)
@@ -104,6 +106,7 @@ scripts/                  Utility scripts (Python)
 demo/                     Demo scripts and results (ETH, USDC, AP2)
 go-server/
   cmd/server/main.go      Entrypoint
+  cmd/cli/main.go         CLI entrypoint (`escrow-cli`)
   internal/
     chain/                 go-ethereum client, ABI bindings
     storage/               SQLite schema, queries, models
@@ -112,6 +115,7 @@ go-server/
     mcpserver/             MCP server + 16 tool handlers
     api/                   HTTP JSON API + middleware
   abi/                     Embedded ABI artifacts (copied by make go-abi)
+skills/                   Agent skills (including `skills/escrow-cli/`)
 docs/                     Architecture, spec, roadmap, setup
 ```
 

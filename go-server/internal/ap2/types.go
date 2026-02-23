@@ -88,7 +88,7 @@ type Mandate struct {
 
 // FundViaMandateRequest is the HTTP/MCP request body for funding via AP2 mandate.
 type FundViaMandateRequest struct {
-	EscrowID        string          `json:"escrow_id"`
+	EscrowID        int64           `json:"escrow_id"`
 	MandateEnvelope MandateEnvelope `json:"mandate_envelope"`
 }
 

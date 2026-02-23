@@ -76,7 +76,7 @@ The foundation: specification, contracts, off-chain server, and production harde
 
 - **Specification**: state machine, role semantics, threat model, invariant checklist, paper traceability
 - **Contracts**: `TaskEscrowFactory` + `TaskEscrow` with the full 9-state machine, immutable roles, protocol fee snapshotting, arbitrator timeout; Foundry unit, edge case, fuzz, and invariant test suites
-- **Off-chain server**: single Go binary -- MCP server + HTTP JSON API + SQLite event indexer; initial V1 release exposed eight MCP tools and nine HTTP endpoints, with V2 expanding this surface (bidding, AP2, events, A2A, emergency); go-ethereum chain client with ABI bindings
+- **Off-chain server**: single Go binary -- MCP server + HTTP JSON API + SQLite event indexer; initial V1 release exposed eight MCP tools and nine HTTP endpoints, with V2 expanding this surface (bidding, AP2, events, A2A, emergency), plus shell-agent support via `escrow-cli` and `skills/escrow-cli/`; go-ethereum chain client with ABI bindings
 - **Hardening**: receipt parsing, `ChainClient` interface + `MockClient`, health check with RPC verification, structured logging, input validation, CORS, route-aware timeouts, config validation, indexer error propagation, contract reentrancy optimization, role distinctness, two-step ownership transfer
 
 ### V2 -- Market Primitives ✓

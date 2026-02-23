@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"strconv"
 )
 
 // Handler provides HTTP endpoints for the AP2 mandate-to-escrow bridge.
@@ -25,15 +24,9 @@ func (h *Handler) FundViaMandate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	escrowID, err := strconv.ParseInt(req.EscrowID, 10, 64)
+	resp, err := h.svc.FundViaMandate(r.Context(), req.EscrowID, req.MandateEnvelope)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid escrow_id"})
-		return
-	}
-
-	resp, err := h.svc.FundViaMandate(r.Context(), escrowID, req.MandateEnvelope)
-	if err != nil {
-		slog.Error("fund via mandate failed", "escrow_id", escrowID, "error", err)
+		slog.Error("fund via mandate failed", "escrow_id", req.EscrowID, "error", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
