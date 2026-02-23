@@ -39,6 +39,35 @@ Everything that distinguishes delegation from payment remains this project's sco
 
 ---
 
+## Cross-Chain Privacy Layer
+
+The paper's monitoring taxonomy (§4.5 Table 2) defines a **privacy axis** with two poles: Full Transparency (delegatee reveals all data and artifacts) and Cryptographic (zero-knowledge proofs or MPC verify correctness without revealing data). The paper is explicit: "Zero-knowledge proofs enable a delegatee (the 'prover') to demonstrate to a delegator (the 'verifier') that a computation was performed correctly on a dataset, without revealing the data itself" (§4.5). It also identifies privacy concerns in delegation chains -- an intermediate agent may not wish to expose its sub-delegatees to its client (§4.5, topology axis).
+
+Currently, all escrow state is publicly visible on Base: participant addresses, amounts, milestone structures, payout splits, reputation records, and the full graph of delegation relationships. This is acceptable for V1-V2 where the priority is correct settlement mechanics, but becomes a competitive intelligence liability at marketplace scale. An observer can reconstruct the entire economic graph -- who delegates to whom, at what price, with what success rate.
+
+### Privacy gaps in the current architecture
+
+- **Bid amounts**: accepted bids become public escrow amounts on-chain. Competitors see exactly what agents charge. The paper's Bid_Object example includes a `privacy_guarantee` field (§6.1), acknowledging that bid economics should be protectable.
+- **Delegation topology**: the full buyer-worker graph is visible. The paper warns that "𝐵 may not wish to expose its supplier (𝐶) to its client (𝐴)" (§4.5).
+- **Reputation history**: public outcome counters enable adversaries to calibrate Sybil attacks or reputation sabotage (§4.9). The paper distinguishes reputation (public, verifiable history) from trust (private, context-dependent threshold) -- but the current implementation makes both fully transparent.
+- **Task economics**: escrow amounts, milestone structures, worker stake amounts, and dispute payout splits reveal business strategy.
+
+### Options under consideration
+
+Several approaches could address these gaps. They are not mutually exclusive -- different privacy needs may warrant different solutions.
+
+**[Midnight Network](https://midnight.network/)** is a zero-knowledge blockchain developed by IOG (the research company behind Cardano). It uses [Compact](https://docs.midnight.network/develop/reference/compact/) (a TypeScript-based smart contract language that compiles to ZK circuits) and recursive zk-SNARKs to enable selective disclosure -- proving facts about data without revealing the data itself. Midnight mainnet launches March 2026 with Google Cloud and Blockdaemon among the initial node operators. Critically, the [LayerZero](https://layerzero.network/) omnichain messaging protocol (160+ connected chains including Base, Ethereum, Arbitrum) is integrating with the Cardano/Midnight ecosystem, providing a cross-chain messaging path between Midnight and Base without requiring contract rewrites. In a hybrid model, settlement stays on Base (where EVM composability with x402/AgentKit/USDC matters) while Midnight serves as a privacy sidecar for specific operations: private bid submission with ZK proofs of budget compliance, selective disclosure reputation queries ("my success rate exceeds 90%" without revealing full history), confidential task spec commitments, and private delegation chain topology in attestation chains.
+
+**[Aztec Network](https://aztec.network/)** is a privacy-focused L2 on Ethereum using [Noir](https://noir-lang.org/) (a Rust-like ZK DSL). As an Ethereum-native rollup, it is architecturally closer to the Base ecosystem and could provide privacy primitives without cross-chain messaging. However, Aztec is also pre-mainnet and its programming model differs significantly from Solidity.
+
+**EVM-native ZK coprocessors** ([Axiom](https://www.axiom.xyz/), [Brevis](https://brevis.network/), [RISC Zero](https://www.risczero.com/), [SP1](https://docs.succinct.xyz/)) enable proving statements about on-chain state without revealing inputs, deployable directly on Base. These are the lightest-weight integration path -- no cross-chain bridge required -- but provide computation proofs rather than the full selective disclosure model that Midnight or Aztec offer.
+
+**Commit-reveal schemes** on Base can address the simplest privacy need (sealed-bid auctions) without any new infrastructure. Bidders commit a hash of their bid, then reveal after the bidding window closes. This is well-understood, EVM-native, and could be implemented in V3 as a stepping stone before more sophisticated ZK privacy.
+
+The choice depends on which privacy properties matter most and when. Commit-reveal is implementable immediately. ZK coprocessors add verifiable private computation without leaving Base. Midnight or Aztec provide full selective disclosure but require cross-chain coordination or ecosystem migration. The paper's framework is chain-agnostic -- it calls for extending existing protocols (§6), not prescribing a specific chain. The right approach may be layered: commit-reveal for V3 bidding privacy, ZK coprocessors for V3 verification slots, and a cross-chain privacy layer (Midnight or Aztec via LayerZero or native bridge) for V4+ selective disclosure reputation and confidential delegation chains.
+
+---
+
 ## Delivery Phases
 
 ### V1 -- Settlement Kernel ✓
@@ -50,7 +79,7 @@ The foundation: specification, contracts, off-chain server, and production harde
 - **Off-chain server**: single Go binary -- MCP server + HTTP JSON API + SQLite event indexer; initial V1 release exposed eight MCP tools and nine HTTP endpoints, with V2 expanding this surface (bidding, AP2, events, A2A, emergency); go-ethereum chain client with ABI bindings
 - **Hardening**: receipt parsing, `ChainClient` interface + `MockClient`, health check with RPC verification, structured logging, input validation, CORS, route-aware timeouts, config validation, indexer error propagation, contract reentrancy optimization, role distinctness, two-step ownership transfer
 
-### V2 -- Market Primitives (Current)
+### V2 -- Market Primitives ✓
 
 Marketplace layer built on top of the settlement kernel.
 
@@ -73,24 +102,25 @@ Full marketplace intelligence and the paper's advanced coordination mechanisms.
 12. **Delegation Capability Tokens (DCTs)** -- attenuated permission tokens based on Macaroons/Biscuits, scoped to escrow lifecycle; invalidated on settlement/refund (paper §6.1: restriction chaining across delegation chains)
 13. **Verifiable credentials for bidding** -- agents present signed capability attestations during Task_RFQ; delegator filters by domain-specific credentials; credential metadata surfaced via Bazaar discovery extensions (paper §4.6 Table 3: Web of Trust with DIDs)
 14. **Attestation chains** -- recursive verification across delegation chains (A -> B -> C); each link produces signed attestation of sub-task completion (paper §4.8: transitive liability, chain of custody)
-15. **ZK verification slot** -- optional `proofHash` field on submission for formally verifiable tasks; supports zk-SNARKs/groth16 (paper §4.8: cryptographic verification for trustless automated verification)
-16. **Checkpoint/resume** -- standardized state snapshots for mid-task agent swaps; periodic `state_snapshot` commits to shared storage (paper §6.1: checkpoint artifacts + partial compensation clauses)
-17. **Tiered service levels** -- low-assurance (optimistic) vs high-assurance (verified) delegation paths with different fee/verification structures (paper §5.3: ensure safety does not become a luxury good)
-18. **Market stability mechanisms** -- cooldown periods for re-bidding, damping factors on reputation updates, increasing fees on frequent re-delegation (paper §4.4: prevent oscillation and cascading re-allocations)
-19. **Contract-first decomposition tooling** -- MCP tool that helps agents decompose tasks to match available market capabilities; recursive decomposition until sub-tasks match verification capabilities (paper §4.1: decompose until units match formal proofs or automated tests)
-20. **Multi-verifier quorum** -- multiple independent verifiers for high-criticality tasks; Schelling point consensus (paper §4.8: game-theoretic verification consensus)
-21. **UCP fulfillment provider** -- expose escrow lifecycle as UCP-compatible fulfillment backend for commercial agent transactions (paper §6: UCP architecture extension for abstract computational tasks)
+15. **ZK verification slot** -- optional `proofHash` field on submission for formally verifiable tasks; supports zk-SNARKs/groth16; on-chain verification for high-assurance tasks via dedicated verifier contract, off-chain verification by default with proof hash commitment; candidate backends: EVM-native ZK coprocessors (Axiom, RISC Zero, SP1) for Base-local proving, or cross-chain proof submission from a privacy-preserving chain (Midnight, Aztec) via LayerZero messaging (paper §4.8: cryptographic verification for trustless automated verification)
+16. **Sealed bidding** -- commit-reveal scheme for Task_RFQ bids: bidders submit hash commitments during the bidding window, reveal after close; prevents front-running and competitive intelligence leakage; EVM-native implementation as a stepping stone toward full ZK private bidding (paper §4.5 privacy axis; §6.1: Bid_Object `privacy_guarantee` field)
+17. **Checkpoint/resume** -- standardized state snapshots for mid-task agent swaps; periodic `state_snapshot` commits to shared storage (paper §6.1: checkpoint artifacts + partial compensation clauses)
+18. **Tiered service levels** -- low-assurance (optimistic) vs high-assurance (verified) delegation paths with different fee/verification structures (paper §5.3: ensure safety does not become a luxury good)
+19. **Market stability mechanisms** -- cooldown periods for re-bidding, damping factors on reputation updates, increasing fees on frequent re-delegation (paper §4.4: prevent oscillation and cascading re-allocations)
+20. **Contract-first decomposition tooling** -- MCP tool that helps agents decompose tasks to match available market capabilities; recursive decomposition until sub-tasks match verification capabilities (paper §4.1: decompose until units match formal proofs or automated tests)
+21. **Multi-verifier quorum** -- multiple independent verifiers for high-criticality tasks; Schelling point consensus (paper §4.8: game-theoretic verification consensus)
+22. **UCP fulfillment provider** -- expose escrow lifecycle as UCP-compatible fulfillment backend for commercial agent transactions (paper §6: UCP architecture extension for abstract computational tasks)
 
 ### V4 -- Ethical Safeguards and Ecosystem Maturity
 
 The paper's ethical dimensions (Section 5) and ecosystem-level concerns.
 
-22. **Curriculum-aware task routing** -- track human skill progression; strategically allocate tasks at the boundary of expanding skill sets; AI co-execution with progressive withdrawal (paper §5.6: zone of proximal development, prevent de-skilling)
-23. **Liability firebreaks** -- pre-defined contractual stop-gaps in long delegation chains where an agent must assume full non-transitive liability or halt and request updated authority (paper §5.2: prevent accountability vacuum)
-24. **Cognitive friction calibration** -- context-aware friction: seamless execution for low-criticality tasks, mandatory justification and manual intervention for high-uncertainty scenarios; alarm fatigue mitigation (paper §5.1: balance cognitive friction against alarm fatigue)
-25. **Decentralized identifiers (DIDs)** -- each agent and human participant holds a DID for signing all messages; non-repudiation of communications and contractual agreements (paper §4.9: cryptographic identity layer)
-26. **Insurance/liability framework** -- insurance providers safeguard human participation in agentic markets for damages not preempted by technical mechanisms (paper §4.9: insurance for human participants)
-27. **Governance layer** -- safety floors for specific task classes (financial transactions, health data) that cannot be bypassed for efficiency; mandatory verification steps (paper §5.3: governance enforces safety floors)
+23. **Curriculum-aware task routing** -- track human skill progression; strategically allocate tasks at the boundary of expanding skill sets; AI co-execution with progressive withdrawal (paper §5.6: zone of proximal development, prevent de-skilling)
+24. **Liability firebreaks** -- pre-defined contractual stop-gaps in long delegation chains where an agent must assume full non-transitive liability or halt and request updated authority (paper §5.2: prevent accountability vacuum)
+25. **Cognitive friction calibration** -- context-aware friction: seamless execution for low-criticality tasks, mandatory justification and manual intervention for high-uncertainty scenarios; alarm fatigue mitigation (paper §5.1: balance cognitive friction against alarm fatigue)
+26. **Decentralized identifiers (DIDs)** -- each agent and human participant holds a DID for signing all messages; non-repudiation of communications and contractual agreements (paper §4.9: cryptographic identity layer)
+27. **Insurance/liability framework** -- insurance providers safeguard human participation in agentic markets for damages not preempted by technical mechanisms (paper §4.9: insurance for human participants)
+28. **Governance layer** -- safety floors for specific task classes (financial transactions, health data) that cannot be bypassed for efficiency; mandatory verification steps (paper §5.3: governance enforces safety floors)
 
 ---
 
@@ -126,7 +156,9 @@ How each version maps to the five pillars from ["Intelligent AI Delegation"](htt
 
 **V2**: Milestone-based escrow -- on-chain progress checkpoints with per-milestone verification and partial payouts (paper §4.5: "smart contracts can be used to make the delegatee agent commit to publishing key progress milestones"). Real-time event subscriptions (paper's L0-L3 granularity levels).
 
-**V3**: Attestation chains across delegation links -- each link produces signed attestation of sub-task completion (paper §4.8). ZK verification integration for formally verifiable tasks. Multi-verifier quorum for game-theoretic consensus.
+**V3**: Attestation chains across delegation links -- each link produces signed attestation of sub-task completion (paper §4.8). ZK verification integration for formally verifiable tasks. Multi-verifier quorum for game-theoretic consensus. Sealed bidding via commit-reveal as first step toward the paper's cryptographic privacy axis (§4.5 Table 2).
+
+**V4+**: Full selective disclosure via cross-chain privacy layer (Midnight/Aztec) or EVM-native ZK coprocessors -- private delegation chain topology, confidential task specs, ZK-proven reputation attestations without revealing full history.
 
 ### Pillar 4: Scalable Market Coordination (Sections 4.3, 4.6)
 
@@ -136,7 +168,9 @@ How each version maps to the five pillars from ["Intelligent AI Delegation"](htt
 
 **V2**: On-chain reputation seed (immutable ledger approach). Complexity floor parameter. Worker stake as trust signal. Task_RFQ + Bid_Object bidding protocol.
 
-**V3**: Verifiable credentials (Web of Trust model). Market stability measures. Multi-verifier quorum. Re-delegation fees. Behavioral metrics.
+**V3**: Verifiable credentials (Web of Trust model). Market stability measures. Multi-verifier quorum. Re-delegation fees. Behavioral metrics. Sealed bidding protects competitive intelligence.
+
+**V4+**: Selective disclosure reputation -- agents prove reputation thresholds without exposing full delegation history (paper §4.6: reputation is public and verifiable, but trust is private and context-dependent; a privacy layer can preserve this distinction on-chain).
 
 ### Pillar 5: Systemic Resilience (Sections 4.7, 4.9)
 
@@ -173,6 +207,7 @@ How each version maps to the five pillars from ["Intelligent AI Delegation"](htt
 | **AP2** | No conditional settlement, no milestone releases, no clawback | Mandate-to-escrow funding bridge via x402 payment rail; stake-on-bid Sybil resistance | V2 |
 | **UCP** | Optimized for commercial intent, not abstract computational delegation | UCP fulfillment provider exposing escrow lifecycle | V3 |
 | **AgentKit** | Agent wallet and on-chain actions; no delegation lifecycle | Agent-owned wallet signing (§4.7 least privilege, §4.9 cryptographic identity); escrow actions as custom action provider | V2-V3 |
+| **Midnight** | Privacy-preserving computation; selective disclosure via ZK proofs | Cross-chain privacy sidecar via [LayerZero](https://layerzero.network/): private bidding (ZK proofs of budget compliance), selective disclosure reputation, confidential delegation chain topology; settlement stays on Base | V3-V4 |
 
 ---
 
@@ -182,9 +217,10 @@ Long-horizon items the paper acknowledges as open research:
 
 - Autonomous multi-agent delegation networks at web scale (paper §4.4)
 - Full game-theoretic verification consensus at TrueBit scale (paper §4.8)
-- Cross-chain settlement adapters
-- Homomorphic encryption for privacy-preserving task execution (paper §4.5)
-- TEE-based secure execution environments for sensitive delegation (paper §4.9)
+- Cross-chain settlement adapters via LayerZero or native bridges; settlement stays per-chain to avoid bridge trust assumptions, with cross-chain coordination at the off-chain layer
+- Full selective disclosure privacy layer -- ZK private bidding (prove bid is within budget range without revealing amount), private reputation attestations (prove success rate threshold without exposing full history), confidential delegation chain topology (intermediate agents prove sub-task completion without revealing sub-delegatee identity); candidate infrastructure: [Midnight](https://midnight.network/) via LayerZero cross-chain messaging, [Aztec](https://aztec.network/) as Ethereum-native privacy L2, or EVM ZK coprocessors for lighter-weight proofs (paper §4.5: cryptographic privacy axis)
+- Homomorphic encryption or secure multi-party computation for privacy-preserving task execution where even the privacy sidecar model is insufficient (paper §4.5)
+- TEE-based secure execution environments for sensitive delegation; remote attestation before provisioning delegatees with sensitive data (paper §4.9)
 
 ## Success Metrics
 
@@ -206,3 +242,4 @@ Long-horizon items the paper acknowledges as open research:
 - Safety becoming a luxury good if high-assurance delegation is too expensive (mitigated by tiered service levels + governance safety floors)
 - De-skilling risk for human participants who lose proficiency through reduced engagement (mitigated by curriculum-aware routing in V4)
 - Cognitive monoculture if the ecosystem over-depends on a limited number of foundation models (paper §4.9)
+- On-chain transparency as competitive intelligence liability at marketplace scale -- all escrow amounts, delegation relationships, and reputation records are publicly visible (mitigated by sealed bidding in V3, with full selective disclosure privacy as a V4+ consideration; see Cross-Chain Privacy Layer section)

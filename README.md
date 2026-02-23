@@ -2,7 +2,7 @@
 
 [![Ask DeepWiki — explore this codebase with AI](https://deepwiki.com/badge.svg)](https://deepwiki.com/eddiefleurent/agent-escrow)
 
-Escrow-based settlement for AI agent delegation -- a reference implementation of [**"Intelligent AI Delegation"**](https://arxiv.org/abs/2602.11865) (Tomašev, Franklin, Osindero -- Google DeepMind, 2026). Deployed on [Base Sepolia](https://sepolia.basescan.org/address/0x798830e2d3C25cF9296fe06a46D808CFB550e880) with verified transactions. **[See the live demo.](docs/DEMO_RUN.md)**
+Escrow-based settlement for AI agent delegation -- a reference implementation of [**"Intelligent AI Delegation"**](https://arxiv.org/abs/2602.11865) (Tomašev, Franklin, Osindero -- Google DeepMind, 2026). Deployed on [Base Sepolia](https://sepolia.basescan.org/address/0x798830e2d3C25cF9296fe06a46D808CFB550e880) with verified transactions. **[See the live demo.](demo/DEMO_RUN.md)**
 
 ## How It Works
 
@@ -48,7 +48,7 @@ Nine states, multiple resolution paths: buyer disputes, verifier rejections, wor
 
 Deployed on Base Sepolia with verified ETH and USDC escrow lifecycles -- full create-fund-submit-approve-settle flows with real transactions.
 
-Factory: [`0x798830e2d3C25cF9296fe06a46D808CFB550e880`](https://sepolia.basescan.org/address/0x798830e2d3C25cF9296fe06a46D808CFB550e880). Full transaction details: [`docs/DEMO_RUN.md`](docs/DEMO_RUN.md)
+Factory: [`0x798830e2d3C25cF9296fe06a46D808CFB550e880`](https://sepolia.basescan.org/address/0x798830e2d3C25cF9296fe06a46D808CFB550e880). Full transaction details: [`demo/DEMO_RUN.md`](demo/DEMO_RUN.md)
 
 ## Paper Mapping
 
@@ -166,9 +166,13 @@ docs/
   SPEC.md               Contract specification: state machine, interfaces, invariants
   ROADMAP.md            Delivery phases, paper framework mapping
   SETUP.md              Environment setup, configuration reference
-  DEMO_RUN.md           Live demo — transactions on Base Sepolia
   DEPLOYMENTS.md        Deployed contract addresses
   DEPLOY.md             Deployment guide and lifecycle walkthrough
+demo/
+  DEMO_RUN.md           Live demo — transactions on Base Sepolia
+  eth_demos.sh          ETH demo script (7 scenarios)
+  usdc_demos.sh         USDC demo script (7 scenarios)
+  ap2_demo.py           AP2 mandate bridge demo
 ```
 
 ## Documentation
@@ -179,7 +183,7 @@ docs/
 | [`docs/SPEC.md`](docs/SPEC.md) | Contract specification: state machine, interfaces, invariants, security |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Implementation phases, paper framework mapping, success metrics |
 | [`docs/SETUP.md`](docs/SETUP.md) | Environment setup, configuration reference |
-| [`docs/DEMO_RUN.md`](docs/DEMO_RUN.md) | Live demo run with on-chain transactions |
+| [`demo/DEMO_RUN.md`](demo/DEMO_RUN.md) | Live demo run with on-chain transactions |
 | [`docs/DEPLOYMENTS.md`](docs/DEPLOYMENTS.md) | Deployed contract addresses |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution guidelines |
 

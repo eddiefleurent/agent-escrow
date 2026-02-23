@@ -33,6 +33,7 @@ This is a **public, open-source project** that will be deployed live on Base (Et
 - Do not remove or weaken tests to make CI pass.
 - Use real implementations over mocks whenever possible in tests.
 - Prioritize good design over simply making tests pass.
+- Never hardcode private keys, mnemonics, or secrets in tracked files (including testnet/demo scripts). Always load secrets from `.env`/environment variables and keep only placeholders in `.env.example`.
 
 ## Build and Test
 
@@ -98,6 +99,7 @@ src/                      Solidity contracts
 test/                     Foundry tests
 script/                   Deploy scripts (Foundry/Solidity)
 scripts/                  Utility scripts (Python)
+demo/                     Demo scripts and results (ETH, USDC, AP2)
 go-server/
   cmd/server/main.go      Entrypoint
   internal/
