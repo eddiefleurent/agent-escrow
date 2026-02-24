@@ -33,6 +33,7 @@ This is a **public, open-source project** that will be deployed live on Base (Et
 - Do not remove or weaken tests to make CI pass.
 - Use real implementations over mocks whenever possible in tests.
 - Prioritize good design over simply making tests pass.
+- Default to a hard-cutoff approach for behavior and interfaces: avoid backward-compatibility shims, migration branches, or legacy paths unless explicitly requested for a specific change.
 - Never hardcode private keys, mnemonics, or secrets in tracked files (including testnet/demo scripts). Always load secrets from `.env`/environment variables and keep only placeholders in `.env.example`.
 
 ## Build and Test
