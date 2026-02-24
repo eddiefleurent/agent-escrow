@@ -1,0 +1,17 @@
+services:
+  escrow-test:
+    build: .
+    image: agent-escrow:test
+    container_name: escrow-test
+    restart: unless-stopped
+    ports:
+      - "19081:8080"
+    env_file:
+      - .env.test
+    environment:
+      DATABASE_URL: /data/delegation.db
+    volumes:
+      - escrow-test-data:/data
+
+volumes:
+  escrow-test-data:
