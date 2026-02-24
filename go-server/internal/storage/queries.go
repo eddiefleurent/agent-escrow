@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -858,6 +859,19 @@ func (d *DB) GetBidCommitByRFQBidderNonce(ctx context.Context, rfqID int64, bidd
 	return c, nil
 }
 
+func (d *DB) GetBidCommitByRFQBidderCommitment(ctx context.Context, rfqID int64, bidder, commitment string) (*BidCommit, error) {
+	row := d.db.QueryRowContext(
+		ctx,
+		`SELECT `+bidCommitColumns+` FROM bid_commits WHERE rfq_id = ? AND bidder = ? AND commitment = ?`,
+		rfqID, bidder, commitment,
+	)
+	c, err := scanBidCommit(row)
+	if err != nil {
+		return nil, fmt.Errorf("get bid_commit by commitment: %w", err)
+	}
+	return c, nil
+}
+
 func (d *DB) GetBidCommitByRevealedBidID(ctx context.Context, bidID int64) (*BidCommit, error) {
 	row := d.db.QueryRowContext(
 		ctx,
@@ -960,6 +974,61 @@ func (d *DB) RejectUnacceptedBidCommits(ctx context.Context, rfqID, acceptedBidI
 
 func (d *DB) RejectUnacceptedBidCommitsTx(ctx context.Context, tx *sql.Tx, rfqID, acceptedBidID int64) error {
 	return rejectUnacceptedBidCommitsOn(ctx, tx, rfqID, acceptedBidID)
+}
+
+func (d *DB) CountActiveBidCommitsByRFQBidder(ctx context.Context, rfqID int64, bidder string) (int, error) {
+	var count int
+	err := d.db.QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM bid_commits
+         WHERE rfq_id = ? AND bidder = ? AND status IN ('committed', 'revealed')`,
+		rfqID, bidder,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count active bid_commits: %w", err)
+	}
+	return count, nil
+}
+
+func (d *DB) CountRecentBidCommitsByRFQBidder(ctx context.Context, rfqID int64, bidder string, windowSeconds int64) (int, error) {
+	if windowSeconds <= 0 {
+		return 0, errors.New("count recent bid_commits: windowSeconds must be > 0")
+	}
+	cutoff := time.Now().Add(-time.Duration(windowSeconds) * time.Second).UTC().Format("2006-01-02 15:04:05")
+	var count int
+	err := d.db.QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM bid_commits
+         WHERE rfq_id = ? AND bidder = ?
+           AND created_at >= ?`,
+		rfqID, bidder, cutoff,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count recent bid_commits: %w", err)
+	}
+	return count, nil
+}
+
+func expireCommittedBidCommitsOn(ctx context.Context, q dbExecer, rfqID int64) error {
+	_, err := q.ExecContext(
+		ctx,
+		`UPDATE bid_commits
+         SET status = 'expired', updated_at = datetime('now')
+         WHERE rfq_id = ? AND status = 'committed'`,
+		rfqID,
+	)
+	if err != nil {
+		return fmt.Errorf("ExpireCommittedBidCommits: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) ExpireCommittedBidCommits(ctx context.Context, rfqID int64) error {
+	return expireCommittedBidCommitsOn(ctx, d.db, rfqID)
+}
+
+func (d *DB) ExpireCommittedBidCommitsTx(ctx context.Context, tx *sql.Tx, rfqID int64) error {
+	return expireCommittedBidCommitsOn(ctx, tx, rfqID)
 }
 
 // Chain log queries

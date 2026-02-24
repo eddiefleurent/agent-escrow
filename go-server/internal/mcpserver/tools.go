@@ -1165,6 +1165,12 @@ func (s *Server) handleListBids(ctx context.Context, req *mcp.CallToolRequest, a
 		if parseErr != nil {
 			return textResult(fmt.Sprintf("invalid rfq_id: %v", parseErr)), nil, nil
 		}
+		rfq, getErr := s.db.GetRFQ(ctx, rfqID)
+		if getErr == nil && time.Now().Unix() > rfq.RevealDeadline {
+			if expireErr := s.db.ExpireCommittedBidCommits(ctx, rfqID); expireErr != nil {
+				return textResult(fmt.Sprintf("error: %v", expireErr)), nil, nil
+			}
+		}
 		bids, err = s.db.ListBidsByRFQ(ctx, rfqID)
 	case args.Bidder != "":
 		bids, err = s.db.ListBidsByBidder(ctx, args.Bidder)
