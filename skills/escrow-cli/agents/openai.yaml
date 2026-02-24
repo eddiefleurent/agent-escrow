@@ -1,0 +1,4 @@
+interface:
+  display_name: "Escrow CLI"
+  short_description: "Run escrow lifecycle actions via escrow-cli shell commands"
+  default_prompt: "Check the health of the escrow server"

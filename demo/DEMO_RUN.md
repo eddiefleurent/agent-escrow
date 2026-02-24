@@ -4,12 +4,99 @@ These are real escrow lifecycles executed on Base Sepolia -- every transaction i
 
 **What you're seeing:** A buyer posts a task and locks funds in escrow. A worker picks it up and submits proof of completion. The buyer approves, and the smart contract automatically pays the worker (minus a 1% protocol fee). No intermediary touches the funds -- the contract is the custodian from start to finish.
 
-Five demo sets below:
+Six demo sets below:
+- **Codex Agent Demo** (2026-02-24) -- two Codex agents (buyer + worker) coordinate autonomously through the full escrow lifecycle: RFQ → bid → accept → fund → submit → approve → settle.
 - **V2 Full Feature Demos** (2026-02-22) -- seven scenarios exercising all 11 V2 market primitives with ETH: worker stake, milestones, disputes, backup agents, bidding, reputation, and emergency response.
 - **V2 Full Feature Demos USDC** (2026-02-22) -- the same seven scenarios re-run with USDC (ERC20), proving full token parity.
 - **AP2 Mandate Bridge Demo** (2026-02-22) -- gasless EIP-3009 `receiveWithAuthorization` funding via the AP2 mandate-to-escrow bridge.
 - **V2 ETH + USDC** (2026-02-20) -- basic happy-path demos in ETH and USDC.
 - **V1 Settlement Kernel** (2026-02-20) -- the original ETH-only deployment.
+
+---
+
+## Codex Agent Demo (2026-02-24)
+
+Factory: [`0x7006930a9d309ca476b5538800da16525ecb191d`](https://sepolia.basescan.org/address/0x7006930a9d309ca476b5538800da16525ecb191d)
+
+Two autonomous Codex agents ran the full escrow lifecycle with no human intervention. The buyer agent posted an RFQ and waited; the worker agent discovered the RFQ, placed a bid, and submitted work independently; the buyer agent accepted the bid, funded the escrow, and approved on settlement. Each agent operated from its own prompt file (`demo/codex-buyer-agent.md`, `demo/codex-worker-agent.md`) and was launched by an orchestrator script (`demo/run-escrow-agent-demo.sh`).
+
+This is the architecture described in the paper (§6.1): a buyer broadcasts a `Task_RFQ`, a worker responds with a signed `Bid_Object`, and the smart contract enforces payment on approval. Both agents are instances of `gpt-5.3-codex` (Codex v0.104.0).
+
+**Participants:**
+
+| Role | Agent | Address |
+|------|-------|---------|
+| Buyer | Codex (background process, server signing key) | `0xA52bd5190B344445d91877c7E1e1a11718A205d1` |
+| Worker | Codex (foreground process, own key) | `0x13c010aC7cf2bd187adAfEAd2D73E52fF48765e2` |
+| Verifier | — (unused in happy path) | `0x2197e5122d81F544a57DEF921414610e7D66bd98` |
+| Arbitrator | — (unused in happy path) | `0x0Ee4aa0CAa6974076b85E219835FB54B960Bc8c8` |
+
+```mermaid
+sequenceDiagram
+    actor BuyerAgent as Buyer Agent (Codex)
+    actor WorkerAgent as Worker Agent (Codex)
+    participant Server as Off-Chain Server
+    participant Factory
+    participant Escrow
+
+    rect rgb(240, 240, 255)
+        Note over BuyerAgent,Server: Buyer agent — off-chain bidding
+        BuyerAgent->>Server: escrow-cli rfq create (budget: 0.00005–0.00015 ETH)
+        Server-->>BuyerAgent: RFQ #4
+        BuyerAgent->>+BuyerAgent: write rfq_id → demo/.agent-state/rfq_id
+    end
+
+    rect rgb(230, 245, 230)
+        Note over WorkerAgent,Server: Worker agent — bid
+        WorkerAgent->>Server: escrow-cli bid place (0.00015 ETH)
+        Server-->>WorkerAgent: Bid #3 (pending)
+    end
+
+    rect rgb(240, 240, 255)
+        Note over BuyerAgent,Factory: Buyer agent — accept bid + create escrow
+        BuyerAgent->>Server: escrow-cli bid accept
+        Server->>Factory: createEscrow(from bid params)
+        Factory-->>Server: escrow address
+        Server-->>BuyerAgent: escrow_id=53
+    end
+
+    BuyerAgent->>Escrow: escrow-cli escrow fund [0.00015 ETH]
+    Escrow-->>BuyerAgent: status: funded
+
+    Note over WorkerAgent: Worker polls until funded
+    WorkerAgent->>Escrow: cast send submit(hash, uri)
+    Escrow-->>WorkerAgent: status: submitted
+
+    Note over BuyerAgent: Buyer polls until submitted
+    BuyerAgent->>Escrow: escrow-cli escrow approve
+    Escrow->>WorkerAgent: 0.0001485 ETH (99%)
+    Escrow->>Treasury: 0.0000015 ETH (1% fee)
+    Escrow-->>BuyerAgent: status: settled
+```
+
+| | Address / ID |
+|---|---|
+| RFQ | #4 (off-chain) |
+| Bid | #3 (off-chain) |
+| Escrow | [`0xB044CdF24682bD29e3Af5eaF74c9068Cf5026b78`](https://sepolia.basescan.org/address/0xB044CdF24682bD29e3Af5eaF74c9068Cf5026b78) |
+
+| Step | Agent | Tx Hash |
+|---|---|---|
+| Accept bid → create escrow | Buyer | [`0x5016b3a...`](https://sepolia.basescan.org/tx/0x5016b3a075ea595fdd3d9071a0dedd9514676af3fdaf357af98cc1c476c262b1) |
+| Fund (0.00015 ETH) | Buyer | [`0x54308d4...`](https://sepolia.basescan.org/tx/0x54308d4650e93f1ea4643d1032c1c9dd0f58ca843f13a9f7ec199318e2b1a19c) |
+| Submit work | Worker | [`0x846503f...`](https://sepolia.basescan.org/tx/0x846503f4c114561a7b41461849ecd0cfa00e4b3c5f2fe5d0aa8172048cdbde3d) |
+| Approve + settle | Buyer | [`0x4d50932...`](https://sepolia.basescan.org/tx/0x4d50932601bbc204390cc125573385b1fdccc2e5d588fd414846fa557e9a6825) |
+
+**Settlement math:**
+
+| | Amount |
+|---|---|
+| Escrow amount | 0.00015 ETH (150000000000000 wei) |
+| Protocol fee (1%) | 0.0000015 ETH |
+| Worker payout (99%) | 0.0001485 ETH |
+| Final escrow balance | 0 |
+
+**What makes this different from prior demos:** every prior demo was scripted by a human operator. Here, both sides of the negotiation — posting the task, reading the RFQ, placing the bid, deciding to accept, funding, submitting, and approving — were performed by autonomous agents acting on plain-language prompts with no human in the loop. The `submit()` transaction is signed by the worker's own key, not the server's, because the contract enforces `msg.sender == activeWorker`.
 
 ---
 
