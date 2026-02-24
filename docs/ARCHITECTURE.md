@@ -582,8 +582,9 @@ The emergency protocol spans on-chain (factory + escrow contracts) and off-chain
 | `get_escrow` | escrow_id | DB read (includes milestone details) |
 | `list_escrows` | role, address, status | DB query |
 | `get_reputation` | address, role (optional) | DB read (indexed from on-chain OutcomeRecorded events) |
-| `create_rfq` | title, description, buyer, budget_min/max, deadline, expires_at, etc. | DB write (off-chain) |
-| `place_bid` | rfq_id, bidder, amount, estimated_duration, expires_at, etc. | DB write (off-chain) |
+| `create_rfq` | title, description, buyer, budget_min/max, commit_deadline, reveal_deadline, expires_at, deadline, etc. | DB write (off-chain) |
+| `commit_bid` | rfq_id, bidder, commitment, nonce | DB write (off-chain) |
+| `reveal_bid` | rfq_id, bidder, nonce, salt, amount, estimated_duration, expires_at, etc. | DB write (off-chain) |
 | `list_bids` | rfq_id or bidder | DB query |
 | `accept_bid` | rfq_id, bid_id, caller | `Factory.createEscrow` (on acceptance) |
 | `fund_via_mandate` | escrow_id, mandate_id, authorization params | x402 validate + `Escrow.fundWithAuthorization` |
@@ -621,7 +622,8 @@ The emergency protocol spans on-chain (factory + escrow contracts) and off-chain
 | GET | `/api/v1/rfqs` | List RFQs (query: status, buyer) |
 | GET | `/api/v1/rfqs/{id}` | Get RFQ details with bids |
 | POST | `/api/v1/rfqs/{id}/cancel` | Cancel an open RFQ (buyer only) |
-| POST | `/api/v1/rfqs/{id}/bids` | Place bid on RFQ |
+| POST | `/api/v1/rfqs/{id}/bids/commit` | Commit sealed bid during commit phase |
+| POST | `/api/v1/rfqs/{id}/bids/reveal` | Reveal sealed bid during reveal phase |
 | GET | `/api/v1/rfqs/{id}/bids` | List bids for RFQ |
 | POST | `/api/v1/rfqs/{id}/accept` | Accept bid and create escrow |
 | GET | `/api/v1/events` | SSE event stream for all escrows (query: granularity) |
