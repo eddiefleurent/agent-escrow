@@ -1,56 +1,38 @@
 # Open Tasks
 
-Follow-up items from skill and CLI development. Not tied to the V2/V3 roadmap --
-these are operational/distribution concerns.
+Operational/distribution backlog snapshot as of 2026-02-24.
 
 ---
 
-## CLI Distribution
+## Release + Install
 
 - [ ] **GitHub Actions release workflow** -- build `escrow-cli` binaries for
-  `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64` on every tagged
-  release. Upload as release assets.
+  `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64` on tagged
+  releases and upload as release assets.
 
-- [ ] **Install script** (`install.sh`) -- one-liner that detects platform, downloads
-  the right binary from GitHub releases, places it on PATH (e.g. `~/.local/bin`).
-  Update `skills/escrow-cli/SKILL.md` setup section once this exists.
+- [ ] **Install script** (`install.sh`) -- one-liner that detects platform,
+  downloads the right binary from GitHub Releases, and installs to PATH
+  (for example `~/.local/bin`).
 
-- [ ] **Decide on install.sh URL** -- needs a stable URL pattern (GitHub releases
-  latest redirect). Update the skill's setup section once the URL is known.
+- [ ] **Stable install URL** -- decide and document a canonical URL strategy
+  for installer bootstrap (latest release redirect vs pinned version URL).
 
----
+## Agent Discovery + Distribution
 
-## Skills
+- [ ] **Server URL distribution policy** -- decide canonical discovery path for
+  participant agents (`ESCROW_SERVER_URL` injection, DEPLOYMENTS reference,
+  Bazaar listing, or well-known endpoint) and document it.
 
-- [x] **Participant skill** (`skills/escrow-cli/`) -- role-oriented (buyer / worker /
-  verifier) with full payload examples. Done.
+- [ ] **Bazaar listing execution** -- publish the escrow service in Bazaar
+  (roadmap integration exists; operational listing still pending).
 
-- [x] **Admin skill** (`skills/escrow-admin/`) -- emergency protocol, AP2, health.
-  Skeleton created.
+- [ ] **PATH note in skill docs** -- confirm `~/.local/bin` is available in
+  typical agent runtime environments, and keep setup guidance explicit where
+  it is not.
 
-- [x] **Admin skill reference** -- `skills/escrow-admin/references/REFERENCE.md`
-  with full emergency + AP2 field schemas including exact types (escrow_id is int,
-  not string; mandate_envelope structure; all three mandate payload variants).
+## Completed (for context)
 
-- [ ] **Verify skills against live server** -- run the participant skill against Base
-  Sepolia to confirm all command examples are accurate. Fix any drift.
-
----
-
-## Agent Discovery
-
-- [ ] **Server URL distribution** -- when a participant agent has the skill installed,
-  how do they know the server URL? Options: operator injects `ESCROW_SERVER_URL` into
-  the agent's environment, or we publish the live URL somewhere stable (DEPLOYMENTS.md,
-  well-known endpoint, Bazaar listing). Decide and document.
-
-- [ ] **Bazaar listing** (V2 roadmap item) -- register the escrow server as a
-  discoverable service so agents can find it without being told the URL explicitly.
-
----
-
-## Minor
-
-- [ ] **Check `escrow-cli` install target** -- `make go-cli-install` puts the binary
-  in `~/.local/bin`. Confirm this is on PATH in typical agent environments, or add a
-  note to the skill's setup section.
+- [x] **Participant skill** (`skills/escrow-cli/`) implemented.
+- [x] **Admin skill** (`skills/escrow-admin/`) implemented with reference docs.
+- [x] **Live CLI flow exercised on Base Sepolia** via Codex agent run and
+  recorded in `demo/DEMO_RUN.md` (2026-02-24).
