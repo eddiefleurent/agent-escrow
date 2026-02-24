@@ -99,18 +99,29 @@ type createRFQArgs struct {
 	WorkerStake              FlexibleString `json:"worker_stake,omitempty" jsonschema:"Required worker stake; omit or 0 for none"`
 	MilestonesJSON           string         `json:"milestones_json,omitempty" jsonschema:"JSON array of milestone specs"`
 	RequirementsJSON         string         `json:"requirements_json,omitempty" jsonschema:"JSON: capability requirements, tags, constraints"`
+	CommitDeadline           FlexibleString `json:"commit_deadline,omitempty" jsonschema:"Unix timestamp: end of commit phase (sealed bids)"`
+	RevealDeadline           FlexibleString `json:"reveal_deadline,omitempty" jsonschema:"Unix timestamp: end of reveal phase (must be >= commit_deadline and <= deadline)"`
 	ExpiresAt                FlexibleString `json:"expires_at" jsonschema:"Unix timestamp: when the RFQ stops accepting bids (distinct from deadline which is when work must be done)"`
 }
 
-type placeBidArgs struct {
+type commitBidArgs struct {
+	RFQID      FlexibleString `json:"rfq_id" jsonschema:"RFQ ID to commit on"`
+	Bidder     string         `json:"bidder" jsonschema:"Worker agent address placing the commit"`
+	Commitment string         `json:"commitment" jsonschema:"0x-prefixed keccak256 commitment hash"`
+	Nonce      string         `json:"nonce" jsonschema:"Bidder nonce used in commitment preimage"`
+}
+
+type revealBidArgs struct {
 	RFQID             FlexibleString `json:"rfq_id" jsonschema:"RFQ ID to bid on"`
 	Bidder            string         `json:"bidder" jsonschema:"Worker agent address placing the bid"`
+	Nonce             string         `json:"nonce" jsonschema:"Nonce used in prior commit"`
+	Salt              string         `json:"salt" jsonschema:"Secret salt used in commitment preimage"`
 	Amount            FlexibleString `json:"amount" jsonschema:"Proposed total price in wei or smallest unit"`
 	EstimatedDuration FlexibleString `json:"estimated_duration,omitempty" jsonschema:"Estimated seconds to complete"`
 	ReputationBond    FlexibleString `json:"reputation_bond,omitempty" jsonschema:"Offered reputation bond in wei"`
 	MilestonesJSON    string         `json:"milestones_json,omitempty" jsonschema:"JSON: proposed milestone breakdown"`
 	Message           string         `json:"message,omitempty" jsonschema:"Free-form bid justification"`
-	ExpiresAt         FlexibleString `json:"expires_at" jsonschema:"Unix timestamp: bid expiry (must not exceed RFQ expires_at)"`
+	ExpiresAt         FlexibleString `json:"expires_at,omitempty" jsonschema:"Unix timestamp: bid expiry (must not exceed RFQ deadline)"`
 	StakeMandateID    string         `json:"stake_mandate_id,omitempty" jsonschema:"Optional AP2 mandate ID for Sybil-resistant stake-on-bid (paper §6)"`
 }
 
@@ -233,17 +244,22 @@ func (s *Server) registerTools(srv *mcp.Server) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "create_rfq",
-		Description: "Broadcast a Task_RFQ (Request for Quote) describing a task for agents to bid on. 'deadline' is the task submission deadline (when work must be done). 'expires_at' is when the RFQ stops accepting bids. Verifier/arbitrator can be omitted if unknown at RFQ time. Paper §6.1: Task_RFQ broadcast.",
+		Description: "Broadcast a Task_RFQ (Request for Quote) describing a task for agents to bid on. Supports sealed bidding with commit/reveal windows. 'deadline' is task submission deadline; 'commit_deadline' and 'reveal_deadline' define bid privacy windows. Paper §6.1: Task_RFQ broadcast.",
 	}, s.handleCreateRFQ)
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "place_bid",
-		Description: "Submit a Bid_Object on an open RFQ with proposed price, duration, and bond. Paper §6.1: signed Bid_Objects.",
-	}, s.handlePlaceBid)
+		Name:        "commit_bid",
+		Description: "Submit a sealed-bid commitment during the commit phase.",
+	}, s.handleCommitBid)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "reveal_bid",
+		Description: "Reveal sealed-bid details during the reveal phase. The reveal must match the prior commitment.",
+	}, s.handleRevealBid)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_bids",
-		Description: "List bids for an RFQ (buyer view) or by bidder address (worker view). Each bid includes an expired field indicating whether its expiry has passed.",
+		Description: "List revealed bids for an RFQ (buyer view) or by bidder address (worker view). Each bid includes an expired field.",
 	}, s.handleListBids)
 
 	mcp.AddTool(srv, &mcp.Tool{
@@ -1020,6 +1036,20 @@ func (s *Server) handleCreateRFQ(ctx context.Context, req *mcp.CallToolRequest, 
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid expires_at: %v", err)), nil, nil
 	}
+	var commitDeadline int64
+	if args.CommitDeadline.String() != "" {
+		commitDeadline, err = strconv.ParseInt(args.CommitDeadline.String(), 10, 64)
+		if err != nil {
+			return textResult(fmt.Sprintf("invalid commit_deadline: %v", err)), nil, nil
+		}
+	}
+	var revealDeadline int64
+	if args.RevealDeadline.String() != "" {
+		revealDeadline, err = strconv.ParseInt(args.RevealDeadline.String(), 10, 64)
+		if err != nil {
+			return textResult(fmt.Sprintf("invalid reveal_deadline: %v", err)), nil, nil
+		}
+	}
 
 	// Normalize token field.
 	token := normalizeToken(args.Token)
@@ -1041,6 +1071,8 @@ func (s *Server) handleCreateRFQ(ctx context.Context, req *mcp.CallToolRequest, 
 		WorkerStake:              args.WorkerStake.String(),
 		MilestonesJSON:           args.MilestonesJSON,
 		RequirementsJSON:         args.RequirementsJSON,
+		CommitDeadline:           commitDeadline,
+		RevealDeadline:           revealDeadline,
 		ExpiresAt:                expiresAt,
 	})
 	if err != nil {
@@ -1050,11 +1082,35 @@ func (s *Server) handleCreateRFQ(ctx context.Context, req *mcp.CallToolRequest, 
 	return jsonResult(map[string]any{
 		"rfq_id":     rfq.ID,
 		"status":     rfq.Status,
-		"next_steps": "Workers can now call place_bid with this rfq_id. Use list_bids to see incoming bids, then accept_bid to finalize.",
+		"next_steps": "Workers should call commit_bid during commit phase, then reveal_bid during reveal phase. Buyer can call accept_bid after reveal phase ends.",
 	})
 }
 
-func (s *Server) handlePlaceBid(ctx context.Context, req *mcp.CallToolRequest, args placeBidArgs) (*mcp.CallToolResult, any, error) {
+func (s *Server) handleCommitBid(ctx context.Context, req *mcp.CallToolRequest, args commitBidArgs) (*mcp.CallToolResult, any, error) {
+	rfqID, err := strconv.ParseInt(args.RFQID.String(), 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid rfq_id: %v", err)), nil, nil
+	}
+
+	svc := s.biddingService()
+	commit, err := svc.CommitBid(ctx, bidding.CommitBidParams{
+		RFQID:      rfqID,
+		Bidder:     args.Bidder,
+		Commitment: args.Commitment,
+		Nonce:      args.Nonce,
+	})
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
+
+	return jsonResult(map[string]any{
+		"commit_id":  commit.ID,
+		"status":     commit.Status,
+		"next_steps": "Reveal this bid in reveal phase with reveal_bid using the same bidder and nonce.",
+	})
+}
+
+func (s *Server) handleRevealBid(ctx context.Context, req *mcp.CallToolRequest, args revealBidArgs) (*mcp.CallToolResult, any, error) {
 	rfqID, err := strconv.ParseInt(args.RFQID.String(), 10, 64)
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid rfq_id: %v", err)), nil, nil
@@ -1066,15 +1122,20 @@ func (s *Server) handlePlaceBid(ctx context.Context, req *mcp.CallToolRequest, a
 			return textResult(fmt.Sprintf("invalid estimated_duration: %v", err)), nil, nil
 		}
 	}
-	expiresAt, err := strconv.ParseInt(args.ExpiresAt.String(), 10, 64)
-	if err != nil {
-		return textResult(fmt.Sprintf("invalid expires_at: %v", err)), nil, nil
+	var expiresAt int64
+	if args.ExpiresAt.String() != "" {
+		expiresAt, err = strconv.ParseInt(args.ExpiresAt.String(), 10, 64)
+		if err != nil {
+			return textResult(fmt.Sprintf("invalid expires_at: %v", err)), nil, nil
+		}
 	}
 
 	svc := s.biddingService()
-	bid, err := svc.PlaceBid(ctx, bidding.PlaceBidParams{
+	bid, err := svc.RevealBid(ctx, bidding.RevealBidParams{
 		RFQID:             rfqID,
 		Bidder:            args.Bidder,
+		Nonce:             args.Nonce,
+		Salt:              args.Salt,
 		Amount:            args.Amount.String(),
 		EstimatedDuration: estimatedDuration,
 		ReputationBond:    args.ReputationBond.String(),
@@ -1090,7 +1151,7 @@ func (s *Server) handlePlaceBid(ctx context.Context, req *mcp.CallToolRequest, a
 	return jsonResult(map[string]any{
 		"bid_id":     bid.ID,
 		"status":     bid.Status,
-		"next_steps": "The RFQ buyer can call accept_bid to accept this bid and create an on-chain escrow.",
+		"next_steps": "Buyer can accept this bid after reveal phase ends using accept_bid.",
 	})
 }
 

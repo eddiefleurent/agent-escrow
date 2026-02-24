@@ -2,12 +2,14 @@ package bidding
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
@@ -76,12 +78,23 @@ type CreateRFQParams struct {
 	WorkerStake              string
 	MilestonesJSON           string
 	RequirementsJSON         string
+	CommitDeadline           int64
+	RevealDeadline           int64
 	ExpiresAt                int64
 }
 
-type PlaceBidParams struct {
+type CommitBidParams struct {
+	RFQID      int64
+	Bidder     string
+	Commitment string
+	Nonce      string
+}
+
+type RevealBidParams struct {
 	RFQID             int64
 	Bidder            string
+	Nonce             string
+	Salt              string
 	Amount            string
 	EstimatedDuration int64
 	ReputationBond    string
@@ -123,6 +136,22 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 	}
 	if p.Deadline <= now {
 		return nil, errors.New("deadline must be in the future")
+	}
+	// Backfill for callers that still only provide expires_at.
+	if p.ExpiresAt > 0 && p.CommitDeadline == 0 {
+		p.CommitDeadline = p.ExpiresAt
+	}
+	if p.ExpiresAt > 0 && p.RevealDeadline == 0 {
+		p.RevealDeadline = p.ExpiresAt
+	}
+	if p.CommitDeadline <= now {
+		return nil, errors.New("commit_deadline must be in the future")
+	}
+	if p.RevealDeadline < p.CommitDeadline {
+		return nil, errors.New("reveal_deadline must be >= commit_deadline")
+	}
+	if p.RevealDeadline > p.Deadline {
+		return nil, errors.New("reveal_deadline must be <= deadline")
 	}
 
 	if !common.IsHexAddress(p.Buyer) {
@@ -176,6 +205,9 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 		WorkerStake:              p.WorkerStake,
 		MilestonesJSON:           p.MilestonesJSON,
 		RequirementsJSON:         p.RequirementsJSON,
+		BiddingMode:              "sealed",
+		CommitDeadline:           p.CommitDeadline,
+		RevealDeadline:           p.RevealDeadline,
 		Status:                   "open",
 		ExpiresAt:                p.ExpiresAt,
 	})
@@ -185,7 +217,28 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 	return rfq, nil
 }
 
-func (s *Service) PlaceBid(ctx context.Context, p PlaceBidParams) (*storage.Bid, error) {
+func computeBidCommitment(rfqID int64, p RevealBidParams) string {
+	milestonesHash := crypto.Keccak256Hash([]byte(p.MilestonesJSON)).Hex()
+	messageHash := crypto.Keccak256Hash([]byte(p.Message)).Hex()
+	stakeMandateHash := crypto.Keccak256Hash([]byte(p.StakeMandateID)).Hex()
+	payload := strings.Join([]string{
+		"agent-escrow:sealed-bid:v1",
+		strconv.FormatInt(rfqID, 10),
+		strings.ToLower(p.Bidder),
+		p.Amount,
+		strconv.FormatInt(p.EstimatedDuration, 10),
+		p.ReputationBond,
+		milestonesHash,
+		messageHash,
+		strconv.FormatInt(p.ExpiresAt, 10),
+		stakeMandateHash,
+		p.Nonce,
+		p.Salt,
+	}, "|")
+	return crypto.Keccak256Hash([]byte(payload)).Hex()
+}
+
+func (s *Service) CommitBid(ctx context.Context, p CommitBidParams) (*storage.BidCommit, error) {
 	rfq, err := s.DB.GetRFQ(ctx, p.RFQID)
 	if err != nil {
 		return nil, fmt.Errorf("rfq not found: %w", err)
@@ -195,15 +248,93 @@ func (s *Service) PlaceBid(ctx context.Context, p PlaceBidParams) (*storage.Bid,
 	}
 
 	now := time.Now().Unix()
-	if rfq.ExpiresAt <= now {
-		return nil, errors.New("rfq has expired")
+	if rfq.CommitDeadline <= now {
+		return nil, errors.New("commit phase has ended")
 	}
 
 	if !common.IsHexAddress(p.Bidder) {
 		return nil, errors.New("invalid bidder address")
 	}
-	if p.Bidder == rfq.Buyer {
+	p.Bidder = common.HexToAddress(p.Bidder).Hex()
+	if p.Bidder == common.HexToAddress(rfq.Buyer).Hex() {
 		return nil, errors.New("bidder cannot be the same as the rfq buyer")
+	}
+	if len(p.Nonce) == 0 {
+		return nil, errors.New("nonce is required")
+	}
+	if !strings.HasPrefix(p.Commitment, "0x") || len(p.Commitment) != 66 {
+		return nil, errors.New("invalid commitment: must be 0x-prefixed 32-byte hex")
+	}
+
+	c, err := s.DB.CreateBidCommit(ctx, &storage.BidCommit{
+		RFQID:      p.RFQID,
+		Bidder:     p.Bidder,
+		Commitment: strings.ToLower(p.Commitment),
+		Nonce:      p.Nonce,
+		Status:     "committed",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create bid_commit: %w", err)
+	}
+	return c, nil
+}
+
+func (s *Service) RevealBid(ctx context.Context, p RevealBidParams) (*storage.Bid, error) {
+	rfq, err := s.DB.GetRFQ(ctx, p.RFQID)
+	if err != nil {
+		return nil, fmt.Errorf("rfq not found: %w", err)
+	}
+	if rfq.Status != "open" {
+		return nil, fmt.Errorf("rfq is not open (status: %s)", rfq.Status)
+	}
+
+	now := time.Now().Unix()
+	if now < rfq.CommitDeadline {
+		return nil, errors.New("reveal phase has not started")
+	}
+	if now > rfq.RevealDeadline {
+		return nil, errors.New("reveal phase has ended")
+	}
+	if !common.IsHexAddress(p.Bidder) {
+		return nil, errors.New("invalid bidder address")
+	}
+	p.Bidder = common.HexToAddress(p.Bidder).Hex()
+	if p.Bidder == common.HexToAddress(rfq.Buyer).Hex() {
+		return nil, errors.New("bidder cannot be the same as the rfq buyer")
+	}
+	if p.Amount == "" {
+		return nil, errors.New("amount is required")
+	}
+	if p.Nonce == "" {
+		return nil, errors.New("nonce is required")
+	}
+	if p.Salt == "" {
+		return nil, errors.New("salt is required")
+	}
+	if p.ExpiresAt == 0 {
+		p.ExpiresAt = rfq.Deadline
+	}
+	if p.ReputationBond == "" {
+		p.ReputationBond = "0"
+	}
+	if p.MilestonesJSON == "" {
+		p.MilestonesJSON = "[]"
+	}
+
+	commit, err := s.DB.GetBidCommitByRFQBidderNonce(ctx, p.RFQID, p.Bidder, p.Nonce)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || strings.Contains(err.Error(), sql.ErrNoRows.Error()) {
+			return nil, errors.New("commit not found for bidder+nonce")
+		}
+		return nil, err
+	}
+	if commit.Status != "committed" {
+		return nil, fmt.Errorf("commit is not revealable (status: %s)", commit.Status)
+	}
+
+	expected := computeBidCommitment(p.RFQID, p)
+	if !strings.EqualFold(expected, commit.Commitment) {
+		return nil, errors.New("invalid reveal: commitment mismatch")
 	}
 
 	amount, ok := new(big.Int).SetString(p.Amount, 10)
@@ -225,12 +356,8 @@ func (s *Service) PlaceBid(ctx context.Context, p PlaceBidParams) (*storage.Bid,
 	if p.ExpiresAt <= now {
 		return nil, errors.New("bid expires_at must be in the future")
 	}
-	if p.ExpiresAt > rfq.ExpiresAt {
-		return nil, errors.New("bid expires_at must not exceed rfq expires_at")
-	}
-
-	if p.ReputationBond == "" {
-		p.ReputationBond = "0"
+	if p.ExpiresAt > rfq.Deadline {
+		return nil, errors.New("bid expires_at must not exceed rfq deadline")
 	}
 	rb, ok := new(big.Int).SetString(p.ReputationBond, 10)
 	if !ok {
@@ -240,11 +367,11 @@ func (s *Service) PlaceBid(ctx context.Context, p PlaceBidParams) (*storage.Bid,
 		return nil, errors.New("invalid reputation_bond: negative value")
 	}
 
-	if p.MilestonesJSON == "" {
-		p.MilestonesJSON = "[]"
+	dbTx, err := s.DB.BeginTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin db tx: %w", err)
 	}
-
-	bid, err := s.DB.CreateBid(ctx, &storage.Bid{
+	bid, err := s.DB.CreateBidTx(ctx, dbTx, &storage.Bid{
 		RFQID:             p.RFQID,
 		Bidder:            p.Bidder,
 		Amount:            p.Amount,
@@ -257,8 +384,17 @@ func (s *Service) PlaceBid(ctx context.Context, p PlaceBidParams) (*storage.Bid,
 		StakeMandateID:    p.StakeMandateID,
 	})
 	if err != nil {
+		dbTx.Rollback()
 		return nil, fmt.Errorf("create bid: %w", err)
 	}
+	if err := s.DB.UpdateBidCommitRevealTx(ctx, dbTx, commit.ID, bid.ID); err != nil {
+		dbTx.Rollback()
+		return nil, fmt.Errorf("update bid commit reveal: %w", err)
+	}
+	if err := dbTx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit db tx: %w", err)
+	}
+
 	return bid, nil
 }
 
@@ -272,8 +408,8 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 		return nil, fmt.Errorf("rfq is not open (status: %s)", rfq.Status)
 	}
 	now := time.Now().Unix()
-	if rfq.ExpiresAt <= now {
-		return nil, errors.New("rfq has expired")
+	if now <= rfq.RevealDeadline {
+		return nil, errors.New("cannot accept before reveal phase ends")
 	}
 	if rfq.Deadline <= now {
 		return nil, errors.New("rfq deadline has passed")
@@ -295,6 +431,16 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 
 	if bid.ExpiresAt <= now {
 		return nil, errors.New("bid has expired")
+	}
+	commit, err := s.DB.GetBidCommitByRevealedBidID(ctx, bid.ID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || strings.Contains(err.Error(), sql.ErrNoRows.Error()) {
+			return nil, errors.New("bid is missing sealed commit reveal linkage")
+		}
+		return nil, err
+	}
+	if commit.Status != "revealed" {
+		return nil, fmt.Errorf("bid commit is not revealable (status: %s)", commit.Status)
 	}
 
 	amount, ok := new(big.Int).SetString(bid.Amount, 10)
@@ -444,6 +590,14 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 	if err := s.DB.RejectPendingBidsTx(ctx, dbTx, rfq.ID, bid.ID); err != nil {
 		dbTx.Rollback()
 		return nil, fmt.Errorf("db RejectPendingBids: %w", err)
+	}
+	if err := s.DB.UpdateBidCommitStatusByRevealedBidTx(ctx, dbTx, bid.ID, "accepted"); err != nil {
+		dbTx.Rollback()
+		return nil, fmt.Errorf("db UpdateBidCommitStatusByRevealedBid: %w", err)
+	}
+	if err := s.DB.RejectUnacceptedBidCommitsTx(ctx, dbTx, rfq.ID, bid.ID); err != nil {
+		dbTx.Rollback()
+		return nil, fmt.Errorf("db RejectUnacceptedBidCommits: %w", err)
 	}
 
 	if err := dbTx.Commit(); err != nil {

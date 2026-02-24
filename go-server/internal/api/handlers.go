@@ -946,6 +946,8 @@ type createRFQRequest struct {
 	WorkerStake              string `json:"worker_stake,omitempty"`
 	MilestonesJSON           string `json:"milestones_json,omitempty"`
 	RequirementsJSON         string `json:"requirements_json,omitempty"`
+	CommitDeadline           string `json:"commit_deadline,omitempty"`
+	RevealDeadline           string `json:"reveal_deadline,omitempty"`
 	ExpiresAt                string `json:"expires_at"`
 }
 
@@ -981,6 +983,22 @@ func (h *Handlers) CreateRFQ(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid expires_at"})
 		return
 	}
+	var commitDeadline int64
+	if req.CommitDeadline != "" {
+		commitDeadline, err = strconv.ParseInt(req.CommitDeadline, 10, 64)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid commit_deadline"})
+			return
+		}
+	}
+	var revealDeadline int64
+	if req.RevealDeadline != "" {
+		revealDeadline, err = strconv.ParseInt(req.RevealDeadline, 10, 64)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid reveal_deadline"})
+			return
+		}
+	}
 
 	svc := h.biddingService()
 	rfq, err := svc.CreateRFQ(r.Context(), bidding.CreateRFQParams{
@@ -999,6 +1017,8 @@ func (h *Handlers) CreateRFQ(w http.ResponseWriter, r *http.Request) {
 		WorkerStake:              req.WorkerStake,
 		MilestonesJSON:           req.MilestonesJSON,
 		RequirementsJSON:         req.RequirementsJSON,
+		CommitDeadline:           commitDeadline,
+		RevealDeadline:           revealDeadline,
 		ExpiresAt:                expiresAt,
 	})
 	if err != nil {
@@ -1042,9 +1062,19 @@ func (h *Handlers) GetRFQ(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	commits, err := h.db.ListBidCommitsByRFQ(r.Context(), id)
+	if err != nil {
+		slog.Error("failed to fetch bid commits for rfq", "rfq_id", id, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch bid commits"})
+		return
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"rfq":  rfq,
-		"bids": bids,
+		"rfq":        rfq,
+		"bids":       bids,
+		"commits":    commits,
+		"now_unix":   time.Now().Unix(),
+		"phase_hint": map[string]int64{"commit_deadline": rfq.CommitDeadline, "reveal_deadline": rfq.RevealDeadline},
 	})
 }
 
@@ -1077,50 +1107,98 @@ func (h *Handlers) CancelRFQ(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("cancel failed: %v", err)})
 		return
 	}
+	if err := h.db.RejectUnacceptedBidCommits(r.Context(), id, 0); err != nil {
+		slog.Error("failed to reject bid commits on cancel", "rfq_id", id, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("cancel failed: %v", err)})
+		return
+	}
 
 	rfq, _ = h.db.GetRFQ(r.Context(), id)
 	writeJSON(w, http.StatusOK, rfq)
 }
 
-type placeBidRequest struct {
+type commitBidRequest struct {
+	Bidder     string `json:"bidder"`
+	Commitment string `json:"commitment"`
+	Nonce      string `json:"nonce"`
+}
+
+type revealBidRequest struct {
 	Bidder            string `json:"bidder"`
+	Nonce             string `json:"nonce"`
+	Salt              string `json:"salt"`
 	Amount            string `json:"amount"`
 	EstimatedDuration int64  `json:"estimated_duration,omitempty"`
 	ReputationBond    string `json:"reputation_bond,omitempty"`
 	MilestonesJSON    string `json:"milestones_json,omitempty"`
 	Message           string `json:"message,omitempty"`
 	ExpiresAt         string `json:"expires_at"`
+	StakeMandateID    string `json:"stake_mandate_id,omitempty"`
 }
 
-func (h *Handlers) PlaceBid(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) CommitBid(w http.ResponseWriter, r *http.Request) {
 	rfqID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid rfq id"})
 		return
 	}
 
-	var req placeBidRequest
+	var req commitBidRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
 
-	expiresAt, err := strconv.ParseInt(req.ExpiresAt, 10, 64)
+	svc := h.biddingService()
+	commit, err := svc.CommitBid(r.Context(), bidding.CommitBidParams{
+		RFQID:      rfqID,
+		Bidder:     req.Bidder,
+		Commitment: req.Commitment,
+		Nonce:      req.Nonce,
+	})
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid expires_at"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
+	writeJSON(w, http.StatusCreated, commit)
+}
+
+func (h *Handlers) RevealBid(w http.ResponseWriter, r *http.Request) {
+	rfqID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid rfq id"})
+		return
+	}
+
+	var req revealBidRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+
+	var expiresAt int64
+	if req.ExpiresAt != "" {
+		expiresAt, err = strconv.ParseInt(req.ExpiresAt, 10, 64)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid expires_at"})
+			return
+		}
+	}
+
 	svc := h.biddingService()
-	bid, err := svc.PlaceBid(r.Context(), bidding.PlaceBidParams{
+	bid, err := svc.RevealBid(r.Context(), bidding.RevealBidParams{
 		RFQID:             rfqID,
 		Bidder:            req.Bidder,
+		Nonce:             req.Nonce,
+		Salt:              req.Salt,
 		Amount:            req.Amount,
 		EstimatedDuration: req.EstimatedDuration,
 		ReputationBond:    req.ReputationBond,
 		MilestonesJSON:    req.MilestonesJSON,
 		Message:           req.Message,
 		ExpiresAt:         expiresAt,
+		StakeMandateID:    req.StakeMandateID,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
