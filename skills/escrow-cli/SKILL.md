@@ -171,6 +171,23 @@ escrow-cli bid reveal <rfq-id> --output json --data '{
   "expires_at": "1739800000"
 }'
 
+# Commitment preimage (exact format used by server)
+# keccak256("agent-escrow:sealed-bid:v1|<rfq_id>|<lowercase bidder>|<amount>|<estimated_duration>|<reputation_bond>|<keccak256(milestones_json)>|<keccak256(message)>|<expires_at>|<keccak256(stake_mandate_id)>|<nonce>|<salt>")
+#
+# Concrete example:
+# rfq_id=42
+# bidder=0x1111111111111111111111111111111111111111
+# amount=1200000000000000000
+# estimated_duration=259200
+# reputation_bond=0
+# milestones_json=[]
+# message="Specialized in OAuth integrations"
+# expires_at=1739800000
+# stake_mandate_id="" (empty string)
+# nonce=worker-nonce-1
+# salt=random-secret-salt
+# -> commitment = 0xa65de16756ca35c57f29ddda339b6414220555e72e842d2b2a9f007010613350
+
 # 5. If your bid is accepted, the escrow is created automatically.
 #    Check your open escrows:
 escrow-cli escrow list --output json --role worker --address 0xYourAddress

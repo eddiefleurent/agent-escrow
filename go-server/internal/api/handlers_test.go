@@ -1196,6 +1196,68 @@ func TestRevealBid_OutOfBudgetRange(t *testing.T) {
 	}
 }
 
+func TestRevealBid_CommitmentMismatch(t *testing.T) {
+	env := setup(t)
+	ctx := context.Background()
+	now := time.Now().Unix()
+
+	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
+		Title: "RFQ", Description: "desc", SpecHash: "0x1",
+		Buyer:     "0x1000000000000000000000000000000000000001",
+		BudgetMin: "100", BudgetMax: "500",
+		Deadline: now + 86400, ReviewPeriodSeconds: 86400,
+		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+		Status: "open", ExpiresAt: now + 172800,
+		BiddingMode: "sealed", CommitDeadline: now - 100, RevealDeadline: now + 1000,
+		MilestonesJSON: "[]", RequirementsJSON: "{}",
+	})
+	if err != nil {
+		t.Fatalf("setup rfq: %v", err)
+	}
+
+	nonce := "n-mismatch"
+	salt := "s-expected"
+	commitment := sealedBidCommitment(
+		rfq.ID,
+		"0x2000000000000000000000000000000000000002",
+		"250",
+		0,
+		"0",
+		"[]",
+		"",
+		now+120,
+		"",
+		nonce,
+		salt,
+	)
+	_, err = env.db.CreateBidCommit(ctx, &storage.BidCommit{
+		RFQID:      rfq.ID,
+		Bidder:     "0x2000000000000000000000000000000000000002",
+		Commitment: commitment,
+		Nonce:      nonce,
+		Status:     "committed",
+	})
+	if err != nil {
+		t.Fatalf("setup bid commit: %v", err)
+	}
+
+	body := fmt.Sprintf(`{
+		"bidder": "0x2000000000000000000000000000000000000002",
+		"amount": "250",
+		"nonce": "%s",
+		"salt": "s-actual",
+		"expires_at": "%d"
+	}`, nonce, now+120)
+
+	rr := env.request(t, "POST", fmt.Sprintf("/api/v1/rfqs/%d/bids/reveal", rfq.ID), body)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "commitment mismatch") {
+		t.Fatalf("expected commitment mismatch error, got: %s", rr.Body.String())
+	}
+}
+
 func TestRevealBid_DefaultsNormalizedBeforeCommitmentCheck(t *testing.T) {
 	env := setup(t)
 	ctx := context.Background()
