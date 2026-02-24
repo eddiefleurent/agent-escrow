@@ -13,18 +13,19 @@ func newBidCmd(opts *Options) *cobra.Command {
 		Short: "Bid commands",
 	}
 
-	bidCmd.AddCommand(newBidPlaceCmd(opts))
+	bidCmd.AddCommand(newBidCommitCmd(opts))
+	bidCmd.AddCommand(newBidRevealCmd(opts))
 	bidCmd.AddCommand(newBidListCmd(opts))
 	bidCmd.AddCommand(newBidAcceptCmd(opts))
 
 	return bidCmd
 }
 
-func newBidPlaceCmd(opts *Options) *cobra.Command {
+func newBidCommitCmd(opts *Options) *cobra.Command {
 	pf := payloadFlags{}
 	cmd := &cobra.Command{
-		Use:   "place <rfq-id>",
-		Short: "Place a bid on an RFQ",
+		Use:   "commit <rfq-id>",
+		Short: "Commit a sealed bid on an RFQ",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body, err := payloadFromFlags(pf, true)
@@ -32,7 +33,26 @@ func newBidPlaceCmd(opts *Options) *cobra.Command {
 				return err
 			}
 			rfqID := url.PathEscape(args[0])
-			return runPost(cmd, opts, fmt.Sprintf("/api/v1/rfqs/%s/bids", rfqID), body)
+			return runPost(cmd, opts, fmt.Sprintf("/api/v1/rfqs/%s/bids/commit", rfqID), body)
+		},
+	}
+	attachPayloadFlags(cmd, &pf)
+	return cmd
+}
+
+func newBidRevealCmd(opts *Options) *cobra.Command {
+	pf := payloadFlags{}
+	cmd := &cobra.Command{
+		Use:   "reveal <rfq-id>",
+		Short: "Reveal a sealed bid on an RFQ",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			body, err := payloadFromFlags(pf, true)
+			if err != nil {
+				return err
+			}
+			rfqID := url.PathEscape(args[0])
+			return runPost(cmd, opts, fmt.Sprintf("/api/v1/rfqs/%s/bids/reveal", rfqID), body)
 		},
 	}
 	attachPayloadFlags(cmd, &pf)

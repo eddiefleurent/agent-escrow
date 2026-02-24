@@ -66,13 +66,13 @@ escrow-cli rfq create --output json --data '{
 }'
 # → returns rfq_id
 
-# 2. Check bids as they come in
+# 2. Check revealed bids after reveal phase starts
 escrow-cli bid list <rfq-id> --output json
 
 # 3. Check a bidder's track record before accepting
 escrow-cli reputation get <bidder-address> --output json --role worker
 
-# 4. Accept the best bid (automatically creates an on-chain escrow)
+# 4. Accept the best revealed bid after reveal window closes
 escrow-cli bid accept <rfq-id> --output json --data '{"bid_id": 3}'
 # → returns escrow_id
 
@@ -153,23 +153,32 @@ escrow-cli rfq list --output json --status open
 # 2. Read a specific task's requirements
 escrow-cli rfq get <rfq-id> --output json
 
-# 3. Place your bid
-escrow-cli bid place <rfq-id> --output json --data '{
+# 3. Commit your sealed bid during commit phase
+escrow-cli bid commit <rfq-id> --output json --data '{
   "bidder": "0xYourAddress",
+  "commitment": "0xYourCommitmentHash",
+  "nonce": "worker-nonce-1"
+}'
+
+# 4. Reveal your bid during reveal phase (must match commitment preimage)
+escrow-cli bid reveal <rfq-id> --output json --data '{
+  "bidder": "0xYourAddress",
+  "nonce": "worker-nonce-1",
+  "salt": "random-secret-salt",
   "amount": "1200000000000000000",
   "estimated_duration": 259200,
   "message": "Specialized in OAuth integrations. Delivered 12 similar projects. Portfolio: ipfs://Qm...",
   "expires_at": "1739800000"
 }'
 
-# 4. If your bid is accepted, the escrow is created automatically.
+# 5. If your bid is accepted, the escrow is created automatically.
 #    Check your open escrows:
 escrow-cli escrow list --output json --role worker --address 0xYourAddress
 
-# 5. If a worker stake was required, deposit it before submitting:
+# 6. If a worker stake was required, deposit it before submitting:
 escrow-cli escrow stake <escrow-id> --output json
 
-# 6. Execute the work. When ready, submit proof of delivery:
+# 7. Execute the work. When ready, submit proof of delivery:
 escrow-cli escrow submit <escrow-id> --output json --data '{
   "submission_uri": "ipfs://QmDeliverable..."
 }'
@@ -180,7 +189,7 @@ escrow-cli escrow submit <escrow-id> --output json --data '{
   "milestone_index": 0
 }'
 
-# 7. Monitor status
+# 8. Monitor status
 escrow-cli escrow get <escrow-id> --output json
 ```
 

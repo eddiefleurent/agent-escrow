@@ -4,6 +4,8 @@ Implementation roadmap for the ["Intelligent AI Delegation"](https://arxiv.org/a
 
 The paper defines five framework pillars, nine technical protocols, ethical considerations, and protocol integration paths. This roadmap traces a path from the settlement kernel through a full delegation marketplace. Each phase is a prerequisite for the next.
 
+**Current phase: V3 -- Delegation Intelligence.**
+
 ---
 
 ## Relationship to Coinbase Developer Platform
@@ -95,7 +97,7 @@ Marketplace layer built on top of the settlement kernel.
 10. **Real-time event subscriptions** ✓ -- CDP Webhooks deliver factory events (`EscrowCreated`, `OutcomeRecorded`) in real-time via `POST /webhooks/cdp` with HMAC-SHA256 verification; in-process `EventBus` with SSE (`GET /api/v1/events`, `GET /api/v1/escrows/{id}/events`), WebSocket (`GET /api/v1/events/ws`), and `subscribe_events` MCP tool (cursor-based polling); configurable granularity L0-L3 with L0 heartbeat and L1 state transitions implemented; events published from polling indexer and webhook handler (paper §4.5: configurable granularity L0-L3)
 11. **Emergency response protocol** ✓ -- credential revocation propagation (address freezing via factory), contract freeze with fund recovery (escrow freezing + emergency resolve), security incident broadcasting (emergency events + audit log); 7 MCP tools, 7 HTTP API endpoints, event indexing for emergency events, SQLite storage for frozen addresses and audit log; configurable via `EMERGENCY_ENABLED` env var (default: true); 30 Solidity tests + Go tests for storage and API handlers (paper §4.9: rapid incident response)
 
-### V3 -- Delegation Intelligence
+### V3 -- Delegation Intelligence (Current)
 
 Full marketplace intelligence and the paper's advanced coordination mechanisms.
 

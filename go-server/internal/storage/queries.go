@@ -492,7 +492,7 @@ func (d *DB) ListReputations(ctx context.Context, minCompleted int) ([]*Reputati
 
 const rfqColumns = `id, title, description, spec_hash, buyer, token, budget_min, budget_max,
 	deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds,
-	verifier, arbitrator, worker_stake, milestones_json, requirements_json,
+	verifier, arbitrator, worker_stake, milestones_json, requirements_json, bidding_mode, commit_deadline, reveal_deadline,
 	status, expires_at, created_at, updated_at`
 
 func scanRFQ(scanner interface{ Scan(...any) error }) (*RFQ, error) {
@@ -502,6 +502,7 @@ func scanRFQ(scanner interface{ Scan(...any) error }) (*RFQ, error) {
 		&r.BudgetMin, &r.BudgetMax, &r.Deadline, &r.ReviewPeriodSeconds,
 		&r.DisputePeriodSeconds, &r.ArbitratorTimeoutSeconds,
 		&r.Verifier, &r.Arbitrator, &r.WorkerStake, &r.MilestonesJSON, &r.RequirementsJSON,
+		&r.BiddingMode, &r.CommitDeadline, &r.RevealDeadline,
 		&r.Status, &r.ExpiresAt, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
@@ -522,12 +523,12 @@ func (d *DB) CreateRFQ(ctx context.Context, r *RFQ) (*RFQ, error) {
 		`INSERT INTO rfqs (title, description, spec_hash, buyer, token, budget_min, budget_max,
 			deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds,
 			verifier, arbitrator, worker_stake, milestones_json, requirements_json,
-			status, expires_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			bidding_mode, commit_deadline, reveal_deadline, status, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.Title, r.Description, r.SpecHash, r.Buyer, r.Token, r.BudgetMin, r.BudgetMax,
 		r.Deadline, r.ReviewPeriodSeconds, r.DisputePeriodSeconds, r.ArbitratorTimeoutSeconds,
 		r.Verifier, r.Arbitrator, r.WorkerStake, r.MilestonesJSON, r.RequirementsJSON,
-		r.Status, r.ExpiresAt,
+		r.BiddingMode, r.CommitDeadline, r.RevealDeadline, r.Status, r.ExpiresAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert rfq: %w", err)
@@ -640,8 +641,8 @@ func scanBid(scanner interface{ Scan(...any) error }) (*Bid, error) {
 	return b, nil
 }
 
-func (d *DB) CreateBid(ctx context.Context, b *Bid) (*Bid, error) {
-	res, err := d.db.ExecContext(ctx,
+func createBidOn(ctx context.Context, q dbExecer, b *Bid) (*Bid, error) {
+	res, err := q.ExecContext(ctx,
 		`INSERT INTO bids (rfq_id, bidder, amount, estimated_duration, reputation_bond,
 			milestones_json, message, status, expires_at, stake_mandate_id)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -655,7 +656,20 @@ func (d *DB) CreateBid(ctx context.Context, b *Bid) (*Bid, error) {
 	if err != nil {
 		return nil, fmt.Errorf("last insert id: %w", err)
 	}
-	return d.GetBid(ctx, id)
+	row := q.QueryRowContext(ctx, `SELECT `+bidColumns+` FROM bids WHERE id = ?`, id)
+	out, err := scanBid(row)
+	if err != nil {
+		return nil, fmt.Errorf("get bid: %w", err)
+	}
+	return out, nil
+}
+
+func (d *DB) CreateBid(ctx context.Context, b *Bid) (*Bid, error) {
+	return createBidOn(ctx, d.db, b)
+}
+
+func (d *DB) CreateBidTx(ctx context.Context, tx *sql.Tx, b *Bid) (*Bid, error) {
+	return createBidOn(ctx, tx, b)
 }
 
 func (d *DB) GetBid(ctx context.Context, id int64) (*Bid, error) {
@@ -770,6 +784,182 @@ func (d *DB) RejectPendingBids(ctx context.Context, rfqID, exceptBidID int64) er
 
 func (d *DB) RejectPendingBidsTx(ctx context.Context, tx *sql.Tx, rfqID, exceptBidID int64) error {
 	return rejectPendingBidsOn(ctx, tx, rfqID, exceptBidID)
+}
+
+const bidCommitColumns = `id, rfq_id, bidder, commitment, nonce, status, revealed_bid_id, created_at, updated_at`
+
+func scanBidCommit(scanner interface{ Scan(...any) error }) (*BidCommit, error) {
+	c := &BidCommit{}
+	var createdAt, updatedAt string
+	var revealedBidID sql.NullInt64
+	err := scanner.Scan(
+		&c.ID, &c.RFQID, &c.Bidder, &c.Commitment, &c.Nonce, &c.Status, &revealedBidID, &createdAt, &updatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if revealedBidID.Valid {
+		v := revealedBidID.Int64
+		c.RevealedBidID = &v
+	}
+	c.CreatedAt, err = parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse bid_commit created_at: %w", err)
+	}
+	c.UpdatedAt, err = parseSQLiteTime(updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse bid_commit updated_at: %w", err)
+	}
+	return c, nil
+}
+
+func createBidCommitOn(ctx context.Context, q dbExecer, c *BidCommit) (*BidCommit, error) {
+	var revealed any
+	if c.RevealedBidID != nil {
+		revealed = *c.RevealedBidID
+	}
+	res, err := q.ExecContext(ctx,
+		`INSERT INTO bid_commits (rfq_id, bidder, commitment, nonce, status, revealed_bid_id) VALUES (?, ?, ?, ?, ?, ?)`,
+		c.RFQID, c.Bidder, c.Commitment, c.Nonce, c.Status, revealed,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert bid_commit: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("last insert id: %w", err)
+	}
+	row := q.QueryRowContext(ctx, `SELECT `+bidCommitColumns+` FROM bid_commits WHERE id = ?`, id)
+	out, err := scanBidCommit(row)
+	if err != nil {
+		return nil, fmt.Errorf("get bid_commit: %w", err)
+	}
+	return out, nil
+}
+
+func (d *DB) CreateBidCommit(ctx context.Context, c *BidCommit) (*BidCommit, error) {
+	return createBidCommitOn(ctx, d.db, c)
+}
+
+func (d *DB) CreateBidCommitTx(ctx context.Context, tx *sql.Tx, c *BidCommit) (*BidCommit, error) {
+	return createBidCommitOn(ctx, tx, c)
+}
+
+func (d *DB) GetBidCommitByRFQBidderNonce(ctx context.Context, rfqID int64, bidder, nonce string) (*BidCommit, error) {
+	row := d.db.QueryRowContext(
+		ctx,
+		`SELECT `+bidCommitColumns+` FROM bid_commits WHERE rfq_id = ? AND bidder = ? AND nonce = ?`,
+		rfqID, bidder, nonce,
+	)
+	c, err := scanBidCommit(row)
+	if err != nil {
+		return nil, fmt.Errorf("get bid_commit by nonce: %w", err)
+	}
+	return c, nil
+}
+
+func (d *DB) GetBidCommitByRevealedBidID(ctx context.Context, bidID int64) (*BidCommit, error) {
+	row := d.db.QueryRowContext(
+		ctx,
+		`SELECT `+bidCommitColumns+` FROM bid_commits WHERE revealed_bid_id = ?`,
+		bidID,
+	)
+	c, err := scanBidCommit(row)
+	if err != nil {
+		return nil, fmt.Errorf("get bid_commit by revealed bid id: %w", err)
+	}
+	return c, nil
+}
+
+func (d *DB) ListBidCommitsByRFQ(ctx context.Context, rfqID int64) ([]*BidCommit, error) {
+	rows, err := d.db.QueryContext(
+		ctx,
+		`SELECT `+bidCommitColumns+` FROM bid_commits WHERE rfq_id = ? ORDER BY id DESC`,
+		rfqID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list bid_commits by rfq: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*BidCommit
+	for rows.Next() {
+		c, err := scanBidCommit(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan bid_commit: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func updateBidCommitRevealOn(ctx context.Context, q dbExecer, id, revealedBidID int64) error {
+	res, err := q.ExecContext(
+		ctx,
+		`UPDATE bid_commits
+         SET status = 'revealed', revealed_bid_id = ?, updated_at = datetime('now')
+         WHERE id = ? AND status = 'committed'`,
+		revealedBidID, id,
+	)
+	if err != nil {
+		return fmt.Errorf("UpdateBidCommitReveal: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("UpdateBidCommitReveal rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("UpdateBidCommitReveal id=%d: %w", id, sql.ErrNoRows)
+	}
+	return nil
+}
+
+func (d *DB) UpdateBidCommitReveal(ctx context.Context, id, revealedBidID int64) error {
+	return updateBidCommitRevealOn(ctx, d.db, id, revealedBidID)
+}
+
+func (d *DB) UpdateBidCommitRevealTx(ctx context.Context, tx *sql.Tx, id, revealedBidID int64) error {
+	return updateBidCommitRevealOn(ctx, tx, id, revealedBidID)
+}
+
+func updateBidCommitStatusByRevealedBidOn(ctx context.Context, q dbExecer, bidID int64, status string) error {
+	_, err := q.ExecContext(
+		ctx,
+		`UPDATE bid_commits SET status = ?, updated_at = datetime('now') WHERE revealed_bid_id = ?`,
+		status, bidID,
+	)
+	if err != nil {
+		return fmt.Errorf("UpdateBidCommitStatusByRevealedBid: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) UpdateBidCommitStatusByRevealedBidTx(ctx context.Context, tx *sql.Tx, bidID int64, status string) error {
+	return updateBidCommitStatusByRevealedBidOn(ctx, tx, bidID, status)
+}
+
+func rejectUnacceptedBidCommitsOn(ctx context.Context, q dbExecer, rfqID, acceptedBidID int64) error {
+	_, err := q.ExecContext(
+		ctx,
+		`UPDATE bid_commits
+         SET status = 'rejected', updated_at = datetime('now')
+         WHERE rfq_id = ?
+           AND status IN ('committed', 'revealed')
+           AND (revealed_bid_id IS NULL OR revealed_bid_id != ?)`,
+		rfqID, acceptedBidID,
+	)
+	if err != nil {
+		return fmt.Errorf("RejectUnacceptedBidCommits: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) RejectUnacceptedBidCommits(ctx context.Context, rfqID, acceptedBidID int64) error {
+	return rejectUnacceptedBidCommitsOn(ctx, d.db, rfqID, acceptedBidID)
+}
+
+func (d *DB) RejectUnacceptedBidCommitsTx(ctx context.Context, tx *sql.Tx, rfqID, acceptedBidID int64) error {
+	return rejectUnacceptedBidCommitsOn(ctx, tx, rfqID, acceptedBidID)
 }
 
 // Chain log queries

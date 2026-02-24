@@ -106,6 +106,9 @@ type RFQ struct {
 	WorkerStake              string    `json:"worker_stake"`
 	MilestonesJSON           string    `json:"milestones_json"`
 	RequirementsJSON         string    `json:"requirements_json"`
+	BiddingMode              string    `json:"bidding_mode"`
+	CommitDeadline           int64     `json:"commit_deadline"`
+	RevealDeadline           int64     `json:"reveal_deadline"`
 	Status                   string    `json:"status"`
 	ExpiresAt                int64     `json:"expires_at"`
 	CreatedAt                time.Time `json:"created_at"`
@@ -128,6 +131,19 @@ type Bid struct {
 	StakeMandateID    string    `json:"stake_mandate_id,omitempty"` // AP2 mandate for Sybil-resistant stake-on-bid (paper §6)
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+// BidCommit represents a sealed-bid commitment before reveal.
+type BidCommit struct {
+	ID            int64     `json:"id"`
+	RFQID         int64     `json:"rfq_id"`
+	Bidder        string    `json:"bidder"`
+	Commitment    string    `json:"commitment"`
+	Nonce         string    `json:"nonce"`
+	Status        string    `json:"status"`
+	RevealedBidID *int64    `json:"revealed_bid_id,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // A2ATask represents an A2A protocol task linked to an escrow (paper §6: A2A Task object extension).

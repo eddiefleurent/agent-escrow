@@ -44,7 +44,8 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	mux.HandleFunc("GET /api/v1/rfqs", h.ListRFQs)
 	mux.HandleFunc("GET /api/v1/rfqs/{id}", h.GetRFQ)
 	mux.HandleFunc("POST /api/v1/rfqs/{id}/cancel", h.CancelRFQ)
-	mux.HandleFunc("POST /api/v1/rfqs/{id}/bids", h.PlaceBid)
+	mux.HandleFunc("POST /api/v1/rfqs/{id}/bids/commit", h.CommitBid)
+	mux.HandleFunc("POST /api/v1/rfqs/{id}/bids/reveal", h.RevealBid)
 	mux.HandleFunc("GET /api/v1/rfqs/{id}/bids", h.ListBids)
 	mux.HandleFunc("POST /api/v1/rfqs/{id}/accept", h.AcceptBid)
 
