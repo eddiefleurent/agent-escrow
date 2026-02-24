@@ -15,7 +15,6 @@ WHERE bidding_mode = 'sealed'
 WITH ranked AS (
     SELECT
         id,
-        status,
         ROW_NUMBER() OVER (PARTITION BY revealed_bid_id ORDER BY id DESC) AS rn
     FROM bid_commits
     WHERE revealed_bid_id IS NOT NULL
