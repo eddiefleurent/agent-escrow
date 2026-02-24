@@ -58,10 +58,16 @@ Assert `status == "ok"`. If the RFQ ID file is missing, wait up to 60 seconds
 ### Step 1: Read the RFQ details
 
 ```bash
-escrow-cli rfq get $RFQ_ID --output json
+RFQ_JSON=$(escrow-cli rfq get "$RFQ_ID" --output json)
+echo "$RFQ_JSON"
+BUDGET_MAX=$(echo "$RFQ_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('budget_max',''))")
+if [ -z "$BUDGET_MAX" ]; then
+  echo "ERROR: RFQ budget_max missing" >&2
+  exit 1
+fi
 ```
 
-Note the `budget_max` field. You will bid this amount.
+Use `budget_max` from the RFQ as your bid amount.
 
 ### Step 2: Place a bid
 
@@ -71,7 +77,7 @@ BID_EXPIRES=$((NOW + 3600))
 
 escrow-cli bid place $RFQ_ID --output json --data "{
   \"bidder\": \"0x13c010aC7cf2bd187adAfEAd2D73E52fF48765e2\",
-  \"amount\": \"100000000000000\",
+  \"amount\": \"$BUDGET_MAX\",
   \"estimated_duration\": 3600,
   \"message\": \"Worker agent bid for two-agent demo. Will deliver a verifiable artifact demonstrating autonomous task delegation per Tomasev et al. (2026).\",
   \"expires_at\": \"$BID_EXPIRES\"

@@ -116,12 +116,20 @@ echo ""
 echo "--- Waiting for buyer to post RFQ ---"
 WAIT=0
 MAX_WAIT=300
+fail_wait_for_rfq() {
+  echo "ERROR: $1" >&2
+  echo "Buyer agent log below:" >&2
+  cat "$STATE_DIR/buyer-agent.log" >&2
+  kill "$BUYER_PID" 2>/dev/null || true
+  exit 1
+}
+
 until [ -f "$STATE_DIR/rfq_id" ]; do
+  if ! kill -0 "$BUYER_PID" 2>/dev/null; then
+    fail_wait_for_rfq "Buyer agent exited before writing RFQ."
+  fi
   if [ $WAIT -ge $MAX_WAIT ]; then
-    echo "ERROR: Timed out waiting for RFQ (buyer agent log below):" >&2
-    cat "$STATE_DIR/buyer-agent.log" >&2
-    kill "$BUYER_PID" 2>/dev/null || true
-    exit 1
+    fail_wait_for_rfq "Timed out waiting for RFQ."
   fi
   sleep 2
   WAIT=$((WAIT + 2))
