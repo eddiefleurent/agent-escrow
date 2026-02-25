@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -725,6 +726,54 @@ func TestBidCommitQueriesAndExpiry(t *testing.T) {
 	}
 	if updatedB.Status != "revealed" {
 		t.Fatalf("expected commit B status revealed, got %q", updatedB.Status)
+	}
+}
+
+func TestCreateBidCommit_DuplicateErrorMapping(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	rfq, err := db.CreateRFQ(ctx, &RFQ{
+		Title: "RFQ", Description: "desc", SpecHash: "0x1", Buyer: "0xBuyer",
+		BudgetMin: "100", BudgetMax: "500", Deadline: 1800000000,
+		ReviewPeriodSeconds: 86400, DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+		Status: "open", ExpiresAt: 1900000000, MilestonesJSON: "[]", RequirementsJSON: "{}",
+	})
+	if err != nil {
+		t.Fatalf("create rfq: %v", err)
+	}
+
+	_, err = db.CreateBidCommit(ctx, &BidCommit{
+		RFQID:      rfq.ID,
+		Bidder:     "0xWorkerA",
+		Commitment: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Nonce:      "n1",
+		Status:     "committed",
+	})
+	if err != nil {
+		t.Fatalf("create baseline commit: %v", err)
+	}
+
+	_, err = db.CreateBidCommit(ctx, &BidCommit{
+		RFQID:      rfq.ID,
+		Bidder:     "0xWorkerA",
+		Commitment: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		Nonce:      "n1",
+		Status:     "committed",
+	})
+	if !errors.Is(err, ErrDuplicateBidCommitNonce) {
+		t.Fatalf("expected ErrDuplicateBidCommitNonce, got %v", err)
+	}
+
+	_, err = db.CreateBidCommit(ctx, &BidCommit{
+		RFQID:      rfq.ID,
+		Bidder:     "0xWorkerA",
+		Commitment: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Nonce:      "n2",
+		Status:     "committed",
+	})
+	if !errors.Is(err, ErrDuplicateBidCommitCommitment) {
+		t.Fatalf("expected ErrDuplicateBidCommitCommitment, got %v", err)
 	}
 }
 

@@ -830,11 +830,10 @@ func createBidCommitOn(ctx context.Context, q dbExecer, c *BidCommit) (*BidCommi
 		c.RFQID, c.Bidder, c.Commitment, c.Nonce, c.Status, revealed,
 	)
 	if err != nil {
-		lowerErr := strings.ToLower(err.Error())
-		if strings.Contains(lowerErr, "unique constraint failed: bid_commits.rfq_id, bid_commits.bidder, bid_commits.nonce") {
+		if isSQLiteUniqueConstraint(err, "bid_commits.rfq_id", "bid_commits.bidder", "bid_commits.nonce") {
 			return nil, fmt.Errorf("insert bid_commit: %w", ErrDuplicateBidCommitNonce)
 		}
-		if strings.Contains(lowerErr, "unique constraint failed: bid_commits.rfq_id, bid_commits.bidder, bid_commits.commitment") {
+		if isSQLiteUniqueConstraint(err, "bid_commits.rfq_id", "bid_commits.bidder", "bid_commits.commitment") {
 			return nil, fmt.Errorf("insert bid_commit: %w", ErrDuplicateBidCommitCommitment)
 		}
 		return nil, fmt.Errorf("insert bid_commit: %w", err)
@@ -849,6 +848,19 @@ func createBidCommitOn(ctx context.Context, q dbExecer, c *BidCommit) (*BidCommi
 		return nil, fmt.Errorf("get bid_commit: %w", err)
 	}
 	return out, nil
+}
+
+func isSQLiteUniqueConstraint(err error, cols ...string) bool {
+	lowerErr := strings.ToLower(err.Error())
+	if !strings.Contains(lowerErr, "unique constraint failed") {
+		return false
+	}
+	for _, col := range cols {
+		if !strings.Contains(lowerErr, col) {
+			return false
+		}
+	}
+	return true
 }
 
 func (d *DB) CreateBidCommit(ctx context.Context, c *BidCommit) (*BidCommit, error) {
