@@ -1057,11 +1057,11 @@ func (s *Server) handleGetReputation(ctx context.Context, req *mcp.CallToolReque
 func (s *Server) handleMintDCT(ctx context.Context, _ *mcp.CallToolRequest, args mintDCTArgs) (*mcp.CallToolResult, any, error) {
 	escrowID, err := strconv.ParseInt(args.EscrowID.String(), 10, 64)
 	if err != nil {
-		return textResult("invalid escrow_id"), nil, nil
+		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
 	}
 	exp, err := strconv.ParseInt(args.ExpiresAt.String(), 10, 64)
 	if err != nil {
-		return textResult("invalid expires_at"), nil, nil
+		return textResult(fmt.Sprintf("invalid expires_at: %v", err)), nil, nil
 	}
 	rec, token, err := s.dctService().Mint(ctx, dct.MintParams{EscrowID: escrowID, Subject: args.Subject, Issuer: args.Issuer, Operations: args.Operations, Resources: args.Resources, ExpiresAt: exp})
 	if err != nil {
@@ -1073,7 +1073,7 @@ func (s *Server) handleMintDCT(ctx context.Context, _ *mcp.CallToolRequest, args
 func (s *Server) handleDelegateDCT(ctx context.Context, _ *mcp.CallToolRequest, args delegateDCTArgs) (*mcp.CallToolResult, any, error) {
 	exp, err := strconv.ParseInt(args.ExpiresAt.String(), 10, 64)
 	if err != nil {
-		return textResult("invalid expires_at"), nil, nil
+		return textResult(fmt.Sprintf("invalid expires_at: %v", err)), nil, nil
 	}
 	rec, token, err := s.dctService().Delegate(ctx, dct.DelegateParams{ParentToken: args.ParentToken, Subject: args.Subject, Issuer: args.Issuer, Operations: args.Operations, Resources: args.Resources, ExpiresAt: exp})
 	if err != nil {

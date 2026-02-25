@@ -30,7 +30,12 @@ func TestDCTHTTPFlow(t *testing.T) {
 
 	mintReq := map[string]any{"escrow_id": escrow.ID, "subject": "agent-b", "operations": []string{"submit_work"}, "resources": []string{"escrow:1"}, "expires_at": time.Now().Add(time.Hour).Unix()}
 	body, _ := json.Marshal(mintReq)
-	resp, err := http.Post(ts.URL+"/api/v1/dcts/mint", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ts.URL+"/api/v1/dcts/mint", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil || resp.StatusCode != http.StatusCreated {
 		t.Fatalf("mint failed: err=%v status=%d", err, resp.StatusCode)
 	}

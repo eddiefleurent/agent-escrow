@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -96,7 +97,7 @@ func (h *Handlers) RevokeDCT(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.dctService().Revoke(r.Context(), dct.RevokeParams(req)); err != nil {
 		code := http.StatusBadRequest
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			code = http.StatusNotFound
 		}
 		writeJSON(w, code, map[string]string{"error": err.Error()})
