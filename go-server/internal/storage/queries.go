@@ -3,8 +3,13 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
+
+	sqlite "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // dbExecer is satisfied by both *sql.DB and *sql.Tx, allowing shared query helpers
@@ -788,6 +793,11 @@ func (d *DB) RejectPendingBidsTx(ctx context.Context, tx *sql.Tx, rfqID, exceptB
 
 const bidCommitColumns = `id, rfq_id, bidder, commitment, nonce, status, revealed_bid_id, created_at, updated_at`
 
+var (
+	ErrDuplicateBidCommitNonce      = errors.New("duplicate bid commit nonce")
+	ErrDuplicateBidCommitCommitment = errors.New("duplicate bid commit commitment")
+)
+
 func scanBidCommit(scanner interface{ Scan(...any) error }) (*BidCommit, error) {
 	c := &BidCommit{}
 	var createdAt, updatedAt string
@@ -823,6 +833,12 @@ func createBidCommitOn(ctx context.Context, q dbExecer, c *BidCommit) (*BidCommi
 		c.RFQID, c.Bidder, c.Commitment, c.Nonce, c.Status, revealed,
 	)
 	if err != nil {
+		if isSQLiteUniqueConstraint(err, "bid_commits.rfq_id", "bid_commits.bidder", "bid_commits.nonce") {
+			return nil, fmt.Errorf("insert bid_commit: %w", ErrDuplicateBidCommitNonce)
+		}
+		if isSQLiteUniqueConstraint(err, "bid_commits.rfq_id", "bid_commits.bidder", "bid_commits.commitment") {
+			return nil, fmt.Errorf("insert bid_commit: %w", ErrDuplicateBidCommitCommitment)
+		}
 		return nil, fmt.Errorf("insert bid_commit: %w", err)
 	}
 	id, err := res.LastInsertId()
@@ -835,6 +851,31 @@ func createBidCommitOn(ctx context.Context, q dbExecer, c *BidCommit) (*BidCommi
 		return nil, fmt.Errorf("get bid_commit: %w", err)
 	}
 	return out, nil
+}
+
+func isSQLiteUniqueConstraint(err error, cols ...string) bool {
+	var sqliteErr *sqlite.Error
+	if errors.As(err, &sqliteErr) && sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
+		lowerErr := strings.ToLower(err.Error())
+		for _, col := range cols {
+			if !strings.Contains(lowerErr, col) {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Keep text matching as a practical fallback for wrapped/non-sqlite driver errors.
+	lowerErr := strings.ToLower(err.Error())
+	if !strings.Contains(lowerErr, "unique constraint failed") {
+		return false
+	}
+	for _, col := range cols {
+		if !strings.Contains(lowerErr, col) {
+			return false
+		}
+	}
+	return true
 }
 
 func (d *DB) CreateBidCommit(ctx context.Context, c *BidCommit) (*BidCommit, error) {
@@ -854,6 +895,19 @@ func (d *DB) GetBidCommitByRFQBidderNonce(ctx context.Context, rfqID int64, bidd
 	c, err := scanBidCommit(row)
 	if err != nil {
 		return nil, fmt.Errorf("get bid_commit by nonce: %w", err)
+	}
+	return c, nil
+}
+
+func (d *DB) GetBidCommitByRFQBidderCommitment(ctx context.Context, rfqID int64, bidder, commitment string) (*BidCommit, error) {
+	row := d.db.QueryRowContext(
+		ctx,
+		`SELECT `+bidCommitColumns+` FROM bid_commits WHERE rfq_id = ? AND bidder = ? AND commitment = ?`,
+		rfqID, bidder, commitment,
+	)
+	c, err := scanBidCommit(row)
+	if err != nil {
+		return nil, fmt.Errorf("get bid_commit by commitment: %w", err)
 	}
 	return c, nil
 }
@@ -960,6 +1014,76 @@ func (d *DB) RejectUnacceptedBidCommits(ctx context.Context, rfqID, acceptedBidI
 
 func (d *DB) RejectUnacceptedBidCommitsTx(ctx context.Context, tx *sql.Tx, rfqID, acceptedBidID int64) error {
 	return rejectUnacceptedBidCommitsOn(ctx, tx, rfqID, acceptedBidID)
+}
+
+func (d *DB) CountActiveBidCommitsByRFQBidder(ctx context.Context, rfqID int64, bidder string) (int, error) {
+	if rfqID <= 0 {
+		return 0, errors.New("count active bid_commits: rfqID must be > 0")
+	}
+	if bidder == "" {
+		return 0, errors.New("count active bid_commits: bidder must be non-empty")
+	}
+
+	var count int
+	err := d.db.QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM bid_commits
+         WHERE rfq_id = ? AND bidder = ? AND status IN ('committed', 'revealed')`,
+		rfqID, bidder,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count active bid_commits: %w", err)
+	}
+	return count, nil
+}
+
+func (d *DB) CountRecentBidCommitsByRFQBidder(
+	ctx context.Context, rfqID int64, bidder string, windowSeconds int64, now time.Time,
+) (int, error) {
+	if windowSeconds <= 0 {
+		return 0, errors.New("count recent bid_commits: windowSeconds must be > 0")
+	}
+	cutoff := now.UTC().Add(-time.Duration(windowSeconds) * time.Second).Format("2006-01-02 15:04:05")
+	var count int
+	err := d.db.QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM bid_commits
+         WHERE rfq_id = ? AND bidder = ?
+           AND created_at >= ?`,
+		rfqID, bidder, cutoff,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count recent bid_commits: %w", err)
+	}
+	return count, nil
+}
+
+// expireCommittedBidCommitsOn marks committed bid commits for the RFQ as expired.
+// Precondition: the caller must ensure the RFQ's sealed-bid reveal deadline has passed.
+func expireCommittedBidCommitsOn(ctx context.Context, q dbExecer, rfqID int64) error {
+	_, err := q.ExecContext(
+		ctx,
+		`UPDATE bid_commits
+         SET status = 'expired', updated_at = datetime('now')
+         WHERE rfq_id = ? AND status = 'committed'`,
+		rfqID,
+	)
+	if err != nil {
+		return fmt.Errorf("ExpireCommittedBidCommits: %w", err)
+	}
+	return nil
+}
+
+// ExpireCommittedBidCommits marks committed bid commits for the RFQ as expired.
+// Precondition: the caller must ensure the RFQ's sealed-bid reveal deadline has passed.
+func (d *DB) ExpireCommittedBidCommits(ctx context.Context, rfqID int64) error {
+	return expireCommittedBidCommitsOn(ctx, d.db, rfqID)
+}
+
+// ExpireCommittedBidCommitsTx marks committed bid commits for the RFQ as expired in a transaction.
+// Precondition: the caller must ensure the RFQ's sealed-bid reveal deadline has passed.
+func (d *DB) ExpireCommittedBidCommitsTx(ctx context.Context, tx *sql.Tx, rfqID int64) error {
+	return expireCommittedBidCommitsOn(ctx, tx, rfqID)
 }
 
 // Chain log queries

@@ -43,6 +43,9 @@ var migration010SQL string
 //go:embed migrations/011_sealed_bidding_compat_and_uniqueness.sql
 var migration011SQL string
 
+//go:embed migrations/012_sealed_bidding_indexes.sql
+var migration012SQL string
+
 type DB struct {
 	db *sql.DB
 }
@@ -84,6 +87,7 @@ func Open(dsn string) (*DB, error) {
 		{"009", migration009SQL},
 		{"010", migration010SQL},
 		{"011", migration011SQL},
+		{"012", migration012SQL},
 	}
 
 	for _, m := range migrations {

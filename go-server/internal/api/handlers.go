@@ -1054,6 +1054,13 @@ func (h *Handlers) GetRFQ(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
+	if time.Now().Unix() > rfq.RevealDeadline {
+		if err := h.db.ExpireCommittedBidCommits(r.Context(), rfq.ID); err != nil {
+			slog.Error("failed to expire committed bid commits", "rfq_id", id, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to expire stale bid commits"})
+			return
+		}
+	}
 
 	bids, err := h.db.ListBidsByRFQ(r.Context(), id)
 	if err != nil {
@@ -1068,11 +1075,32 @@ func (h *Handlers) GetRFQ(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch bid commits"})
 		return
 	}
+	type publicBidCommit struct {
+		ID            int64     `json:"id"`
+		RFQID         int64     `json:"rfq_id"`
+		Bidder        string    `json:"bidder"`
+		Status        string    `json:"status"`
+		RevealedBidID *int64    `json:"revealed_bid_id,omitempty"`
+		CreatedAt     time.Time `json:"created_at"`
+		UpdatedAt     time.Time `json:"updated_at"`
+	}
+	publicCommits := make([]publicBidCommit, 0, len(commits))
+	for _, c := range commits {
+		publicCommits = append(publicCommits, publicBidCommit{
+			ID:            c.ID,
+			RFQID:         c.RFQID,
+			Bidder:        c.Bidder,
+			Status:        c.Status,
+			RevealedBidID: c.RevealedBidID,
+			CreatedAt:     c.CreatedAt,
+			UpdatedAt:     c.UpdatedAt,
+		})
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"rfq":        rfq,
 		"bids":       bids,
-		"commits":    commits,
+		"commits":    publicCommits,
 		"now_unix":   time.Now().Unix(),
 		"phase_hint": map[string]int64{"commit_deadline": rfq.CommitDeadline, "reveal_deadline": rfq.RevealDeadline},
 	})
@@ -1212,6 +1240,20 @@ func (h *Handlers) ListBids(w http.ResponseWriter, r *http.Request) {
 	rfqID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid rfq id"})
+		return
+	}
+	rfq, err := h.db.GetRFQ(r.Context(), rfqID)
+	if err == nil {
+		if time.Now().Unix() > rfq.RevealDeadline {
+			if expireErr := h.db.ExpireCommittedBidCommits(r.Context(), rfqID); expireErr != nil {
+				slog.Error("failed to expire committed bid commits", "rfq_id", rfqID, "error", expireErr)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to expire stale bid commits"})
+				return
+			}
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		slog.Error("failed to fetch rfq in list bids", "rfq_id", rfqID, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch rfq"})
 		return
 	}
 

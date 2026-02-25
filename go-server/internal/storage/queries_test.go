@@ -2,8 +2,10 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
+	"time"
 )
 
 func openTestDB(t *testing.T) *DB {
@@ -628,6 +630,176 @@ func TestAcceptBidAndRejectPending(t *testing.T) {
 	}
 	if rejected.Status != "rejected" {
 		t.Fatalf("expected status 'rejected', got %q", rejected.Status)
+	}
+}
+
+func TestBidCommitQueriesAndExpiry(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	rfq, err := db.CreateRFQ(ctx, &RFQ{
+		Title: "RFQ", Description: "desc", SpecHash: "0x1", Buyer: "0xBuyer",
+		BudgetMin: "100", BudgetMax: "500", Deadline: 1800000000,
+		ReviewPeriodSeconds: 86400, DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+		Status: "open", ExpiresAt: 1900000000, MilestonesJSON: "[]", RequirementsJSON: "{}",
+	})
+	if err != nil {
+		t.Fatalf("create rfq: %v", err)
+	}
+
+	commitA, err := db.CreateBidCommit(ctx, &BidCommit{
+		RFQID:      rfq.ID,
+		Bidder:     "0xWorkerA",
+		Commitment: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Nonce:      "n1",
+		Status:     "committed",
+	})
+	if err != nil {
+		t.Fatalf("create commit A: %v", err)
+	}
+	commitB, err := db.CreateBidCommit(ctx, &BidCommit{
+		RFQID:      rfq.ID,
+		Bidder:     "0xWorkerA",
+		Commitment: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		Nonce:      "n2",
+		// Intentionally leave RevealedBidID nil: this test only verifies active/recent
+		// commit counting and expiry behavior, not reveal-to-bid linkage.
+		Status: "revealed",
+	})
+	if err != nil {
+		t.Fatalf("create commit B: %v", err)
+	}
+
+	gotByNonce, err := db.GetBidCommitByRFQBidderNonce(ctx, rfq.ID, "0xWorkerA", "n1")
+	if err != nil {
+		t.Fatalf("get by nonce: %v", err)
+	}
+	if gotByNonce.ID != commitA.ID {
+		t.Fatalf("expected commit id %d, got %d", commitA.ID, gotByNonce.ID)
+	}
+
+	gotByCommitment, err := db.GetBidCommitByRFQBidderCommitment(ctx, rfq.ID, "0xWorkerA", commitB.Commitment)
+	if err != nil {
+		t.Fatalf("get by commitment: %v", err)
+	}
+	if gotByCommitment.ID != commitB.ID {
+		t.Fatalf("expected commit id %d, got %d", commitB.ID, gotByCommitment.ID)
+	}
+
+	activeCount, err := db.CountActiveBidCommitsByRFQBidder(ctx, rfq.ID, "0xWorkerA")
+	if err != nil {
+		t.Fatalf("count active: %v", err)
+	}
+	if activeCount != 2 {
+		t.Fatalf("expected 2 active commits, got %d", activeCount)
+	}
+
+	recentCount, err := db.CountRecentBidCommitsByRFQBidder(ctx, rfq.ID, "0xWorkerA", 60, time.Now())
+	if err != nil {
+		t.Fatalf("count recent: %v", err)
+	}
+	if recentCount != 2 {
+		t.Fatalf("expected 2 recent commits, got %d", recentCount)
+	}
+
+	// Precondition: expiry runs after reveal window closes.
+	if err := db.ExpireCommittedBidCommits(ctx, rfq.ID); err != nil {
+		t.Fatalf("expire committed commits: %v", err)
+	}
+
+	updatedA, err := db.GetBidCommitByRFQBidderNonce(ctx, rfq.ID, "0xWorkerA", "n1")
+	if err != nil {
+		t.Fatalf("get updated commit A: %v", err)
+	}
+	if updatedA.Status != "expired" {
+		t.Fatalf("expected commit A status expired, got %q", updatedA.Status)
+	}
+
+	recentAfterExpiry, err := db.CountRecentBidCommitsByRFQBidder(ctx, rfq.ID, "0xWorkerA", 60, time.Now())
+	if err != nil {
+		t.Fatalf("count recent after expiry: %v", err)
+	}
+	if recentAfterExpiry != 2 {
+		t.Fatalf("expected 2 recent commit attempts after expiry, got %d", recentAfterExpiry)
+	}
+
+	activeAfterExpiry, err := db.CountActiveBidCommitsByRFQBidder(ctx, rfq.ID, "0xWorkerA")
+	if err != nil {
+		t.Fatalf("count active after expiry: %v", err)
+	}
+	if activeAfterExpiry != 1 {
+		t.Fatalf("expected 1 active commit after expiry (revealed only), got %d", activeAfterExpiry)
+	}
+
+	updatedB, err := db.GetBidCommitByRFQBidderNonce(ctx, rfq.ID, "0xWorkerA", "n2")
+	if err != nil {
+		t.Fatalf("get updated commit B: %v", err)
+	}
+	if updatedB.Status != "revealed" {
+		t.Fatalf("expected commit B status revealed, got %q", updatedB.Status)
+	}
+}
+
+func TestCountActiveBidCommitsByRFQBidder_Validation(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	_, err := db.CountActiveBidCommitsByRFQBidder(ctx, 0, "0xWorkerA")
+	if err == nil || err.Error() != "count active bid_commits: rfqID must be > 0" {
+		t.Fatalf("expected rfqID validation error, got %v", err)
+	}
+
+	_, err = db.CountActiveBidCommitsByRFQBidder(ctx, 1, "")
+	if err == nil || err.Error() != "count active bid_commits: bidder must be non-empty" {
+		t.Fatalf("expected bidder validation error, got %v", err)
+	}
+}
+
+func TestCreateBidCommit_DuplicateErrorMapping(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	rfq, err := db.CreateRFQ(ctx, &RFQ{
+		Title: "RFQ", Description: "desc", SpecHash: "0x1", Buyer: "0xBuyer",
+		BudgetMin: "100", BudgetMax: "500", Deadline: 1800000000,
+		ReviewPeriodSeconds: 86400, DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+		Status: "open", ExpiresAt: 1900000000, MilestonesJSON: "[]", RequirementsJSON: "{}",
+	})
+	if err != nil {
+		t.Fatalf("create rfq: %v", err)
+	}
+
+	_, err = db.CreateBidCommit(ctx, &BidCommit{
+		RFQID:      rfq.ID,
+		Bidder:     "0xWorkerA",
+		Commitment: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Nonce:      "n1",
+		Status:     "committed",
+	})
+	if err != nil {
+		t.Fatalf("create baseline commit: %v", err)
+	}
+
+	_, err = db.CreateBidCommit(ctx, &BidCommit{
+		RFQID:      rfq.ID,
+		Bidder:     "0xWorkerA",
+		Commitment: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		Nonce:      "n1",
+		Status:     "committed",
+	})
+	if !errors.Is(err, ErrDuplicateBidCommitNonce) {
+		t.Fatalf("expected ErrDuplicateBidCommitNonce, got %v", err)
+	}
+
+	_, err = db.CreateBidCommit(ctx, &BidCommit{
+		RFQID:      rfq.ID,
+		Bidder:     "0xWorkerA",
+		Commitment: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Nonce:      "n2",
+		Status:     "committed",
+	})
+	if !errors.Is(err, ErrDuplicateBidCommitCommitment) {
+		t.Fatalf("expected ErrDuplicateBidCommitCommitment, got %v", err)
 	}
 }
 
