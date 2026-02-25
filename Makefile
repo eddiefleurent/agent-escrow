@@ -1,5 +1,8 @@
 .PHONY: build test test-unit test-invariant fmt fmt-check sizes snapshot clean deploy-base-sepolia go-abi go-build go-cli-build go-cli-install go-test go-vet go-lint go-lint-fix go-run go-fmt all test-all
 
+# Ensure non-interactive make shells can find toolchains installed outside default PATH.
+export PATH := $(HOME)/.foundry/bin:/usr/local/go/bin:$(HOME)/.local/go/bin:$(PATH)
+
 GO_CACHE_DIR := $(CURDIR)/.cache/go-build
 GOLANGCI_LINT_CACHE_DIR := $(CURDIR)/.cache/golangci-lint
 GOLANGCI_LINT_VERSION ?= v2.5.0
