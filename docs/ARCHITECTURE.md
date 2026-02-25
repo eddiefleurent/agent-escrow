@@ -449,7 +449,7 @@ SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 | `chain_cursors` | Indexer block cursor per chain |
 | `frozen_addresses` | Addresses frozen via emergency protocol (paper §4.9) |
 | `emergency_actions` | Audit log of emergency actions (freeze, unfreeze, emergency resolve) |
-| `dct_tokens` | Delegation Capability Tokens (off-chain authorization layer): token lineage, scope (operations/resources), expiry, and revocation state |
+| `dct_tokens` | Delegation Capability Tokens (off-chain authorization layer): strict canonical profile (`dct-profile-v1`), deterministic caveats (`caveats_json`), lineage depth, scope (operations/resources), expiry, and revocation state |
 
 ![Reputation Seed Sequence](diagrams/reputation-seed-sequence.png)
 

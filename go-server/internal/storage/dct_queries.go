@@ -7,7 +7,7 @@ import (
 )
 
 const dctColumns = `id, token_id, token_hash, parent_token_id, escrow_id, subject, issuer,
-	operations_json, resources_json, expires_at, revoked_at, revocation_reason, revoked_by, created_at, updated_at`
+	operations_json, resources_json, profile, caveats_json, depth, expires_at, revoked_at, revocation_reason, revoked_by, created_at, updated_at`
 
 func scanDCTToken(scanner interface{ Scan(...any) error }) (*DCTToken, error) {
 	t := &DCTToken{}
@@ -16,7 +16,7 @@ func scanDCTToken(scanner interface{ Scan(...any) error }) (*DCTToken, error) {
 	var createdAt, updatedAt string
 	if err := scanner.Scan(
 		&t.ID, &t.TokenID, &t.TokenHash, &parentTokenID, &t.EscrowID, &t.Subject, &t.Issuer,
-		&t.OperationsJSON, &t.ResourcesJSON, &t.ExpiresAt, &revokedAt, &t.RevocationReason, &t.RevokedBy,
+		&t.OperationsJSON, &t.ResourcesJSON, &t.Profile, &t.CaveatsJSON, &t.Depth, &t.ExpiresAt, &revokedAt, &t.RevocationReason, &t.RevokedBy,
 		&createdAt, &updatedAt,
 	); err != nil {
 		return nil, err
@@ -45,10 +45,10 @@ func scanDCTToken(scanner interface{ Scan(...any) error }) (*DCTToken, error) {
 
 func (d *DB) CreateDCTToken(ctx context.Context, t *DCTToken) (*DCTToken, error) {
 	res, err := d.db.ExecContext(ctx,
-		`INSERT INTO dct_tokens (token_id, token_hash, parent_token_id, escrow_id, subject, issuer, operations_json, resources_json, expires_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO dct_tokens (token_id, token_hash, parent_token_id, escrow_id, subject, issuer, operations_json, resources_json, profile, caveats_json, depth, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.TokenID, t.TokenHash, nilIfEmpty(t.ParentTokenID), t.EscrowID, t.Subject, t.Issuer,
-		t.OperationsJSON, t.ResourcesJSON, t.ExpiresAt,
+		t.OperationsJSON, t.ResourcesJSON, t.Profile, t.CaveatsJSON, t.Depth, t.ExpiresAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert dct token: %w", err)

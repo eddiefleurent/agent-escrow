@@ -21,7 +21,7 @@ func TestDCTQueriesLifecycle(t *testing.T) {
 		t.Fatalf("create escrow: %v", err)
 	}
 
-	rec, err := db.CreateDCTToken(ctx, &DCTToken{TokenID: "dct_a", TokenHash: "hash", EscrowID: escrow.ID, Subject: "alice", Issuer: "bob", OperationsJSON: "[\"submit_work\"]", ResourcesJSON: "[\"escrow:1\"]", ExpiresAt: 9999999999})
+	rec, err := db.CreateDCTToken(ctx, &DCTToken{TokenID: "dct_a", TokenHash: "hash", EscrowID: escrow.ID, Subject: "alice", Issuer: "bob", OperationsJSON: "[\"submit_work\"]", ResourcesJSON: "[\"escrow:1\"]", Profile: "dct-profile-v1", CaveatsJSON: "[\"op=submit_work\",\"res=escrow:1\",\"exp<=9999999999\"]", Depth: 0, ExpiresAt: 9999999999})
 	if err != nil {
 		t.Fatal(err)
 	}

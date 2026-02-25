@@ -1,0 +1,3 @@
+ALTER TABLE dct_tokens ADD COLUMN profile TEXT NOT NULL DEFAULT 'dct-profile-v1';
+ALTER TABLE dct_tokens ADD COLUMN caveats_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE dct_tokens ADD COLUMN depth INTEGER NOT NULL DEFAULT 0;
