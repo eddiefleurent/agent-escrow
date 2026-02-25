@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"fmt"
+	"errors"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -42,7 +42,7 @@ func newDCTEscrowListCmd(opts *Options) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			escrowID, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil || escrowID <= 0 {
-				return fmt.Errorf("escrow-id must be a positive integer")
+				return errors.New("escrow-id must be a positive integer")
 			}
 			return runGet(cmd, opts, "/api/v1/escrows/"+strconv.FormatInt(escrowID, 10)+"/dcts", nil)
 		},
