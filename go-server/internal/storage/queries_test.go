@@ -700,6 +700,7 @@ func TestBidCommitQueriesAndExpiry(t *testing.T) {
 		t.Fatalf("expected 2 recent commits, got %d", recentCount)
 	}
 
+	// Precondition: expiry runs after reveal window closes.
 	if err := db.ExpireCommittedBidCommits(ctx, rfq.ID); err != nil {
 		t.Fatalf("expire committed commits: %v", err)
 	}
@@ -718,6 +719,14 @@ func TestBidCommitQueriesAndExpiry(t *testing.T) {
 	}
 	if recentAfterExpiry != 2 {
 		t.Fatalf("expected 2 recent commit attempts after expiry, got %d", recentAfterExpiry)
+	}
+
+	activeAfterExpiry, err := db.CountActiveBidCommitsByRFQBidder(ctx, rfq.ID, "0xWorkerA")
+	if err != nil {
+		t.Fatalf("count active after expiry: %v", err)
+	}
+	if activeAfterExpiry != 1 {
+		t.Fatalf("expected 1 active commit after expiry (revealed only), got %d", activeAfterExpiry)
 	}
 
 	updatedB, err := db.GetBidCommitByRFQBidderNonce(ctx, rfq.ID, "0xWorkerA", "n2")

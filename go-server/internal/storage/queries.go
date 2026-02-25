@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	sqlite "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // dbExecer is satisfied by both *sql.DB and *sql.Tx, allowing shared query helpers
@@ -851,6 +854,18 @@ func createBidCommitOn(ctx context.Context, q dbExecer, c *BidCommit) (*BidCommi
 }
 
 func isSQLiteUniqueConstraint(err error, cols ...string) bool {
+	var sqliteErr *sqlite.Error
+	if errors.As(err, &sqliteErr) && sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
+		lowerErr := strings.ToLower(err.Error())
+		for _, col := range cols {
+			if !strings.Contains(lowerErr, col) {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Keep text matching as a practical fallback for wrapped/non-sqlite driver errors.
 	lowerErr := strings.ToLower(err.Error())
 	if !strings.Contains(lowerErr, "unique constraint failed") {
 		return false
