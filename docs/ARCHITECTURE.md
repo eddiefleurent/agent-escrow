@@ -449,6 +449,7 @@ SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 | `chain_cursors` | Indexer block cursor per chain |
 | `frozen_addresses` | Addresses frozen via emergency protocol (paper §4.9) |
 | `emergency_actions` | Audit log of emergency actions (freeze, unfreeze, emergency resolve) |
+| `dct_tokens` | Delegation Capability Tokens (off-chain authorization layer): token lineage, scope (operations/resources), expiry, and revocation state |
 
 ![Reputation Seed Sequence](diagrams/reputation-seed-sequence.png)
 
@@ -582,6 +583,10 @@ The emergency protocol spans on-chain (factory + escrow contracts) and off-chain
 | `get_escrow` | escrow_id | DB read (includes milestone details) |
 | `list_escrows` | role, address, status | DB query |
 | `get_reputation` | address, role (optional) | DB read (indexed from on-chain OutcomeRecorded events) |
+| `mint_dct` | escrow_id, subject, operations, resources, expires_at, issuer (optional) | Off-chain DCT mint |
+| `delegate_dct` | parent_token, subject, operations/resources subsets, expires_at, issuer (optional) | Off-chain DCT attenuation/delegation |
+| `introspect_dct` | token | Off-chain DCT introspection |
+| `revoke_dct` | token_id, reason/by (optional) | Off-chain DCT revoke |
 | `create_rfq` | title, description, buyer, budget_min/max, commit_deadline, reveal_deadline, expires_at, deadline, etc. | DB write (off-chain) |
 | `commit_bid` | rfq_id, bidder, commitment, nonce | DB write (off-chain) |
 | `reveal_bid` | rfq_id, bidder, nonce, salt, amount, estimated_duration, expires_at, etc. | DB write (off-chain) |
@@ -618,6 +623,11 @@ The emergency protocol spans on-chain (factory + escrow contracts) and off-chain
 | POST | `/api/v1/escrows/{id}/abort-milestones` | Abort remaining milestones (buyer only) |
 | POST | `/api/v1/escrows/{id}/activate-backup` | Activate backup worker (buyer only) |
 | GET | `/api/v1/reputation/{address}` | Get reputation (query: role) |
+| POST | `/api/v1/dcts/mint` | Mint Delegation Capability Token |
+| POST | `/api/v1/dcts/delegate` | Delegate DCT with strict attenuation |
+| POST | `/api/v1/dcts/introspect` | Introspect DCT |
+| POST | `/api/v1/dcts/revoke` | Revoke DCT |
+| GET | `/api/v1/escrows/{id}/dcts` | List DCTs scoped to escrow |
 | POST | `/api/v1/rfqs` | Create RFQ (Task_RFQ broadcast) |
 | GET | `/api/v1/rfqs` | List RFQs (query: status, buyer) |
 | GET | `/api/v1/rfqs/{id}` | Get RFQ details with bids |

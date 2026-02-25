@@ -15,6 +15,7 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/ap2"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/bidding"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/dct"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/numconv"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
@@ -141,6 +142,34 @@ type reputationArgs struct {
 	Role    string `json:"role,omitempty" jsonschema:"Optional: 'worker' or 'buyer'. Omit to return both roles."`
 }
 
+type mintDCTArgs struct {
+	EscrowID   FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID"`
+	Subject    string         `json:"subject" jsonschema:"Delegatee subject address or identifier"`
+	Issuer     string         `json:"issuer,omitempty" jsonschema:"Issuer identifier (optional)"`
+	Operations []string       `json:"operations" jsonschema:"Allowed operations, e.g. ['submit_work']"`
+	Resources  []string       `json:"resources" jsonschema:"Allowed resources, e.g. ['escrow:12']"`
+	ExpiresAt  FlexibleString `json:"expires_at" jsonschema:"Unix timestamp expiry"`
+}
+
+type delegateDCTArgs struct {
+	ParentToken string         `json:"parent_token" jsonschema:"Parent DCT token string"`
+	Subject     string         `json:"subject" jsonschema:"Delegatee subject"`
+	Issuer      string         `json:"issuer,omitempty" jsonschema:"Issuer identifier (optional)"`
+	Operations  []string       `json:"operations" jsonschema:"Subset of parent operations"`
+	Resources   []string       `json:"resources" jsonschema:"Subset of parent resources"`
+	ExpiresAt   FlexibleString `json:"expires_at" jsonschema:"Unix timestamp <= parent expiry"`
+}
+
+type introspectDCTArgs struct {
+	Token string `json:"token" jsonschema:"DCT token string to introspect"`
+}
+
+type revokeDCTArgs struct {
+	TokenID string `json:"token_id" jsonschema:"DCT token ID (dct_...) to revoke"`
+	Reason  string `json:"reason,omitempty" jsonschema:"Optional revocation reason"`
+	By      string `json:"by,omitempty" jsonschema:"Revoker identity"`
+}
+
 type fundViaMandateArgs struct {
 	EscrowID        FlexibleString `json:"escrow_id" jsonschema:"Database escrow ID to fund"`
 	MandateType     string         `json:"mandate_type" jsonschema:"AP2 mandate type: intent, cart, or payment"`
@@ -241,6 +270,23 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Name:        "get_reputation",
 		Description: "Get on-chain reputation record for an address (tasks completed, disputed, failed). Paper §4.6: immutable ledger approach.",
 	}, s.handleGetReputation)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "mint_dct",
+		Description: "Mint a Delegation Capability Token (DCT) scoped to escrow+subject+operations/resources+expiry.",
+	}, s.handleMintDCT)
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "delegate_dct",
+		Description: "Delegate a DCT with strict attenuation (subset operations/resources and no later expiry than parent).",
+	}, s.handleDelegateDCT)
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "introspect_dct",
+		Description: "Introspect a DCT token and return active/revoked/expired state.",
+	}, s.handleIntrospectDCT)
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "revoke_dct",
+		Description: "Revoke a DCT by token_id.",
+	}, s.handleRevokeDCT)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "create_rfq",
@@ -962,6 +1008,8 @@ func (s *Server) handleActivateBackup(ctx context.Context, req *mcp.CallToolRequ
 	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
 }
 
+func (s *Server) dctService() *dct.Service { return &dct.Service{DB: s.db} }
+
 func (s *Server) handleGetReputation(ctx context.Context, req *mcp.CallToolRequest, args reputationArgs) (*mcp.CallToolResult, any, error) {
 	if !common.IsHexAddress(args.Address) {
 		return textResult("invalid address"), nil, nil
@@ -1004,6 +1052,52 @@ func (s *Server) handleGetReputation(ctx context.Context, req *mcp.CallToolReque
 		"address": addr,
 		"roles":   reps,
 	})
+}
+
+func (s *Server) handleMintDCT(ctx context.Context, _ *mcp.CallToolRequest, args mintDCTArgs) (*mcp.CallToolResult, any, error) {
+	escrowID, err := strconv.ParseInt(args.EscrowID.String(), 10, 64)
+	if err != nil {
+		return textResult("invalid escrow_id"), nil, nil
+	}
+	exp, err := strconv.ParseInt(args.ExpiresAt.String(), 10, 64)
+	if err != nil {
+		return textResult("invalid expires_at"), nil, nil
+	}
+	rec, token, err := s.dctService().Mint(ctx, dct.MintParams{EscrowID: escrowID, Subject: args.Subject, Issuer: args.Issuer, Operations: args.Operations, Resources: args.Resources, ExpiresAt: exp})
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
+	return jsonResult(map[string]any{"token": token, "record": rec})
+}
+
+func (s *Server) handleDelegateDCT(ctx context.Context, _ *mcp.CallToolRequest, args delegateDCTArgs) (*mcp.CallToolResult, any, error) {
+	exp, err := strconv.ParseInt(args.ExpiresAt.String(), 10, 64)
+	if err != nil {
+		return textResult("invalid expires_at"), nil, nil
+	}
+	rec, token, err := s.dctService().Delegate(ctx, dct.DelegateParams{ParentToken: args.ParentToken, Subject: args.Subject, Issuer: args.Issuer, Operations: args.Operations, Resources: args.Resources, ExpiresAt: exp})
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
+	return jsonResult(map[string]any{"token": token, "record": rec})
+}
+
+func (s *Server) handleIntrospectDCT(ctx context.Context, _ *mcp.CallToolRequest, args introspectDCTArgs) (*mcp.CallToolResult, any, error) {
+	rec, active, reasons, err := s.dctService().Introspect(ctx, args.Token)
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
+	return jsonResult(map[string]any{"token": rec, "active": active, "reasons": reasons})
+}
+
+func (s *Server) handleRevokeDCT(ctx context.Context, _ *mcp.CallToolRequest, args revokeDCTArgs) (*mcp.CallToolResult, any, error) {
+	if err := s.dctService().Revoke(ctx, dct.RevokeParams{TokenID: args.TokenID, Reason: args.Reason, By: args.By}); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return textResult("token not found or already revoked"), nil, nil
+		}
+		return textResult(err.Error()), nil, nil
+	}
+	return jsonResult(map[string]any{"status": "revoked", "token_id": args.TokenID})
 }
 
 func (s *Server) biddingService() *bidding.Service {
@@ -1437,6 +1531,9 @@ func (s *Server) handleFreezeEscrow(ctx context.Context, _ *mcp.CallToolRequest,
 	if err := s.db.UpdateEscrowFrozen(ctx, escrowID, true); err != nil {
 		return textResult(fmt.Sprintf("db error after successful tx %s: %v", txHash, err)), nil, nil
 	}
+	if _, err := s.db.RevokeDCTTokensByEscrow(ctx, escrowID, "escrow_frozen", "emergency"); err != nil {
+		return textResult(fmt.Sprintf("db dct revoke error after successful tx %s: %v", txHash, err)), nil, nil
+	}
 	if err := s.db.CreateEmergencyAction(ctx, "freeze_escrow", escrow.EscrowAddress, "", "", txHash); err != nil {
 		return textResult(fmt.Sprintf("db audit error after successful tx %s: %v", txHash, err)), nil, nil
 	}
@@ -1513,6 +1610,9 @@ func (s *Server) handleEmergencyResolve(ctx context.Context, _ *mcp.CallToolRequ
 	txHash := receipt.TxHash.Hex()
 	if err := s.db.UpdateEscrowStatus(ctx, escrowID, "resolved"); err != nil {
 		return textResult(fmt.Sprintf("db error after successful tx %s: %v", txHash, err)), nil, nil
+	}
+	if _, err := s.db.RevokeDCTTokensByEscrow(ctx, escrowID, "emergency_resolve", "emergency"); err != nil {
+		return textResult(fmt.Sprintf("db dct revoke error after successful tx %s: %v", txHash, err)), nil, nil
 	}
 	if err := s.db.CreateEmergencyAction(ctx, "emergency_resolve", escrow.EscrowAddress, "",
 		fmt.Sprintf("workerAwardBps=%d", bps), txHash); err != nil {

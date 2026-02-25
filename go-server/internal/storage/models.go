@@ -215,3 +215,22 @@ type ChainCursor struct {
 	BlockNumber int64
 	UpdatedAt   time.Time
 }
+
+// DCTToken is an off-chain Delegation Capability Token record (paper §4.7, §6.1).
+type DCTToken struct {
+	ID               int64      `json:"id"`
+	TokenID          string     `json:"token_id"`
+	TokenHash        string     `json:"-"`
+	ParentTokenID    string     `json:"parent_token_id,omitempty"`
+	EscrowID         int64      `json:"escrow_id"`
+	Subject          string     `json:"subject"`
+	Issuer           string     `json:"issuer"`
+	OperationsJSON   string     `json:"operations_json"`
+	ResourcesJSON    string     `json:"resources_json"`
+	ExpiresAt        int64      `json:"expires_at"`
+	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
+	RevocationReason string     `json:"revocation_reason,omitempty"`
+	RevokedBy        string     `json:"revoked_by,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}

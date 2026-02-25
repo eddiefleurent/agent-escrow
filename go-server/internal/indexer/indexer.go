@@ -536,6 +536,11 @@ func (idx *Indexer) ProcessEscrowLog(ctx context.Context, lg types.Log, dbEscrow
 			if err := idx.db.UpdateEscrowStatus(ctx, dbEscrowID, newStatus); err != nil {
 				return fmt.Errorf("update status to %s: %w", newStatus, err)
 			}
+			if terminalStatuses[newStatus] {
+				if _, err := idx.db.RevokeDCTTokensByEscrow(ctx, dbEscrowID, "escrow_terminal_state:"+newStatus, "indexer"); err != nil {
+					slog.Warn("failed to revoke dct tokens on terminal escrow state", "escrow_id", dbEscrowID, "status", newStatus, "error", err)
+				}
+			}
 		}
 	}
 

@@ -153,7 +153,7 @@ POST /a2a
 
 **V2 -- Market Primitives**: Complete (11/11 items). ERC20/USDC payments, worker stake, milestone-based escrow, backup agent clause, on-chain reputation, complexity floor, bidding protocol (Task_RFQ + Bid_Object), A2A settlement adapter, AP2 mandate-to-escrow bridge, real-time event subscriptions (SSE/WebSocket + MCP polling), and emergency response protocol.
 
-**V3 -- Delegation Intelligence**: Planned. DCTs, ZK verification, checkpoint/resume, tiered service levels, multi-verifier quorum, attestation chains.
+**V3 -- Delegation Intelligence**: In progress. DCTs (Delegation Capability Tokens) are implemented across HTTP + MCP + `escrow-cli` with strict attenuation, introspection, revoke, and automatic invalidation on terminal escrow/emergency states. Remaining V3 items include ZK verification, checkpoint/resume, tiered service levels, multi-verifier quorum, and attestation chains.
 
 **V4 -- Ethical Safeguards**: Planned. Curriculum-aware task routing, liability firebreaks, governance safety floors.
 
@@ -221,7 +221,20 @@ The server starts the HTTP API on port 8080 and the event indexer in the backgro
 make go-cli-build
 ./go-server/bin/escrow-cli --output json health
 ./go-server/bin/escrow-cli --output json escrow list
+
+# DCT examples
+./go-server/bin/escrow-cli --output json dct mint --data '{"escrow_id":1,"subject":"agent-b","operations":["submit_work"],"resources":["escrow:1"],"expires_at":1999999999}'
+./go-server/bin/escrow-cli --output json dct introspect --data '{"token":"dct_xxx.yyy"}'
 ```
+
+HTTP DCT examples:
+
+```bash
+curl -sS -X POST http://localhost:8080/api/v1/dcts/mint -H 'content-type: application/json' -d '{"escrow_id":1,"subject":"agent-b","operations":["submit_work"],"resources":["escrow:1"],"expires_at":1999999999}'
+curl -sS -X POST http://localhost:8080/api/v1/dcts/delegate -H 'content-type: application/json' -d '{"parent_token":"dct_parent.secret","subject":"agent-c","operations":["submit_work"],"resources":["escrow:1"],"expires_at":1999999000}'
+```
+
+MCP DCT tools: `mint_dct`, `delegate_dct`, `introspect_dct`, `revoke_dct`.
 
 See [`docs/SETUP.md`](docs/SETUP.md) for deployment and the full configuration reference.
 

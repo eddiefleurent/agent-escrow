@@ -1425,6 +1425,10 @@ func (h *Handlers) FreezeEscrow(w http.ResponseWriter, r *http.Request) {
 		h.writeEmergencyRecordingError(w, r, txHash, "freeze escrow", err)
 		return
 	}
+	if _, err := h.db.RevokeDCTTokensByEscrow(r.Context(), req.EscrowID, "escrow_frozen", "emergency"); err != nil {
+		h.writeEmergencyRecordingError(w, r, txHash, "freeze escrow dct revoke", err)
+		return
+	}
 	if err := h.db.CreateEmergencyAction(r.Context(), "freeze_escrow", escrow.EscrowAddress, "", "", txHash); err != nil {
 		h.writeEmergencyRecordingError(w, r, txHash, "freeze escrow audit", err)
 		return
@@ -1504,6 +1508,10 @@ func (h *Handlers) EmergencyResolve(w http.ResponseWriter, r *http.Request) {
 	txHash := tx.Hash().Hex()
 	if err := h.db.UpdateEscrowStatus(r.Context(), req.EscrowID, "resolved"); err != nil {
 		h.writeEmergencyRecordingError(w, r, txHash, "emergency resolve status update", err)
+		return
+	}
+	if _, err := h.db.RevokeDCTTokensByEscrow(r.Context(), req.EscrowID, "emergency_resolve", "emergency"); err != nil {
+		h.writeEmergencyRecordingError(w, r, txHash, "emergency resolve dct revoke", err)
 		return
 	}
 	if err := h.db.CreateEmergencyAction(

@@ -57,6 +57,7 @@ func NewRootCmd(stdout, stderr io.Writer) *cobra.Command {
 	rootCmd.AddCommand(newEventsCmd(opts))
 	rootCmd.AddCommand(newEmergencyCmd(opts))
 	rootCmd.AddCommand(newAP2Cmd(opts))
+	rootCmd.AddCommand(newDCTCmd(opts))
 
 	return rootCmd
 }
