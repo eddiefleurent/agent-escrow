@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -200,12 +201,18 @@ func (s *Service) Mint(ctx context.Context, p MintParams) (*storage.DCTToken, st
 }
 
 func (s *Service) Delegate(ctx context.Context, p DelegateParams) (*storage.DCTToken, string, error) {
-	parent, parentActive, _, err := s.Introspect(ctx, p.ParentToken)
+	parent, parentActive, reasons, err := s.Introspect(ctx, p.ParentToken)
 	if err != nil {
 		return nil, "", err
 	}
 	if !parentActive {
+		if slices.Contains(reasons, "expired") {
+			return nil, "", ErrExpiredToken
+		}
 		return nil, "", ErrRevokedToken
+	}
+	if strings.TrimSpace(p.Subject) == "" {
+		return nil, "", errors.New("subject is required")
 	}
 	parentOps, err := fromJSON(parent.OperationsJSON)
 	if err != nil {
@@ -272,7 +279,7 @@ func (s *Service) Introspect(ctx context.Context, presentedToken string) (*stora
 		return nil, false, nil, err
 	}
 	reasons := make([]string, 0)
-	if rec.TokenHash != hashToken(secret) {
+	if subtle.ConstantTimeCompare([]byte(rec.TokenHash), []byte(hashToken(secret))) != 1 {
 		return nil, false, nil, errors.New("token verification failed")
 	}
 	if rec.RevokedAt != nil {

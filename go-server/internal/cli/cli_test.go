@@ -173,8 +173,14 @@ func TestExitCodeTransportError(t *testing.T) {
 func TestCLIDCTMintSmoke(t *testing.T) {
 	env := setupCLITestEnv(t)
 	ctx := context.Background()
-	task, _ := env.db.CreateTask(ctx, "Task", "desc", "0xabc")
-	escrow, _ := env.db.CreateEscrow(ctx, &storage.Escrow{TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE2", Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA", Amount: "100", Status: "funded", SubmissionDeadline: 1700000000, ReviewPeriodSeconds: 60, DisputePeriodSeconds: 60, ArbitratorTimeoutSeconds: 60})
+	task, err := env.db.CreateTask(ctx, "Task", "desc", "0xabc")
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF", EscrowAddress: "0xE2", Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA", Amount: "100", Status: "funded", SubmissionDeadline: 1700000000, ReviewPeriodSeconds: 60, DisputePeriodSeconds: 60, ArbitratorTimeoutSeconds: 60})
+	if err != nil {
+		t.Fatalf("create escrow: %v", err)
+	}
 
 	payload := `{"escrow_id":` + strconv.FormatInt(escrow.ID, 10) + `,"subject":"agent-b","operations":["submit_work"],"resources":["escrow:1"],"expires_at":1999999999}`
 	stdout, stderr, err := runCLI(t, env.server.URL, "dct", "mint", "--data", payload)

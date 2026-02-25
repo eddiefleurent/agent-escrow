@@ -16,11 +16,20 @@ import (
 )
 
 func TestDCTHTTPFlow(t *testing.T) {
-	db, _ := storage.Open(":memory:")
+	db, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
 	defer db.Close()
 	ctx := context.Background()
-	task, _ := db.CreateTask(ctx, "t", "d", "0x1")
-	escrow, _ := db.CreateEscrow(ctx, &storage.Escrow{TaskID: task.ID, ChainID: 1, FactoryAddress: "0xf", EscrowAddress: "0xe", EscrowID: 1, Buyer: "0xb", Worker: "0xw", Verifier: "0xv", Arbitrator: "0xa", Amount: "1", Status: "funded", SubmissionDeadline: 1, ReviewPeriodSeconds: 1, DisputePeriodSeconds: 1, ArbitratorTimeoutSeconds: 1})
+	task, err := db.CreateTask(ctx, "t", "d", "0x1")
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	escrow, err := db.CreateEscrow(ctx, &storage.Escrow{TaskID: task.ID, ChainID: 1, FactoryAddress: "0xf", EscrowAddress: "0xe", EscrowID: 1, Buyer: "0xb", Worker: "0xw", Verifier: "0xv", Arbitrator: "0xa", Amount: "1", Status: "funded", SubmissionDeadline: 1, ReviewPeriodSeconds: 1, DisputePeriodSeconds: 1, ArbitratorTimeoutSeconds: 1})
+	if err != nil {
+		t.Fatalf("create escrow: %v", err)
+	}
 
 	mock := chain.NewMockClient()
 	cfg := &config.Config{ChainID: 1, FactoryAddress: "0xf", RequestTimeout: 10 * time.Second, TxTimeout: 10 * time.Second}

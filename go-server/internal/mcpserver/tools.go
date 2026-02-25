@@ -1528,14 +1528,8 @@ func (s *Server) handleFreezeEscrow(ctx context.Context, _ *mcp.CallToolRequest,
 	}
 
 	txHash := receipt.TxHash.Hex()
-	if err := s.db.UpdateEscrowFrozen(ctx, escrowID, true); err != nil {
-		return textResult(fmt.Sprintf("db error after successful tx %s: %v", txHash, err)), nil, nil
-	}
-	if _, err := s.db.RevokeDCTTokensByEscrow(ctx, escrowID, "escrow_frozen", "emergency"); err != nil {
-		return textResult(fmt.Sprintf("db dct revoke error after successful tx %s: %v", txHash, err)), nil, nil
-	}
-	if err := s.db.CreateEmergencyAction(ctx, "freeze_escrow", escrow.EscrowAddress, "", "", txHash); err != nil {
-		return textResult(fmt.Sprintf("db audit error after successful tx %s: %v", txHash, err)), nil, nil
+	if err := s.db.RecordFreezeEscrowAndRevokeDCT(ctx, escrowID, escrow.EscrowAddress, txHash); err != nil {
+		return textResult(fmt.Sprintf("db local recording error after successful tx %s: %v", txHash, err)), nil, nil
 	}
 	if err := s.idx.RunOnce(ctx); err != nil {
 		return textResult(fmt.Sprintf("indexer sync error after successful tx %s: %v", txHash, err)), nil, nil
@@ -1608,15 +1602,8 @@ func (s *Server) handleEmergencyResolve(ctx context.Context, _ *mcp.CallToolRequ
 	}
 
 	txHash := receipt.TxHash.Hex()
-	if err := s.db.UpdateEscrowStatus(ctx, escrowID, "resolved"); err != nil {
-		return textResult(fmt.Sprintf("db error after successful tx %s: %v", txHash, err)), nil, nil
-	}
-	if _, err := s.db.RevokeDCTTokensByEscrow(ctx, escrowID, "emergency_resolve", "emergency"); err != nil {
-		return textResult(fmt.Sprintf("db dct revoke error after successful tx %s: %v", txHash, err)), nil, nil
-	}
-	if err := s.db.CreateEmergencyAction(ctx, "emergency_resolve", escrow.EscrowAddress, "",
-		fmt.Sprintf("workerAwardBps=%d", bps), txHash); err != nil {
-		return textResult(fmt.Sprintf("db audit error after successful tx %s: %v", txHash, err)), nil, nil
+	if err := s.db.RecordEmergencyResolveAndRevokeDCT(ctx, escrowID, escrow.EscrowAddress, uint16(bps), txHash); err != nil {
+		return textResult(fmt.Sprintf("db local recording error after successful tx %s: %v", txHash, err)), nil, nil
 	}
 	if err := s.idx.RunOnce(ctx); err != nil {
 		return textResult(fmt.Sprintf("indexer sync error after successful tx %s: %v", txHash, err)), nil, nil

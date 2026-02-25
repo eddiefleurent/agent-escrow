@@ -99,10 +99,21 @@ func (d *DB) RevokeDCTToken(ctx context.Context, tokenID, reason, revokedBy stri
 	if err != nil {
 		return fmt.Errorf("revoke dct token rows affected: %w", err)
 	}
-	if n == 0 {
-		return sql.ErrNoRows
+	if n > 0 {
+		return nil
 	}
-	return nil
+
+	var revokedAt sql.NullString
+	if err := d.db.QueryRowContext(ctx, `SELECT revoked_at FROM dct_tokens WHERE token_id = ?`, tokenID).Scan(&revokedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return sql.ErrNoRows
+		}
+		return fmt.Errorf("lookup dct token after revoke: %w", err)
+	}
+	if revokedAt.Valid {
+		return nil
+	}
+	return sql.ErrNoRows
 }
 
 func (d *DB) RevokeDCTTokensByEscrow(ctx context.Context, escrowID int64, reason, revokedBy string) (int64, error) {

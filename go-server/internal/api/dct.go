@@ -41,6 +41,31 @@ type revokeDCTRequest struct {
 
 func (h *Handlers) dctService() *dct.Service { return &dct.Service{DB: h.db} }
 
+func mapDCTError(err error) (int, string) {
+	if err == nil {
+		return http.StatusOK, ""
+	}
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return http.StatusNotFound, "not found"
+	case errors.Is(err, dct.ErrInvalidAttenuation),
+		errors.Is(err, dct.ErrExpiredToken),
+		strings.Contains(err.Error(), "invalid token format"),
+		strings.Contains(err.Error(), "token verification failed"),
+		strings.Contains(err.Error(), "subject is required"),
+		strings.Contains(err.Error(), "operations/resources must be non-empty"),
+		strings.Contains(err.Error(), "escrow_id must be > 0"),
+		strings.Contains(err.Error(), "expires_at must be"),
+		strings.Contains(err.Error(), "operations must be non-empty"),
+		strings.Contains(err.Error(), "resources must be non-empty"):
+		return http.StatusBadRequest, err.Error()
+	case errors.Is(err, dct.ErrRevokedToken):
+		return http.StatusUnauthorized, "token is inactive"
+	default:
+		return http.StatusInternalServerError, "internal error"
+	}
+}
+
 func (h *Handlers) MintDCT(w http.ResponseWriter, r *http.Request) {
 	var req mintDCTRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -52,7 +77,8 @@ func (h *Handlers) MintDCT(w http.ResponseWriter, r *http.Request) {
 		Operations: req.Operations, Resources: req.Resources, ExpiresAt: req.ExpiresAt,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		code, msg := mapDCTError(err)
+		writeJSON(w, code, map[string]string{"error": msg})
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"token": token, "record": rec})
@@ -69,7 +95,8 @@ func (h *Handlers) DelegateDCT(w http.ResponseWriter, r *http.Request) {
 		Operations: req.Operations, Resources: req.Resources, ExpiresAt: req.ExpiresAt,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		code, msg := mapDCTError(err)
+		writeJSON(w, code, map[string]string{"error": msg})
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"token": token, "record": rec})
@@ -83,7 +110,8 @@ func (h *Handlers) IntrospectDCT(w http.ResponseWriter, r *http.Request) {
 	}
 	rec, active, reasons, err := h.dctService().Introspect(r.Context(), req.Token)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		code, msg := mapDCTError(err)
+		writeJSON(w, code, map[string]string{"error": msg})
 		return
 	}
 	writeJSON(w, http.StatusOK, dct.Introspection{Token: rec, Active: active, Reasons: reasons})
@@ -96,11 +124,8 @@ func (h *Handlers) RevokeDCT(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.dctService().Revoke(r.Context(), dct.RevokeParams(req)); err != nil {
-		code := http.StatusBadRequest
-		if errors.Is(err, sql.ErrNoRows) {
-			code = http.StatusNotFound
-		}
-		writeJSON(w, code, map[string]string{"error": err.Error()})
+		code, msg := mapDCTError(err)
+		writeJSON(w, code, map[string]string{"error": msg})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked", "token_id": req.TokenID})
@@ -121,9 +146,9 @@ func (h *Handlers) ListEscrowDCTs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	for _, tok := range tokens {
-		tok.TokenHash = ""
-		tok.Subject = strings.ToLower(tok.Subject)
+	for i := range tokens {
+		tokens[i].TokenHash = ""
+		tokens[i].Subject = strings.ToLower(tokens[i].Subject)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tokens": tokens, "count": len(tokens)})
 }
