@@ -351,7 +351,9 @@ func (s *Service) CommitBid(ctx context.Context, p CommitBidParams) (*storage.Bi
 		return nil, fmt.Errorf("commit cap exceeded: max %d active commits per bidder per rfq", maxActiveCommitsPerBidderPerRFQ)
 	}
 
-	recentCommitCount, err := s.DB.CountRecentBidCommitsByRFQBidder(ctx, p.RFQID, p.Bidder, commitRateLimitWindowSeconds)
+	recentCommitCount, err := s.DB.CountRecentBidCommitsByRFQBidder(
+		ctx, p.RFQID, p.Bidder, commitRateLimitWindowSeconds, time.Now(),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -378,6 +380,20 @@ func (s *Service) CommitBid(ctx context.Context, p CommitBidParams) (*storage.Bi
 		Status:     "committed",
 	})
 	if err != nil {
+		if errors.Is(err, storage.ErrDuplicateBidCommitNonce) {
+			existingByNonce, lookupErr := s.DB.GetBidCommitByRFQBidderNonce(ctx, p.RFQID, p.Bidder, p.Nonce)
+			if lookupErr == nil {
+				return nil, fmt.Errorf("duplicate nonce for bidder in rfq (existing_commit_id=%d); replacements require a new nonce", existingByNonce.ID)
+			}
+			return nil, errors.New("duplicate nonce for bidder in rfq; replacements require a new nonce")
+		}
+		if errors.Is(err, storage.ErrDuplicateBidCommitCommitment) {
+			existingByCommitment, lookupErr := s.DB.GetBidCommitByRFQBidderCommitment(ctx, p.RFQID, p.Bidder, p.Commitment)
+			if lookupErr == nil {
+				return nil, fmt.Errorf("duplicate commitment for bidder in rfq (existing_commit_id=%d)", existingByCommitment.ID)
+			}
+			return nil, errors.New("duplicate commitment for bidder in rfq")
+		}
 		return nil, fmt.Errorf("create bid_commit: %w", err)
 	}
 	return c, nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 )
 
 func openTestDB(t *testing.T) *DB {
@@ -690,7 +691,7 @@ func TestBidCommitQueriesAndExpiry(t *testing.T) {
 		t.Fatalf("expected 2 active commits, got %d", activeCount)
 	}
 
-	recentCount, err := db.CountRecentBidCommitsByRFQBidder(ctx, rfq.ID, "0xWorkerA", 60)
+	recentCount, err := db.CountRecentBidCommitsByRFQBidder(ctx, rfq.ID, "0xWorkerA", 60, time.Now())
 	if err != nil {
 		t.Fatalf("count recent: %v", err)
 	}
@@ -709,6 +710,15 @@ func TestBidCommitQueriesAndExpiry(t *testing.T) {
 	if updatedA.Status != "expired" {
 		t.Fatalf("expected commit A status expired, got %q", updatedA.Status)
 	}
+
+	recentAfterExpiry, err := db.CountRecentBidCommitsByRFQBidder(ctx, rfq.ID, "0xWorkerA", 60, time.Now())
+	if err != nil {
+		t.Fatalf("count recent after expiry: %v", err)
+	}
+	if recentAfterExpiry != 1 {
+		t.Fatalf("expected 1 recent active commit after expiry, got %d", recentAfterExpiry)
+	}
+
 	updatedB, err := db.GetBidCommitByRFQBidderNonce(ctx, rfq.ID, "0xWorkerA", "n2")
 	if err != nil {
 		t.Fatalf("get updated commit B: %v", err)

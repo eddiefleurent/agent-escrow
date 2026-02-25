@@ -1243,12 +1243,18 @@ func (h *Handlers) ListBids(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rfq, err := h.db.GetRFQ(r.Context(), rfqID)
-	if err == nil && time.Now().Unix() > rfq.RevealDeadline {
-		if expireErr := h.db.ExpireCommittedBidCommits(r.Context(), rfqID); expireErr != nil {
-			slog.Error("failed to expire committed bid commits", "rfq_id", rfqID, "error", expireErr)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to expire stale bid commits"})
-			return
+	if err == nil {
+		if time.Now().Unix() > rfq.RevealDeadline {
+			if expireErr := h.db.ExpireCommittedBidCommits(r.Context(), rfqID); expireErr != nil {
+				slog.Error("failed to expire committed bid commits", "rfq_id", rfqID, "error", expireErr)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to expire stale bid commits"})
+				return
+			}
 		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		slog.Error("failed to fetch rfq in list bids", "rfq_id", rfqID, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch rfq"})
+		return
 	}
 
 	bids, err := h.db.ListBidsByRFQ(r.Context(), rfqID)

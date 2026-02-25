@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -789,6 +790,11 @@ func (d *DB) RejectPendingBidsTx(ctx context.Context, tx *sql.Tx, rfqID, exceptB
 
 const bidCommitColumns = `id, rfq_id, bidder, commitment, nonce, status, revealed_bid_id, created_at, updated_at`
 
+var (
+	ErrDuplicateBidCommitNonce      = errors.New("duplicate bid commit nonce")
+	ErrDuplicateBidCommitCommitment = errors.New("duplicate bid commit commitment")
+)
+
 func scanBidCommit(scanner interface{ Scan(...any) error }) (*BidCommit, error) {
 	c := &BidCommit{}
 	var createdAt, updatedAt string
@@ -824,6 +830,13 @@ func createBidCommitOn(ctx context.Context, q dbExecer, c *BidCommit) (*BidCommi
 		c.RFQID, c.Bidder, c.Commitment, c.Nonce, c.Status, revealed,
 	)
 	if err != nil {
+		lowerErr := strings.ToLower(err.Error())
+		if strings.Contains(lowerErr, "unique constraint failed: bid_commits.rfq_id, bid_commits.bidder, bid_commits.nonce") {
+			return nil, fmt.Errorf("insert bid_commit: %w", ErrDuplicateBidCommitNonce)
+		}
+		if strings.Contains(lowerErr, "unique constraint failed: bid_commits.rfq_id, bid_commits.bidder, bid_commits.commitment") {
+			return nil, fmt.Errorf("insert bid_commit: %w", ErrDuplicateBidCommitCommitment)
+		}
 		return nil, fmt.Errorf("insert bid_commit: %w", err)
 	}
 	id, err := res.LastInsertId()
@@ -990,16 +1003,19 @@ func (d *DB) CountActiveBidCommitsByRFQBidder(ctx context.Context, rfqID int64, 
 	return count, nil
 }
 
-func (d *DB) CountRecentBidCommitsByRFQBidder(ctx context.Context, rfqID int64, bidder string, windowSeconds int64) (int, error) {
+func (d *DB) CountRecentBidCommitsByRFQBidder(
+	ctx context.Context, rfqID int64, bidder string, windowSeconds int64, now time.Time,
+) (int, error) {
 	if windowSeconds <= 0 {
 		return 0, errors.New("count recent bid_commits: windowSeconds must be > 0")
 	}
-	cutoff := time.Now().Add(-time.Duration(windowSeconds) * time.Second).UTC().Format("2006-01-02 15:04:05")
+	cutoff := now.UTC().Add(-time.Duration(windowSeconds) * time.Second).Format("2006-01-02 15:04:05")
 	var count int
 	err := d.db.QueryRowContext(
 		ctx,
 		`SELECT COUNT(*) FROM bid_commits
          WHERE rfq_id = ? AND bidder = ?
+           AND status IN ('committed', 'revealed')
            AND created_at >= ?`,
 		rfqID, bidder, cutoff,
 	).Scan(&count)

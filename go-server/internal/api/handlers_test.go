@@ -82,6 +82,25 @@ func decodeJSON(t *testing.T, rr *httptest.ResponseRecorder) map[string]any {
 	return m
 }
 
+func createSealedRFQFixture(t *testing.T, env *testEnv, now, commitDeadline, revealDeadline int64) *storage.RFQ {
+	t.Helper()
+
+	rfq, err := env.db.CreateRFQ(context.Background(), &storage.RFQ{
+		Title: "RFQ", Description: "desc", SpecHash: "0x1",
+		Buyer:     "0x1000000000000000000000000000000000000001",
+		BudgetMin: "100", BudgetMax: "500",
+		Deadline: now + 86400, ReviewPeriodSeconds: 86400,
+		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
+		Status: "open", ExpiresAt: now + 172800,
+		BiddingMode: "sealed", CommitDeadline: commitDeadline, RevealDeadline: revealDeadline,
+		MilestonesJSON: "[]", RequirementsJSON: "{}",
+	})
+	if err != nil {
+		t.Fatalf("setup rfq: %v", err)
+	}
+	return rfq
+}
+
 func TestHealth_OK(t *testing.T) {
 	env := setup(t)
 	env.mock.BlockNum = 42
@@ -1130,21 +1149,8 @@ func TestCancelRFQ_AlreadyClosed(t *testing.T) {
 
 func TestCommitBid_Success(t *testing.T) {
 	env := setup(t)
-	ctx := context.Background()
-
-	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
-		Title: "RFQ", Description: "desc", SpecHash: "0x1",
-		Buyer:     "0x1000000000000000000000000000000000000001",
-		BudgetMin: "100", BudgetMax: "500",
-		Deadline: time.Now().Unix() + 86400, ReviewPeriodSeconds: 86400,
-		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
-		Status: "open", ExpiresAt: time.Now().Unix() + 172800,
-		BiddingMode: "sealed", CommitDeadline: time.Now().Unix() + 3600, RevealDeadline: time.Now().Unix() + 7200,
-		MilestonesJSON: "[]", RequirementsJSON: "{}",
-	})
-	if err != nil {
-		t.Fatalf("setup rfq: %v", err)
-	}
+	now := time.Now().Unix()
+	rfq := createSealedRFQFixture(t, env, now, now+3600, now+7200)
 
 	body := `{
 		"bidder": "0x2000000000000000000000000000000000000002",
@@ -1165,21 +1171,8 @@ func TestCommitBid_Success(t *testing.T) {
 
 func TestCommitBid_DuplicateNonceRejected(t *testing.T) {
 	env := setup(t)
-	ctx := context.Background()
-
-	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
-		Title: "RFQ", Description: "desc", SpecHash: "0x1",
-		Buyer:     "0x1000000000000000000000000000000000000001",
-		BudgetMin: "100", BudgetMax: "500",
-		Deadline: time.Now().Unix() + 86400, ReviewPeriodSeconds: 86400,
-		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
-		Status: "open", ExpiresAt: time.Now().Unix() + 172800,
-		BiddingMode: "sealed", CommitDeadline: time.Now().Unix() + 3600, RevealDeadline: time.Now().Unix() + 7200,
-		MilestonesJSON: "[]", RequirementsJSON: "{}",
-	})
-	if err != nil {
-		t.Fatalf("setup rfq: %v", err)
-	}
+	now := time.Now().Unix()
+	rfq := createSealedRFQFixture(t, env, now, now+3600, now+7200)
 
 	first := `{
 		"bidder": "0x2000000000000000000000000000000000000002",
@@ -1207,21 +1200,8 @@ func TestCommitBid_DuplicateNonceRejected(t *testing.T) {
 
 func TestCommitBid_CommitCapExceeded(t *testing.T) {
 	env := setup(t)
-	ctx := context.Background()
-
-	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
-		Title: "RFQ", Description: "desc", SpecHash: "0x1",
-		Buyer:     "0x1000000000000000000000000000000000000001",
-		BudgetMin: "100", BudgetMax: "500",
-		Deadline: time.Now().Unix() + 86400, ReviewPeriodSeconds: 86400,
-		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
-		Status: "open", ExpiresAt: time.Now().Unix() + 172800,
-		BiddingMode: "sealed", CommitDeadline: time.Now().Unix() + 3600, RevealDeadline: time.Now().Unix() + 7200,
-		MilestonesJSON: "[]", RequirementsJSON: "{}",
-	})
-	if err != nil {
-		t.Fatalf("setup rfq: %v", err)
-	}
+	now := time.Now().Unix()
+	rfq := createSealedRFQFixture(t, env, now, now+3600, now+7200)
 
 	for i := 0; i < 3; i++ {
 		body := fmt.Sprintf(`{
@@ -1254,19 +1234,7 @@ func TestRevealBid_OutOfBudgetRange(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().Unix()
 
-	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
-		Title: "RFQ", Description: "desc", SpecHash: "0x1",
-		Buyer:     "0x1000000000000000000000000000000000000001",
-		BudgetMin: "100", BudgetMax: "500",
-		Deadline: now + 86400, ReviewPeriodSeconds: 86400,
-		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
-		Status: "open", ExpiresAt: now + 172800,
-		BiddingMode: "sealed", CommitDeadline: now - 100, RevealDeadline: now + 1000,
-		MilestonesJSON: "[]", RequirementsJSON: "{}",
-	})
-	if err != nil {
-		t.Fatalf("setup rfq: %v", err)
-	}
+	rfq := createSealedRFQFixture(t, env, now, now-100, now+1000)
 	nonce := "n2"
 	salt := "s2"
 	commitment := sealedBidCommitment(
@@ -1282,7 +1250,7 @@ func TestRevealBid_OutOfBudgetRange(t *testing.T) {
 		nonce,
 		salt,
 	)
-	_, err = env.db.CreateBidCommit(ctx, &storage.BidCommit{
+	_, err := env.db.CreateBidCommit(ctx, &storage.BidCommit{
 		RFQID:      rfq.ID,
 		Bidder:     "0x2000000000000000000000000000000000000002",
 		Commitment: commitment,
@@ -1312,19 +1280,7 @@ func TestRevealBid_CommitmentMismatch(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().Unix()
 
-	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
-		Title: "RFQ", Description: "desc", SpecHash: "0x1",
-		Buyer:     "0x1000000000000000000000000000000000000001",
-		BudgetMin: "100", BudgetMax: "500",
-		Deadline: now + 86400, ReviewPeriodSeconds: 86400,
-		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
-		Status: "open", ExpiresAt: now + 172800,
-		BiddingMode: "sealed", CommitDeadline: now - 100, RevealDeadline: now + 1000,
-		MilestonesJSON: "[]", RequirementsJSON: "{}",
-	})
-	if err != nil {
-		t.Fatalf("setup rfq: %v", err)
-	}
+	rfq := createSealedRFQFixture(t, env, now, now-100, now+1000)
 
 	nonce := "n-mismatch"
 	salt := "s-expected"
@@ -1341,7 +1297,7 @@ func TestRevealBid_CommitmentMismatch(t *testing.T) {
 		nonce,
 		salt,
 	)
-	_, err = env.db.CreateBidCommit(ctx, &storage.BidCommit{
+	_, err := env.db.CreateBidCommit(ctx, &storage.BidCommit{
 		RFQID:      rfq.ID,
 		Bidder:     "0x2000000000000000000000000000000000000002",
 		Commitment: commitment,
@@ -1375,19 +1331,7 @@ func TestRevealBid_DefaultsNormalizedBeforeCommitmentCheck(t *testing.T) {
 	now := time.Now().Unix()
 	bidder := "0x2000000000000000000000000000000000000002"
 
-	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
-		Title: "RFQ", Description: "desc", SpecHash: "0x1",
-		Buyer:     "0x1000000000000000000000000000000000000001",
-		BudgetMin: "100", BudgetMax: "500",
-		Deadline: now + 86400, ReviewPeriodSeconds: 86400,
-		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
-		Status: "open", ExpiresAt: now + 172800,
-		BiddingMode: "sealed", CommitDeadline: now - 100, RevealDeadline: now + 1000,
-		MilestonesJSON: "[]", RequirementsJSON: "{}",
-	})
-	if err != nil {
-		t.Fatalf("setup rfq: %v", err)
-	}
+	rfq := createSealedRFQFixture(t, env, now, now-100, now+1000)
 
 	nonce := "n-defaults"
 	salt := "s-defaults"
@@ -1404,7 +1348,7 @@ func TestRevealBid_DefaultsNormalizedBeforeCommitmentCheck(t *testing.T) {
 		nonce,
 		salt,
 	)
-	_, err = env.db.CreateBidCommit(ctx, &storage.BidCommit{
+	_, err := env.db.CreateBidCommit(ctx, &storage.BidCommit{
 		RFQID:      rfq.ID,
 		Bidder:     bidder,
 		Commitment: commitment,
@@ -1434,19 +1378,7 @@ func TestRevealBid_NumericCanonicalizationAllowsLeadingZeros(t *testing.T) {
 	now := time.Now().Unix()
 	bidder := "0x2000000000000000000000000000000000000002"
 
-	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
-		Title: "RFQ", Description: "desc", SpecHash: "0x1",
-		Buyer:     "0x1000000000000000000000000000000000000001",
-		BudgetMin: "100", BudgetMax: "500",
-		Deadline: now + 86400, ReviewPeriodSeconds: 86400,
-		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
-		Status: "open", ExpiresAt: now + 172800,
-		BiddingMode: "sealed", CommitDeadline: now - 100, RevealDeadline: now + 1000,
-		MilestonesJSON: "[]", RequirementsJSON: "{}",
-	})
-	if err != nil {
-		t.Fatalf("setup rfq: %v", err)
-	}
+	rfq := createSealedRFQFixture(t, env, now, now-100, now+1000)
 
 	nonce := "n-canon"
 	salt := "s-canon"
@@ -1463,7 +1395,7 @@ func TestRevealBid_NumericCanonicalizationAllowsLeadingZeros(t *testing.T) {
 		nonce,
 		salt,
 	)
-	_, err = env.db.CreateBidCommit(ctx, &storage.BidCommit{
+	_, err := env.db.CreateBidCommit(ctx, &storage.BidCommit{
 		RFQID:      rfq.ID,
 		Bidder:     bidder,
 		Commitment: commitment,
@@ -1495,19 +1427,7 @@ func TestRevealBid_BidderAddressCaseInsensitiveForCommitLookup(t *testing.T) {
 	now := time.Now().Unix()
 	checksummedBidder := common.HexToAddress("0x2000000000000000000000000000000000000002").Hex()
 
-	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
-		Title: "RFQ", Description: "desc", SpecHash: "0x1",
-		Buyer:     "0x1000000000000000000000000000000000000001",
-		BudgetMin: "100", BudgetMax: "500",
-		Deadline: now + 86400, ReviewPeriodSeconds: 86400,
-		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
-		Status: "open", ExpiresAt: now + 172800,
-		BiddingMode: "sealed", CommitDeadline: now - 100, RevealDeadline: now + 1000,
-		MilestonesJSON: "[]", RequirementsJSON: "{}",
-	})
-	if err != nil {
-		t.Fatalf("setup rfq: %v", err)
-	}
+	rfq := createSealedRFQFixture(t, env, now, now-100, now+1000)
 
 	nonce := "n-case"
 	salt := "s-case"
@@ -1525,7 +1445,7 @@ func TestRevealBid_BidderAddressCaseInsensitiveForCommitLookup(t *testing.T) {
 		nonce,
 		salt,
 	)
-	_, err = env.db.CreateBidCommit(ctx, &storage.BidCommit{
+	_, err := env.db.CreateBidCommit(ctx, &storage.BidCommit{
 		RFQID:      rfq.ID,
 		Bidder:     checksummedBidder,
 		Commitment: commitment,
@@ -1556,21 +1476,9 @@ func TestRevealBid_ExpiredCommitMarkedWhenRevealWindowEnded(t *testing.T) {
 	now := time.Now().Unix()
 	bidder := "0x2000000000000000000000000000000000000002"
 
-	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
-		Title: "RFQ", Description: "desc", SpecHash: "0x1",
-		Buyer:     "0x1000000000000000000000000000000000000001",
-		BudgetMin: "100", BudgetMax: "500",
-		Deadline: now + 86400, ReviewPeriodSeconds: 86400,
-		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
-		Status: "open", ExpiresAt: now + 172800,
-		BiddingMode: "sealed", CommitDeadline: now - 200, RevealDeadline: now - 100,
-		MilestonesJSON: "[]", RequirementsJSON: "{}",
-	})
-	if err != nil {
-		t.Fatalf("setup rfq: %v", err)
-	}
+	rfq := createSealedRFQFixture(t, env, now, now-200, now-100)
 
-	_, err = env.db.CreateBidCommit(ctx, &storage.BidCommit{
+	_, err := env.db.CreateBidCommit(ctx, &storage.BidCommit{
 		RFQID:      rfq.ID,
 		Bidder:     bidder,
 		Commitment: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -1604,21 +1512,8 @@ func TestRevealBid_ExpiredCommitMarkedWhenRevealWindowEnded(t *testing.T) {
 
 func TestCommitBid_BidderIsBuyer(t *testing.T) {
 	env := setup(t)
-	ctx := context.Background()
-
-	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
-		Title: "RFQ", Description: "desc", SpecHash: "0x1",
-		Buyer:     "0x1000000000000000000000000000000000000001",
-		BudgetMin: "100", BudgetMax: "500",
-		Deadline: time.Now().Unix() + 86400, ReviewPeriodSeconds: 86400,
-		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
-		Status: "open", ExpiresAt: time.Now().Unix() + 172800,
-		BiddingMode: "sealed", CommitDeadline: time.Now().Unix() + 3600, RevealDeadline: time.Now().Unix() + 7200,
-		MilestonesJSON: "[]", RequirementsJSON: "{}",
-	})
-	if err != nil {
-		t.Fatalf("setup rfq: %v", err)
-	}
+	now := time.Now().Unix()
+	rfq := createSealedRFQFixture(t, env, now, now+3600, now+7200)
 
 	body := `{
 		"bidder": "0x1000000000000000000000000000000000000001",
@@ -1670,26 +1565,43 @@ func TestListBids_Success(t *testing.T) {
 	}
 }
 
+func TestListBids_MissingRFQSkipsExpiryAndReturnsBids(t *testing.T) {
+	env := setup(t)
+
+	rr := env.request(t, "GET", "/api/v1/rfqs/999/bids", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var bids []map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&bids); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(bids) != 0 {
+		t.Fatalf("expected 0 bids, got %d", len(bids))
+	}
+}
+
+func TestListBids_GetRFQDBErrorReturns500(t *testing.T) {
+	env := setup(t)
+	if err := env.db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	rr := env.request(t, "GET", "/api/v1/rfqs/1/bids", "")
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestGetRFQ_RedactsCommitmentAndNonce(t *testing.T) {
 	env := setup(t)
 	ctx := context.Background()
 	now := time.Now().Unix()
 
-	rfq, err := env.db.CreateRFQ(ctx, &storage.RFQ{
-		Title: "RFQ", Description: "desc", SpecHash: "0x1",
-		Buyer:     "0x1000000000000000000000000000000000000001",
-		BudgetMin: "100", BudgetMax: "500",
-		Deadline: now + 86400, ReviewPeriodSeconds: 86400,
-		DisputePeriodSeconds: 172800, ArbitratorTimeoutSeconds: 604800,
-		Status: "open", ExpiresAt: now + 172800,
-		BiddingMode: "sealed", CommitDeadline: now + 100, RevealDeadline: now + 200,
-		MilestonesJSON: "[]", RequirementsJSON: "{}",
-	})
-	if err != nil {
-		t.Fatalf("setup rfq: %v", err)
-	}
+	rfq := createSealedRFQFixture(t, env, now, now+100, now+200)
 
-	_, err = env.db.CreateBidCommit(ctx, &storage.BidCommit{
+	_, err := env.db.CreateBidCommit(ctx, &storage.BidCommit{
 		RFQID:      rfq.ID,
 		Bidder:     "0x2000000000000000000000000000000000000002",
 		Commitment: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
