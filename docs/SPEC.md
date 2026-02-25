@@ -43,7 +43,6 @@ Implements ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) (Toma
 - Dynamic capability lookup/matching (§4.1-4.2)
 - Adaptive multi-agent delegation policies (§4.4 advanced)
 - Distributed reputation markets as primary trust substrate (§4.6)
-- Delegation Capability Tokens / Macaroons (§4.7)
 - ZK verification slots (§4.8)
 - Hybrid human/AI oversight optimization at scale (§5)
 

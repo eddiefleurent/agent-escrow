@@ -536,6 +536,11 @@ func (idx *Indexer) ProcessEscrowLog(ctx context.Context, lg types.Log, dbEscrow
 			if err := idx.db.UpdateEscrowStatus(ctx, dbEscrowID, newStatus); err != nil {
 				return fmt.Errorf("update status to %s: %w", newStatus, err)
 			}
+			if terminalStatuses[newStatus] {
+				if _, err := idx.db.RevokeDCTTokensByEscrow(ctx, dbEscrowID, "escrow_terminal_state:"+newStatus, "indexer"); err != nil {
+					return fmt.Errorf("revoke dct tokens on status %s: %w", newStatus, err)
+				}
+			}
 		}
 	}
 
@@ -907,6 +912,9 @@ func (idx *Indexer) handleEmergencyResolvedFactory(ctx context.Context, lg types
 	if err := idx.db.UpdateEscrowStatus(ctx, e.ID, "resolved"); err != nil {
 		return err
 	}
+	if _, err := idx.db.RevokeDCTTokensByEscrow(ctx, e.ID, "emergency_resolved", "indexer"); err != nil {
+		return fmt.Errorf("revoke dct tokens on emergency resolve: %w", err)
+	}
 	return idx.db.CreateEmergencyAction(ctx, "emergency_resolve", e.EscrowAddress, "",
 		fmt.Sprintf("workerAwardBps=%d", bps), lg.TxHash.Hex())
 }
@@ -935,7 +943,13 @@ func (idx *Indexer) handleEmergencyResolvedEscrow(ctx context.Context, lg types.
 	}
 
 	slog.Info("emergency resolved (escrow event)", "escrow_id", dbEscrowID, "worker_award_bps", bps)
-	return idx.db.UpdateEscrowStatus(ctx, dbEscrowID, "resolved")
+	if err := idx.db.UpdateEscrowStatus(ctx, dbEscrowID, "resolved"); err != nil {
+		return err
+	}
+	if _, err := idx.db.RevokeDCTTokensByEscrow(ctx, dbEscrowID, "emergency_resolved", "indexer"); err != nil {
+		return fmt.Errorf("revoke dct tokens on emergency resolve: %w", err)
+	}
+	return nil
 }
 
 func (idx *Indexer) handleRemainingMilestonesAborted(ctx context.Context, lg types.Log, dbEscrowID int64) error {
