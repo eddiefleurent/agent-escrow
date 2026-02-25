@@ -1027,7 +1027,6 @@ func (d *DB) CountRecentBidCommitsByRFQBidder(
 		ctx,
 		`SELECT COUNT(*) FROM bid_commits
          WHERE rfq_id = ? AND bidder = ?
-           AND status IN ('committed', 'revealed')
            AND created_at >= ?`,
 		rfqID, bidder, cutoff,
 	).Scan(&count)
@@ -1037,6 +1036,8 @@ func (d *DB) CountRecentBidCommitsByRFQBidder(
 	return count, nil
 }
 
+// expireCommittedBidCommitsOn marks committed bid commits for the RFQ as expired.
+// Precondition: the caller must ensure the RFQ's sealed-bid reveal deadline has passed.
 func expireCommittedBidCommitsOn(ctx context.Context, q dbExecer, rfqID int64) error {
 	_, err := q.ExecContext(
 		ctx,
@@ -1051,10 +1052,14 @@ func expireCommittedBidCommitsOn(ctx context.Context, q dbExecer, rfqID int64) e
 	return nil
 }
 
+// ExpireCommittedBidCommits marks committed bid commits for the RFQ as expired.
+// Precondition: the caller must ensure the RFQ's sealed-bid reveal deadline has passed.
 func (d *DB) ExpireCommittedBidCommits(ctx context.Context, rfqID int64) error {
 	return expireCommittedBidCommitsOn(ctx, d.db, rfqID)
 }
 
+// ExpireCommittedBidCommitsTx marks committed bid commits for the RFQ as expired in a transaction.
+// Precondition: the caller must ensure the RFQ's sealed-bid reveal deadline has passed.
 func (d *DB) ExpireCommittedBidCommitsTx(ctx context.Context, tx *sql.Tx, rfqID int64) error {
 	return expireCommittedBidCommitsOn(ctx, tx, rfqID)
 }

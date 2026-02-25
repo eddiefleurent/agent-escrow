@@ -716,8 +716,8 @@ func TestBidCommitQueriesAndExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count recent after expiry: %v", err)
 	}
-	if recentAfterExpiry != 1 {
-		t.Fatalf("expected 1 recent active commit after expiry, got %d", recentAfterExpiry)
+	if recentAfterExpiry != 2 {
+		t.Fatalf("expected 2 recent commit attempts after expiry, got %d", recentAfterExpiry)
 	}
 
 	updatedB, err := db.GetBidCommitByRFQBidderNonce(ctx, rfq.ID, "0xWorkerA", "n2")
