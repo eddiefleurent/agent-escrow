@@ -1,6 +1,11 @@
 package cli
 
-import "github.com/spf13/cobra"
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/spf13/cobra"
+)
 
 func newDCTCmd(opts *Options) *cobra.Command {
 	dctCmd := &cobra.Command{Use: "dct", Short: "Delegation Capability Token commands"}
@@ -35,7 +40,11 @@ func newDCTEscrowListCmd(opts *Options) *cobra.Command {
 		Short: "List DCTs for an escrow",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runGet(cmd, opts, "/api/v1/escrows/"+args[0]+"/dcts", nil)
+			escrowID, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil || escrowID <= 0 {
+				return fmt.Errorf("escrow-id must be a positive integer")
+			}
+			return runGet(cmd, opts, "/api/v1/escrows/"+strconv.FormatInt(escrowID, 10)+"/dcts", nil)
 		},
 	}
 }

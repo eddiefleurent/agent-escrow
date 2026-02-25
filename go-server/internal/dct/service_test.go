@@ -61,7 +61,22 @@ func TestDelegateRequiresSubject(t *testing.T) {
 	}
 }
 
-func TestIntrospectExpiryAndRevoke(t *testing.T) {
+func TestIntrospectExpiry(t *testing.T) {
+	svc, escrowID := testService(t)
+	ctx := context.Background()
+	_, token, err := svc.Mint(ctx, MintParams{EscrowID: escrowID, Subject: "agent-a", Operations: []string{"submit_work"}, Resources: []string{"escrow:1"}, ExpiresAt: 1200})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	svc.Now = func() time.Time { return time.Unix(1300, 0).UTC() }
+	_, active, reasons, err := svc.Introspect(ctx, token)
+	if err != nil || active || len(reasons) == 0 {
+		t.Fatalf("expected expired token: err=%v active=%v reasons=%v", err, active, reasons)
+	}
+}
+
+func TestIntrospectRevoke(t *testing.T) {
 	svc, escrowID := testService(t)
 	ctx := context.Background()
 	rec, token, err := svc.Mint(ctx, MintParams{EscrowID: escrowID, Subject: "agent-a", Operations: []string{"submit_work"}, Resources: []string{"escrow:1"}, ExpiresAt: 1200})

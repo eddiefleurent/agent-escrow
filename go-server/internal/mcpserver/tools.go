@@ -1093,7 +1093,7 @@ func (s *Server) handleIntrospectDCT(ctx context.Context, _ *mcp.CallToolRequest
 func (s *Server) handleRevokeDCT(ctx context.Context, _ *mcp.CallToolRequest, args revokeDCTArgs) (*mcp.CallToolResult, any, error) {
 	if err := s.dctService().Revoke(ctx, dct.RevokeParams{TokenID: args.TokenID, Reason: args.Reason, By: args.By}); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return textResult("token not found or already revoked"), nil, nil
+			return textResult("token not found"), nil, nil
 		}
 		return textResult(err.Error()), nil, nil
 	}

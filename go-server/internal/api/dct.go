@@ -138,12 +138,16 @@ func (h *Handlers) ListEscrowDCTs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := h.db.GetEscrow(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		} else {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		}
 		return
 	}
 	tokens, err := h.db.ListDCTTokensByEscrow(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
 	for i := range tokens {
