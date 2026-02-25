@@ -662,7 +662,9 @@ func TestBidCommitQueriesAndExpiry(t *testing.T) {
 		Bidder:     "0xWorkerA",
 		Commitment: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		Nonce:      "n2",
-		Status:     "revealed",
+		// Intentionally leave RevealedBidID nil: this test only verifies active/recent
+		// commit counting and expiry behavior, not reveal-to-bid linkage.
+		Status: "revealed",
 	})
 	if err != nil {
 		t.Fatalf("create commit B: %v", err)
@@ -735,6 +737,21 @@ func TestBidCommitQueriesAndExpiry(t *testing.T) {
 	}
 	if updatedB.Status != "revealed" {
 		t.Fatalf("expected commit B status revealed, got %q", updatedB.Status)
+	}
+}
+
+func TestCountActiveBidCommitsByRFQBidder_Validation(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	_, err := db.CountActiveBidCommitsByRFQBidder(ctx, 0, "0xWorkerA")
+	if err == nil || err.Error() != "count active bid_commits: rfqID must be > 0" {
+		t.Fatalf("expected rfqID validation error, got %v", err)
+	}
+
+	_, err = db.CountActiveBidCommitsByRFQBidder(ctx, 1, "")
+	if err == nil || err.Error() != "count active bid_commits: bidder must be non-empty" {
+		t.Fatalf("expected bidder validation error, got %v", err)
 	}
 }
 

@@ -1017,6 +1017,13 @@ func (d *DB) RejectUnacceptedBidCommitsTx(ctx context.Context, tx *sql.Tx, rfqID
 }
 
 func (d *DB) CountActiveBidCommitsByRFQBidder(ctx context.Context, rfqID int64, bidder string) (int, error) {
+	if rfqID <= 0 {
+		return 0, errors.New("count active bid_commits: rfqID must be > 0")
+	}
+	if bidder == "" {
+		return 0, errors.New("count active bid_commits: bidder must be non-empty")
+	}
+
 	var count int
 	err := d.db.QueryRowContext(
 		ctx,
