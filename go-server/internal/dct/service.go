@@ -456,7 +456,7 @@ func (s *Service) Introspect(ctx context.Context, presentedToken string) (*stora
 		return nil, false, nil, err
 	}
 	reasons = append(reasons, chainReasons...)
-	reasons = canonicalize(reasons)
+	reasons = dedupSortReasons(reasons)
 	return rec, len(reasons) == 0, reasons, nil
 }
 
