@@ -41,9 +41,9 @@ func TestDelegateStrictAttenuation(t *testing.T) {
 		t.Fatalf("expected valid attenuation, got %v", err)
 	}
 
-	_, _, err = svc.Delegate(ctx, DelegateParams{ParentToken: parent, Subject: "agent-c", Operations: []string{"resolve_dispute"}, Resources: []string{"escrow:1"}, ExpiresAt: 1500})
+	_, _, err = svc.Delegate(ctx, DelegateParams{ParentToken: parent, Subject: "agent-c", Operations: []string{"submit_work", "approve_work"}, Resources: []string{"escrow:1", "artifact:a"}, ExpiresAt: 2000})
 	if err == nil || !strings.Contains(err.Error(), ErrInvalidAttenuation.Error()) {
-		t.Fatalf("expected attenuation error, got %v", err)
+		t.Fatalf("expected strict attenuation error, got %v", err)
 	}
 }
 
@@ -95,5 +95,53 @@ func TestIntrospectRevoke(t *testing.T) {
 	_, active, reasons, err := svc.Introspect(ctx, token)
 	if err != nil || active || len(reasons) == 0 {
 		t.Fatalf("expected revoked token: err=%v active=%v reasons=%v", err, active, reasons)
+	}
+}
+
+func TestIntrospectInvalidatesWhenEscrowFrozen(t *testing.T) {
+	svc, escrowID := testService(t)
+	ctx := context.Background()
+	_, token, err := svc.Mint(ctx, MintParams{EscrowID: escrowID, Subject: "agent-a", Operations: []string{"submit_work"}, Resources: []string{"escrow:1"}, ExpiresAt: 2000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.DB.SQLDB().ExecContext(ctx, `UPDATE escrows SET frozen = 1 WHERE id = ?`, escrowID); err != nil {
+		t.Fatal(err)
+	}
+	_, active, reasons, err := svc.Introspect(ctx, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active {
+		t.Fatalf("expected inactive token when escrow frozen")
+	}
+	if !strings.Contains(strings.Join(reasons, ","), ReasonEscrowFrozen) {
+		t.Fatalf("expected escrow_frozen reason, got %v", reasons)
+	}
+}
+
+func TestIntrospectInvalidatesAncestorRevocation(t *testing.T) {
+	svc, escrowID := testService(t)
+	ctx := context.Background()
+	parentRec, parent, err := svc.Mint(ctx, MintParams{EscrowID: escrowID, Subject: "agent-a", Operations: []string{"submit_work", "approve_work"}, Resources: []string{"escrow:1", "artifact:a"}, ExpiresAt: 2000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, child, err := svc.Delegate(ctx, DelegateParams{ParentToken: parent, Subject: "agent-b", Operations: []string{"submit_work"}, Resources: []string{"escrow:1"}, ExpiresAt: 1500})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Revoke(ctx, RevokeParams{TokenID: parentRec.TokenID, Reason: "manual"}); err != nil {
+		t.Fatal(err)
+	}
+	_, active, reasons, err := svc.Introspect(ctx, child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active {
+		t.Fatalf("expected child inactive when parent revoked")
+	}
+	if !strings.Contains(strings.Join(reasons, ","), "ancestor_revoked") {
+		t.Fatalf("expected ancestor_revoked reason, got %v", reasons)
 	}
 }

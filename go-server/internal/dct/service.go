@@ -12,16 +12,29 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 )
 
+const CanonicalProfile = "dct-profile-v1"
+
+const (
+	ReasonExpired                  = "expired"
+	ReasonAncestorExpired          = "ancestor_expired"
+	ReasonEscrowFrozen             = "escrow_frozen"
+	ReasonEscrowTerminalOrInactive = "escrow_terminal_or_inactive"
+)
+
 var (
 	ErrInvalidAttenuation = errors.New("delegation must strictly attenuate parent token")
 	ErrExpiredToken       = errors.New("token is expired")
 	ErrRevokedToken       = errors.New("token is revoked")
+	ErrInvalidProfile     = errors.New("token profile is not canonical dct-profile-v1")
+	ErrInvalidChain       = errors.New("invalid delegation chain")
+	ErrInactiveEscrow     = errors.New("escrow is inactive for dct operations")
 )
 
 type Service struct {
@@ -84,6 +97,22 @@ func canonicalize(items []string) []string {
 	return out
 }
 
+// dedupSortReasons deduplicates and sorts reason strings without lowercasing,
+// preserving the original casing of each reason.
+func dedupSortReasons(reasons []string) []string {
+	seen := make(map[string]struct{}, len(reasons))
+	out := make([]string, 0, len(reasons))
+	for _, r := range reasons {
+		if _, ok := seen[r]; ok {
+			continue
+		}
+		seen[r] = struct{}{}
+		out = append(out, r)
+	}
+	slices.Sort(out)
+	return out
+}
+
 func toJSON(items []string) (string, error) {
 	b, err := json.Marshal(canonicalize(items))
 	if err != nil {
@@ -98,6 +127,22 @@ func fromJSON(raw string) ([]string, error) {
 		return nil, err
 	}
 	return canonicalize(out), nil
+}
+
+func canonicalCaveatsJSON(ops, resources []string, expiresAt int64) (string, error) {
+	caveats := make([]string, 0, len(ops)+len(resources)+1)
+	for _, op := range canonicalize(ops) {
+		caveats = append(caveats, "op="+op)
+	}
+	for _, r := range canonicalize(resources) {
+		caveats = append(caveats, "res="+r)
+	}
+	caveats = append(caveats, "exp<="+strconv.FormatInt(expiresAt, 10))
+	b, err := json.Marshal(caveats)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 func isSubset(sub, sup []string) bool {
@@ -156,22 +201,44 @@ func validateMintInput(p MintParams) error {
 	return nil
 }
 
+func isEscrowInactive(e *storage.Escrow) bool {
+	if e.Frozen {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(e.Status)) {
+	case "settled", "refunded", "cancelled", "resolved":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Service) Mint(ctx context.Context, p MintParams) (*storage.DCTToken, string, error) {
 	if err := validateMintInput(p); err != nil {
 		return nil, "", err
 	}
-	if _, err := s.DB.GetEscrow(ctx, p.EscrowID); err != nil {
+	escrow, err := s.DB.GetEscrow(ctx, p.EscrowID)
+	if err != nil {
 		return nil, "", fmt.Errorf("escrow lookup: %w", err)
+	}
+	if isEscrowInactive(escrow) {
+		return nil, "", ErrInactiveEscrow
 	}
 	if p.ExpiresAt <= s.now().Unix() {
 		return nil, "", ErrExpiredToken
 	}
 
-	opsJSON, err := toJSON(p.Operations)
+	ops := canonicalize(p.Operations)
+	resources := canonicalize(p.Resources)
+	opsJSON, err := toJSON(ops)
 	if err != nil {
 		return nil, "", err
 	}
-	resJSON, err := toJSON(p.Resources)
+	resJSON, err := toJSON(resources)
+	if err != nil {
+		return nil, "", err
+	}
+	caveatsJSON, err := canonicalCaveatsJSON(ops, resources, p.ExpiresAt)
 	if err != nil {
 		return nil, "", err
 	}
@@ -192,6 +259,9 @@ func (s *Service) Mint(ctx context.Context, p MintParams) (*storage.DCTToken, st
 		Issuer:         strings.ToLower(firstNonEmpty(p.Issuer, p.Subject)),
 		OperationsJSON: opsJSON,
 		ResourcesJSON:  resJSON,
+		Profile:        CanonicalProfile,
+		CaveatsJSON:    caveatsJSON,
+		Depth:          0,
 		ExpiresAt:      p.ExpiresAt,
 	})
 	if err != nil {
@@ -200,14 +270,26 @@ func (s *Service) Mint(ctx context.Context, p MintParams) (*storage.DCTToken, st
 	return rec, tokenID + "." + secret, nil
 }
 
+func strictAttenuation(childOps, parentOps, childResources, parentResources []string, childExpiry, parentExpiry int64) bool {
+	if !isSubset(childOps, parentOps) || !isSubset(childResources, parentResources) || childExpiry > parentExpiry {
+		return false
+	}
+	return len(childOps) < len(parentOps) || len(childResources) < len(parentResources) || childExpiry < parentExpiry
+}
+
 func (s *Service) Delegate(ctx context.Context, p DelegateParams) (*storage.DCTToken, string, error) {
 	parent, parentActive, reasons, err := s.Introspect(ctx, p.ParentToken)
 	if err != nil {
 		return nil, "", err
 	}
 	if !parentActive {
-		if slices.Contains(reasons, "expired") {
+		if slices.Contains(reasons, ReasonExpired) || slices.Contains(reasons, ReasonAncestorExpired) {
 			return nil, "", ErrExpiredToken
+		}
+		// ReasonEscrowFrozen and ReasonEscrowTerminalOrInactive indicate the escrow is no
+		// longer accepting operations, not that the token itself was revoked.
+		if slices.Contains(reasons, ReasonEscrowFrozen) || slices.Contains(reasons, ReasonEscrowTerminalOrInactive) {
+			return nil, "", ErrInactiveEscrow
 		}
 		return nil, "", ErrRevokedToken
 	}
@@ -227,15 +309,25 @@ func (s *Service) Delegate(ctx context.Context, p DelegateParams) (*storage.DCTT
 	if len(ops) == 0 || len(resources) == 0 {
 		return nil, "", errors.New("operations/resources must be non-empty")
 	}
-	if !isSubset(ops, parentOps) || !isSubset(resources, parentResources) {
+	if p.ExpiresAt <= s.now().Unix() {
 		return nil, "", ErrInvalidAttenuation
 	}
-	if p.ExpiresAt <= s.now().Unix() || p.ExpiresAt > parent.ExpiresAt {
+	if !strictAttenuation(ops, parentOps, resources, parentResources, p.ExpiresAt, parent.ExpiresAt) {
 		return nil, "", ErrInvalidAttenuation
 	}
 
-	opsJSON, _ := toJSON(ops)
-	resJSON, _ := toJSON(resources)
+	opsJSON, err := toJSON(ops)
+	if err != nil {
+		return nil, "", err
+	}
+	resJSON, err := toJSON(resources)
+	if err != nil {
+		return nil, "", err
+	}
+	caveatsJSON, err := canonicalCaveatsJSON(ops, resources, p.ExpiresAt)
+	if err != nil {
+		return nil, "", err
+	}
 	secret, err := randomSecret(24)
 	if err != nil {
 		return nil, "", err
@@ -244,15 +336,19 @@ func (s *Service) Delegate(ctx context.Context, p DelegateParams) (*storage.DCTT
 	if err != nil {
 		return nil, "", err
 	}
+	issuer := strings.ToLower(firstNonEmpty(p.Issuer, parent.Subject))
 	rec, err := s.DB.CreateDCTToken(ctx, &storage.DCTToken{
 		TokenID:        tokenID,
 		TokenHash:      hashToken(secret),
 		ParentTokenID:  parent.TokenID,
 		EscrowID:       parent.EscrowID,
 		Subject:        strings.ToLower(p.Subject),
-		Issuer:         strings.ToLower(firstNonEmpty(p.Issuer, parent.Subject)),
+		Issuer:         issuer,
 		OperationsJSON: opsJSON,
 		ResourcesJSON:  resJSON,
+		Profile:        CanonicalProfile,
+		CaveatsJSON:    caveatsJSON,
+		Depth:          parent.Depth + 1,
 		ExpiresAt:      p.ExpiresAt,
 	})
 	if err != nil {
@@ -267,6 +363,80 @@ func parsePresentedToken(token string) (tokenID, secret string, err error) {
 		return "", "", errors.New("invalid token format")
 	}
 	return parts[0], parts[1], nil
+}
+
+func (s *Service) validateChain(ctx context.Context, leaf *storage.DCTToken) ([]string, error) {
+	reasons := make([]string, 0)
+	if leaf.Profile != CanonicalProfile {
+		reasons = append(reasons, "non_canonical_profile")
+	}
+	escrow, err := s.DB.GetEscrow(ctx, leaf.EscrowID)
+	if err != nil {
+		return nil, err
+	}
+	if escrow.Frozen {
+		reasons = append(reasons, ReasonEscrowFrozen)
+	} else if isEscrowInactive(escrow) {
+		reasons = append(reasons, ReasonEscrowTerminalOrInactive)
+	}
+
+	seen := map[string]struct{}{leaf.TokenID: {}}
+	current := leaf
+	for current.ParentTokenID != "" {
+		parent, err := s.DB.GetDCTTokenByTokenID(ctx, current.ParentTokenID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				reasons = append(reasons, "missing_ancestor")
+				break
+			}
+			return nil, err
+		}
+		if _, ok := seen[parent.TokenID]; ok {
+			reasons = append(reasons, "lineage_cycle")
+			break
+		}
+		seen[parent.TokenID] = struct{}{}
+
+		if parent.Profile != CanonicalProfile {
+			reasons = append(reasons, "ancestor_non_canonical_profile")
+		}
+		if parent.RevokedAt != nil {
+			reasons = append(reasons, "ancestor_revoked")
+		}
+		if parent.ExpiresAt <= s.now().Unix() {
+			reasons = append(reasons, ReasonAncestorExpired)
+		}
+		if current.EscrowID != parent.EscrowID {
+			reasons = append(reasons, "lineage_escrow_mismatch")
+		}
+		if !strings.EqualFold(current.Issuer, parent.Subject) {
+			reasons = append(reasons, "lineage_issuer_subject_mismatch")
+		}
+		if current.ExpiresAt > parent.ExpiresAt {
+			reasons = append(reasons, "lineage_expiry_violation")
+		}
+		currentOps, err := fromJSON(current.OperationsJSON)
+		if err != nil {
+			return nil, fmt.Errorf("decode operations: %w", err)
+		}
+		parentOps, err := fromJSON(parent.OperationsJSON)
+		if err != nil {
+			return nil, fmt.Errorf("decode parent operations: %w", err)
+		}
+		currentResources, err := fromJSON(current.ResourcesJSON)
+		if err != nil {
+			return nil, fmt.Errorf("decode resources: %w", err)
+		}
+		parentResources, err := fromJSON(parent.ResourcesJSON)
+		if err != nil {
+			return nil, fmt.Errorf("decode parent resources: %w", err)
+		}
+		if !isSubset(currentOps, parentOps) || !isSubset(currentResources, parentResources) {
+			reasons = append(reasons, "lineage_scope_violation")
+		}
+		current = parent
+	}
+	return dedupSortReasons(reasons), nil
 }
 
 func (s *Service) Introspect(ctx context.Context, presentedToken string) (*storage.DCTToken, bool, []string, error) {
@@ -286,8 +456,14 @@ func (s *Service) Introspect(ctx context.Context, presentedToken string) (*stora
 		reasons = append(reasons, "revoked")
 	}
 	if rec.ExpiresAt <= s.now().Unix() {
-		reasons = append(reasons, "expired")
+		reasons = append(reasons, ReasonExpired)
 	}
+	chainReasons, err := s.validateChain(ctx, rec)
+	if err != nil {
+		return nil, false, nil, err
+	}
+	reasons = append(reasons, chainReasons...)
+	reasons = dedupSortReasons(reasons)
 	return rec, len(reasons) == 0, reasons, nil
 }
 

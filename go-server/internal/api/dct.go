@@ -50,6 +50,9 @@ func mapDCTError(err error) (int, string) {
 		return http.StatusNotFound, "not found"
 	case errors.Is(err, dct.ErrInvalidAttenuation),
 		errors.Is(err, dct.ErrExpiredToken),
+		errors.Is(err, dct.ErrInvalidProfile),
+		errors.Is(err, dct.ErrInvalidChain),
+		errors.Is(err, dct.ErrInactiveEscrow),
 		strings.Contains(err.Error(), "invalid token format"),
 		strings.Contains(err.Error(), "token verification failed"),
 		strings.Contains(err.Error(), "subject is required"),

@@ -227,6 +227,9 @@ type DCTToken struct {
 	Issuer           string     `json:"issuer"`
 	OperationsJSON   string     `json:"operations_json"`
 	ResourcesJSON    string     `json:"resources_json"`
+	Profile          string     `json:"profile"`
+	CaveatsJSON      string     `json:"caveats_json"`
+	Depth            int        `json:"depth"`
 	ExpiresAt        int64      `json:"expires_at"`
 	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
 	RevocationReason string     `json:"revocation_reason,omitempty"`

@@ -49,6 +49,9 @@ var migration012SQL string
 //go:embed migrations/013_add_dct_tokens.sql
 var migration013SQL string
 
+//go:embed migrations/014_dct_profile_v1_hardening.sql
+var migration014SQL string
+
 type DB struct {
 	db *sql.DB
 }
@@ -92,6 +95,7 @@ func Open(dsn string) (*DB, error) {
 		{"011", migration011SQL},
 		{"012", migration012SQL},
 		{"013", migration013SQL},
+		{"014", migration014SQL},
 	}
 
 	for _, m := range migrations {
