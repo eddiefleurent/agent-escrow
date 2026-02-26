@@ -21,6 +21,13 @@ import (
 
 const CanonicalProfile = "dct-profile-v1"
 
+const (
+	ReasonExpired                  = "expired"
+	ReasonAncestorExpired          = "ancestor_expired"
+	ReasonEscrowFrozen             = "escrow_frozen"
+	ReasonEscrowTerminalOrInactive = "escrow_terminal_or_inactive"
+)
+
 var (
 	ErrInvalidAttenuation = errors.New("delegation must strictly attenuate parent token")
 	ErrExpiredToken       = errors.New("token is expired")
@@ -276,12 +283,12 @@ func (s *Service) Delegate(ctx context.Context, p DelegateParams) (*storage.DCTT
 		return nil, "", err
 	}
 	if !parentActive {
-		if slices.Contains(reasons, "expired") || slices.Contains(reasons, "ancestor_expired") {
+		if slices.Contains(reasons, ReasonExpired) || slices.Contains(reasons, ReasonAncestorExpired) {
 			return nil, "", ErrExpiredToken
 		}
-		// escrow_frozen and escrow_terminal_or_inactive indicate the escrow is no
+		// ReasonEscrowFrozen and ReasonEscrowTerminalOrInactive indicate the escrow is no
 		// longer accepting operations, not that the token itself was revoked.
-		if slices.Contains(reasons, "escrow_frozen") || slices.Contains(reasons, "escrow_terminal_or_inactive") {
+		if slices.Contains(reasons, ReasonEscrowFrozen) || slices.Contains(reasons, ReasonEscrowTerminalOrInactive) {
 			return nil, "", ErrInactiveEscrow
 		}
 		return nil, "", ErrRevokedToken
@@ -368,9 +375,9 @@ func (s *Service) validateChain(ctx context.Context, leaf *storage.DCTToken) ([]
 		return nil, err
 	}
 	if escrow.Frozen {
-		reasons = append(reasons, "escrow_frozen")
+		reasons = append(reasons, ReasonEscrowFrozen)
 	} else if isEscrowInactive(escrow) {
-		reasons = append(reasons, "escrow_terminal_or_inactive")
+		reasons = append(reasons, ReasonEscrowTerminalOrInactive)
 	}
 
 	seen := map[string]struct{}{leaf.TokenID: {}}
@@ -397,7 +404,7 @@ func (s *Service) validateChain(ctx context.Context, leaf *storage.DCTToken) ([]
 			reasons = append(reasons, "ancestor_revoked")
 		}
 		if parent.ExpiresAt <= s.now().Unix() {
-			reasons = append(reasons, "ancestor_expired")
+			reasons = append(reasons, ReasonAncestorExpired)
 		}
 		if current.EscrowID != parent.EscrowID {
 			reasons = append(reasons, "lineage_escrow_mismatch")
@@ -449,7 +456,7 @@ func (s *Service) Introspect(ctx context.Context, presentedToken string) (*stora
 		reasons = append(reasons, "revoked")
 	}
 	if rec.ExpiresAt <= s.now().Unix() {
-		reasons = append(reasons, "expired")
+		reasons = append(reasons, ReasonExpired)
 	}
 	chainReasons, err := s.validateChain(ctx, rec)
 	if err != nil {

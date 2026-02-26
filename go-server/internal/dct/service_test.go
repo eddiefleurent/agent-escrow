@@ -115,7 +115,7 @@ func TestIntrospectInvalidatesWhenEscrowFrozen(t *testing.T) {
 	if active {
 		t.Fatalf("expected inactive token when escrow frozen")
 	}
-	if !strings.Contains(strings.Join(reasons, ","), "escrow_frozen") {
+	if !strings.Contains(strings.Join(reasons, ","), ReasonEscrowFrozen) {
 		t.Fatalf("expected escrow_frozen reason, got %v", reasons)
 	}
 }
