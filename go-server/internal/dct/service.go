@@ -90,6 +90,22 @@ func canonicalize(items []string) []string {
 	return out
 }
 
+// dedupSortReasons deduplicates and sorts reason strings without lowercasing,
+// preserving the original casing of each reason.
+func dedupSortReasons(reasons []string) []string {
+	seen := make(map[string]struct{}, len(reasons))
+	out := make([]string, 0, len(reasons))
+	for _, r := range reasons {
+		if _, ok := seen[r]; ok {
+			continue
+		}
+		seen[r] = struct{}{}
+		out = append(out, r)
+	}
+	slices.Sort(out)
+	return out
+}
+
 func toJSON(items []string) (string, error) {
 	b, err := json.Marshal(canonicalize(items))
 	if err != nil {
@@ -263,6 +279,11 @@ func (s *Service) Delegate(ctx context.Context, p DelegateParams) (*storage.DCTT
 		if slices.Contains(reasons, "expired") || slices.Contains(reasons, "ancestor_expired") {
 			return nil, "", ErrExpiredToken
 		}
+		// escrow_frozen and escrow_terminal_or_inactive indicate the escrow is no
+		// longer accepting operations, not that the token itself was revoked.
+		if slices.Contains(reasons, "escrow_frozen") || slices.Contains(reasons, "escrow_terminal_or_inactive") {
+			return nil, "", ErrInactiveEscrow
+		}
 		return nil, "", ErrRevokedToken
 	}
 	if strings.TrimSpace(p.Subject) == "" {
@@ -288,8 +309,14 @@ func (s *Service) Delegate(ctx context.Context, p DelegateParams) (*storage.DCTT
 		return nil, "", ErrInvalidAttenuation
 	}
 
-	opsJSON, _ := toJSON(ops)
-	resJSON, _ := toJSON(resources)
+	opsJSON, err := toJSON(ops)
+	if err != nil {
+		return nil, "", err
+	}
+	resJSON, err := toJSON(resources)
+	if err != nil {
+		return nil, "", err
+	}
 	caveatsJSON, err := canonicalCaveatsJSON(ops, resources, p.ExpiresAt)
 	if err != nil {
 		return nil, "", err
@@ -342,8 +369,7 @@ func (s *Service) validateChain(ctx context.Context, leaf *storage.DCTToken) ([]
 	}
 	if escrow.Frozen {
 		reasons = append(reasons, "escrow_frozen")
-	}
-	if isEscrowInactive(escrow) {
+	} else if isEscrowInactive(escrow) {
 		reasons = append(reasons, "escrow_terminal_or_inactive")
 	}
 
@@ -376,7 +402,7 @@ func (s *Service) validateChain(ctx context.Context, leaf *storage.DCTToken) ([]
 		if current.EscrowID != parent.EscrowID {
 			reasons = append(reasons, "lineage_escrow_mismatch")
 		}
-		if strings.ToLower(current.Issuer) != strings.ToLower(parent.Subject) {
+		if !strings.EqualFold(current.Issuer, parent.Subject) {
 			reasons = append(reasons, "lineage_issuer_subject_mismatch")
 		}
 		if current.ExpiresAt > parent.ExpiresAt {
@@ -403,7 +429,7 @@ func (s *Service) validateChain(ctx context.Context, leaf *storage.DCTToken) ([]
 		}
 		current = parent
 	}
-	return canonicalize(reasons), nil
+	return dedupSortReasons(reasons), nil
 }
 
 func (s *Service) Introspect(ctx context.Context, presentedToken string) (*storage.DCTToken, bool, []string, error) {
