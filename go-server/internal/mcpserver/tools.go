@@ -306,10 +306,6 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Description: "Revoke a DCT by token_id.",
 	}, s.handleRevokeDCT)
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "emergency_override_dct",
-		Description: "Emergency override for DCT operations (factory owner only). Bypasses normal authorization.",
-	}, s.handleEmergencyOverrideDCT)
-	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_dct_audit",
 		Description: "List DCT authorization audit log entries.",
 	}, s.handleListDCTAudit)
@@ -345,6 +341,11 @@ func (s *Server) registerTools(srv *mcp.Server) {
 	}, s.handleFundViaMandate)
 
 	if s.cfg.EmergencyEnabled {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name:        "emergency_override_dct",
+			Description: "Emergency override for DCT operations (factory owner only). Bypasses normal authorization.",
+		}, s.handleEmergencyOverrideDCT)
+
 		mcp.AddTool(srv, &mcp.Tool{
 			Name:        "freeze_address",
 			Description: "Freeze an address so it cannot participate in new escrows. Paper §4.9: credential revocation propagation. Owner-only.",
@@ -1036,8 +1037,9 @@ func (s *Server) handleActivateBackup(ctx context.Context, req *mcp.CallToolRequ
 
 func (s *Server) dctService() *dct.Service {
 	return &dct.Service{
-		DB:    s.db,
-		Audit: &authz.SQLiteAuditStore{DB: s.db.SQLDB()},
+		DB:           s.db,
+		Audit:        &authz.SQLiteAuditStore{DB: s.db.SQLDB()},
+		FactoryOwner: s.cfg.OwnerAddress,
 	}
 }
 

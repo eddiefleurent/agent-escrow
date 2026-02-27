@@ -41,7 +41,7 @@ func testService(t *testing.T) (*Service, int64) {
 		t.Fatalf("create escrow: %v", err)
 	}
 	audit := &authz.SQLiteAuditStore{DB: db.SQLDB()}
-	return &Service{DB: db, Audit: audit, Now: func() time.Time { return time.Unix(1000, 0).UTC() }}, escrow.ID
+	return &Service{DB: db, Audit: audit, Now: func() time.Time { return time.Unix(1000, 0).UTC() }, FactoryOwner: "0xowner"}, escrow.ID
 }
 
 func TestDelegateStrictAttenuation(t *testing.T) {

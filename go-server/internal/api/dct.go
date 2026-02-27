@@ -53,8 +53,9 @@ type emergencyOverrideDCTRequest struct {
 
 func (h *Handlers) dctService() *dct.Service {
 	return &dct.Service{
-		DB:    h.db,
-		Audit: &authz.SQLiteAuditStore{DB: h.db.SQLDB()},
+		DB:           h.db,
+		Audit:        &authz.SQLiteAuditStore{DB: h.db.SQLDB()},
+		FactoryOwner: h.cfg.OwnerAddress,
 	}
 }
 

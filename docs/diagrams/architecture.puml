@@ -165,6 +165,13 @@ package "Base (Ethereum L2)" as chain_pkg #E8F5E9 {
   [TaskEscrow\ninstances] as escrow #A5D6A7
   factory -right-> escrow : deploys
   escrow -left-> factory : recordOutcome()
+
+  note right of escrow
+    Each TaskEscrow calls recordOutcome()
+    on the factory at settlement to report
+    task results for on-chain reputation
+    tracking and scoring.
+  end note
 }
 
 ap2 -down-> x402 : verify + settle

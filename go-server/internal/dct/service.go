@@ -41,9 +41,10 @@ var (
 )
 
 type Service struct {
-	DB    *storage.DB
-	Audit authz.AuditStore
-	Now   func() time.Time
+	DB           *storage.DB
+	Audit        authz.AuditStore
+	Now          func() time.Time
+	FactoryOwner string // canonical owner address for emergency override authorization
 }
 
 type MintParams struct {
@@ -312,9 +313,10 @@ func (s *Service) Delegate(ctx context.Context, p DelegateParams) (*storage.DCTT
 	var escrowCtx *authz.EscrowContext
 	if parent != nil {
 		escrow, escErr := s.DB.GetEscrow(ctx, parent.EscrowID)
-		if escErr == nil {
-			escrowCtx = escrowContext(escrow)
+		if escErr != nil {
+			return nil, "", wrapInternal("get escrow for delegate authorization", escErr)
 		}
+		escrowCtx = escrowContext(escrow)
 	}
 	tokenCtx := tokenContext(parent)
 	result := authz.Authorize(authz.OpDelegate, caller, escrowCtx, tokenCtx)
@@ -591,9 +593,6 @@ type EmergencyOverrideParams struct {
 // EmergencyOverride allows the factory owner to bypass normal authorization
 // for a specific operation. The override is fully audit-logged.
 func (s *Service) EmergencyOverride(ctx context.Context, p EmergencyOverrideParams) error {
-	if strings.TrimSpace(p.OwnerAddress) == "" {
-		return errors.New("owner address is required")
-	}
 	if strings.TrimSpace(p.Reason) == "" {
 		return errors.New("override reason is required")
 	}
@@ -603,11 +602,11 @@ func (s *Service) EmergencyOverride(ctx context.Context, p EmergencyOverridePara
 	}
 
 	caller := authz.CallerFrom(ctx)
-	if !caller.Authenticated || !strings.EqualFold(caller.Address, p.OwnerAddress) {
+	if !caller.Authenticated || !strings.EqualFold(caller.Address, s.FactoryOwner) {
 		if err := s.logAudit(ctx, authz.AuditEntry{
 			Operation:     authz.Operation("emergency_override"),
 			Allowed:       false,
-			CallerAddress: firstNonEmpty(caller.Address, p.OwnerAddress),
+			CallerAddress: caller.Address,
 			EscrowID:      p.EscrowID,
 			Reason:        authz.ReasonNotAuthorizedToRevoke,
 			RequestID:     authz.RequestIDFrom(ctx),
@@ -619,28 +618,27 @@ func (s *Service) EmergencyOverride(ctx context.Context, p EmergencyOverridePara
 		}); err != nil {
 			return wrapInternal("audit emergency override denial", err)
 		}
-		return fmt.Errorf("%w: caller is not the declared owner", ErrUnauthorized)
-	}
-
-	if err := s.logAudit(ctx, authz.AuditEntry{
-		Operation:     authz.Operation("emergency_override"),
-		Allowed:       true,
-		CallerAddress: p.OwnerAddress,
-		EscrowID:      p.EscrowID,
-		Reason:        authz.ReasonEmergencyOverride,
-		RequestID:     authz.RequestIDFrom(ctx),
-		Metadata: map[string]any{
-			"target_operation": p.Operation,
-			"target_caller":    p.CallerAddress,
-			"override_reason":  p.Reason,
-		},
-	}); err != nil {
-		return wrapInternal("audit emergency override allowance", err)
+		return fmt.Errorf("%w: caller is not the factory owner", ErrUnauthorized)
 	}
 
 	switch strings.ToLower(p.Operation) {
 	case "revoke_all":
-		_, err := s.RevokeByEscrow(ctx, p.EscrowID, "emergency_override: "+p.Reason, p.OwnerAddress)
+		if err := s.logAudit(ctx, authz.AuditEntry{
+			Operation:     authz.Operation("emergency_override"),
+			Allowed:       true,
+			CallerAddress: caller.Address,
+			EscrowID:      p.EscrowID,
+			Reason:        authz.ReasonEmergencyOverride,
+			RequestID:     authz.RequestIDFrom(ctx),
+			Metadata: map[string]any{
+				"target_operation": p.Operation,
+				"target_caller":    p.CallerAddress,
+				"override_reason":  p.Reason,
+			},
+		}); err != nil {
+			return wrapInternal("audit emergency override allowance", err)
+		}
+		_, err := s.RevokeByEscrow(ctx, p.EscrowID, "emergency_override: "+p.Reason, caller.Address)
 		if err != nil {
 			return wrapInternal("revoke by escrow in emergency override", err)
 		}
