@@ -24,6 +24,8 @@ func newEscrowCmd(opts *Options) *cobra.Command {
 	escrowCmd.AddCommand(newEscrowResolveCmd(opts))
 	escrowCmd.AddCommand(newEscrowAbortCmd(opts))
 	escrowCmd.AddCommand(newEscrowBackupCmd(opts))
+	escrowCmd.AddCommand(newEscrowAttestationChainCmd(opts))
+	escrowCmd.AddCommand(newEscrowChildrenCmd(opts))
 
 	return escrowCmd
 }
@@ -107,6 +109,28 @@ func newEscrowAbortCmd(opts *Options) *cobra.Command {
 
 func newEscrowBackupCmd(opts *Options) *cobra.Command {
 	return postByEscrowIDCmd(opts, "backup", "Activate backup worker", "/activate-backup", false)
+}
+
+func newEscrowAttestationChainCmd(opts *Options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "attestation-chain <id>",
+		Short: "Get attestation chain(s) for an escrow (paper §4.8)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runGet(cmd, opts, "/api/v1/escrows/"+url.PathEscape(args[0])+"/attestation-chain", nil)
+		},
+	}
+}
+
+func newEscrowChildrenCmd(opts *Options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "children <id>",
+		Short: "List child escrows for a parent escrow",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runGet(cmd, opts, "/api/v1/escrows/"+url.PathEscape(args[0])+"/children", nil)
+		},
+	}
 }
 
 func postByEscrowIDCmd(opts *Options, use, short, actionPath string, requiresPayload bool) *cobra.Command {
