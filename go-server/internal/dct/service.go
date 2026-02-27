@@ -11,11 +11,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/authz"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 )
 
@@ -35,11 +37,13 @@ var (
 	ErrInvalidProfile     = errors.New("token profile is not canonical dct-profile-v1")
 	ErrInvalidChain       = errors.New("invalid delegation chain")
 	ErrInactiveEscrow     = errors.New("escrow is inactive for dct operations")
+	ErrUnauthorized       = errors.New("authorization denied")
 )
 
 type Service struct {
-	DB  *storage.DB
-	Now func() time.Time
+	DB    *storage.DB
+	Audit authz.AuditStore
+	Now   func() time.Time
 }
 
 type MintParams struct {
@@ -221,6 +225,24 @@ func (s *Service) Mint(ctx context.Context, p MintParams) (*storage.DCTToken, st
 	if err != nil {
 		return nil, "", fmt.Errorf("escrow lookup: %w", err)
 	}
+
+	// Authorization check: only the escrow buyer may mint root tokens.
+	caller := authz.CallerFrom(ctx)
+	escrowCtx := escrowContext(escrow)
+	result := authz.Authorize(authz.OpMint, caller, escrowCtx, nil)
+	s.logAudit(ctx, authz.AuditEntry{
+		Operation:     authz.OpMint,
+		Allowed:       result.Allowed,
+		CallerAddress: caller.Address,
+		EscrowID:      p.EscrowID,
+		Reason:        result.Reason,
+		RequestID:     authz.RequestIDFrom(ctx),
+		Metadata:      map[string]any{"subject": p.Subject, "caller_role": string(authz.ResolveRole(caller.Address, escrowCtx))},
+	})
+	if !result.Allowed {
+		return nil, "", fmt.Errorf("%w: %s", ErrUnauthorized, result.Reason)
+	}
+
 	if isEscrowInactive(escrow) {
 		return nil, "", ErrInactiveEscrow
 	}
@@ -282,12 +304,36 @@ func (s *Service) Delegate(ctx context.Context, p DelegateParams) (*storage.DCTT
 	if err != nil {
 		return nil, "", err
 	}
+
+	// Authorization check: only the parent token's subject may delegate.
+	caller := authz.CallerFrom(ctx)
+	var escrowCtx *authz.EscrowContext
+	if parent != nil {
+		escrow, escErr := s.DB.GetEscrow(ctx, parent.EscrowID)
+		if escErr == nil {
+			escrowCtx = escrowContext(escrow)
+		}
+	}
+	tokenCtx := tokenContext(parent)
+	result := authz.Authorize(authz.OpDelegate, caller, escrowCtx, tokenCtx)
+	s.logAudit(ctx, authz.AuditEntry{
+		Operation:     authz.OpDelegate,
+		Allowed:       result.Allowed,
+		CallerAddress: caller.Address,
+		EscrowID:      safeEscrowID(parent),
+		ParentTokenID: safeTokenID(parent),
+		Reason:        result.Reason,
+		RequestID:     authz.RequestIDFrom(ctx),
+		Metadata:      map[string]any{"subject": p.Subject},
+	})
+	if !result.Allowed {
+		return nil, "", fmt.Errorf("%w: %s", ErrUnauthorized, result.Reason)
+	}
+
 	if !parentActive {
 		if slices.Contains(reasons, ReasonExpired) || slices.Contains(reasons, ReasonAncestorExpired) {
 			return nil, "", ErrExpiredToken
 		}
-		// ReasonEscrowFrozen and ReasonEscrowTerminalOrInactive indicate the escrow is no
-		// longer accepting operations, not that the token itself was revoked.
 		if slices.Contains(reasons, ReasonEscrowFrozen) || slices.Contains(reasons, ReasonEscrowTerminalOrInactive) {
 			return nil, "", ErrInactiveEscrow
 		}
@@ -471,6 +517,33 @@ func (s *Service) Revoke(ctx context.Context, p RevokeParams) error {
 	if strings.TrimSpace(p.TokenID) == "" {
 		return errors.New("token_id is required")
 	}
+
+	// Authorization check: issuer can revoke own tokens; buyer can revoke any token in their escrow.
+	caller := authz.CallerFrom(ctx)
+	token, err := s.DB.GetDCTTokenByTokenID(ctx, p.TokenID)
+	if err != nil {
+		return err
+	}
+	var escrowCtx *authz.EscrowContext
+	escrow, escErr := s.DB.GetEscrow(ctx, token.EscrowID)
+	if escErr == nil {
+		escrowCtx = escrowContext(escrow)
+	}
+	tokenCtx := tokenContext(token)
+	result := authz.Authorize(authz.OpRevoke, caller, escrowCtx, tokenCtx)
+	s.logAudit(ctx, authz.AuditEntry{
+		Operation:     authz.OpRevoke,
+		Allowed:       result.Allowed,
+		CallerAddress: caller.Address,
+		EscrowID:      token.EscrowID,
+		TokenID:       p.TokenID,
+		Reason:        result.Reason,
+		RequestID:     authz.RequestIDFrom(ctx),
+	})
+	if !result.Allowed {
+		return fmt.Errorf("%w: %s", ErrUnauthorized, result.Reason)
+	}
+
 	if err := s.DB.RevokeDCTToken(ctx, p.TokenID, firstNonEmpty(p.Reason, "revoked"), firstNonEmpty(p.By, "manual")); err != nil {
 		return err
 	}
@@ -495,3 +568,97 @@ func firstNonEmpty(values ...string) string {
 }
 
 func IsNotFound(err error) bool { return errors.Is(err, sql.ErrNoRows) }
+
+// IsUnauthorized reports whether err is an authorization denial.
+func IsUnauthorized(err error) bool { return errors.Is(err, ErrUnauthorized) }
+
+// EmergencyOverrideParams describes an owner-initiated authorization bypass.
+type EmergencyOverrideParams struct {
+	EscrowID      int64
+	Operation     string
+	CallerAddress string
+	Reason        string
+	OwnerAddress  string
+}
+
+// EmergencyOverride allows the factory owner to bypass normal authorization
+// for a specific operation. The override is fully audit-logged.
+func (s *Service) EmergencyOverride(ctx context.Context, p EmergencyOverrideParams) error {
+	if strings.TrimSpace(p.OwnerAddress) == "" {
+		return errors.New("owner address is required")
+	}
+	if strings.TrimSpace(p.Reason) == "" {
+		return errors.New("override reason is required")
+	}
+
+	s.logAudit(ctx, authz.AuditEntry{
+		Operation:     authz.Operation("emergency_override"),
+		Allowed:       true,
+		CallerAddress: p.OwnerAddress,
+		EscrowID:      p.EscrowID,
+		Reason:        authz.ReasonEmergencyOverride,
+		RequestID:     authz.RequestIDFrom(ctx),
+		Metadata: map[string]any{
+			"target_operation": p.Operation,
+			"target_caller":    p.CallerAddress,
+			"override_reason":  p.Reason,
+		},
+	})
+
+	switch strings.ToLower(p.Operation) {
+	case "revoke_all":
+		_, err := s.RevokeByEscrow(ctx, p.EscrowID, "emergency_override: "+p.Reason, p.OwnerAddress)
+		return err
+	default:
+		return fmt.Errorf("unsupported override operation: %s", p.Operation)
+	}
+}
+
+func escrowContext(e *storage.Escrow) *authz.EscrowContext {
+	if e == nil {
+		return nil
+	}
+	return &authz.EscrowContext{
+		EscrowID: e.ID,
+		Buyer:    e.Buyer,
+		Worker:   e.Worker,
+		Verifier: e.Verifier,
+		Status:   e.Status,
+		Frozen:   e.Frozen,
+	}
+}
+
+func tokenContext(t *storage.DCTToken) *authz.TokenContext {
+	if t == nil {
+		return nil
+	}
+	return &authz.TokenContext{
+		TokenID:  t.TokenID,
+		Issuer:   t.Issuer,
+		Subject:  t.Subject,
+		EscrowID: t.EscrowID,
+	}
+}
+
+func safeEscrowID(t *storage.DCTToken) int64 {
+	if t == nil {
+		return 0
+	}
+	return t.EscrowID
+}
+
+func safeTokenID(t *storage.DCTToken) string {
+	if t == nil {
+		return ""
+	}
+	return t.TokenID
+}
+
+func (s *Service) logAudit(ctx context.Context, e authz.AuditEntry) {
+	if s.Audit == nil {
+		return
+	}
+	if err := s.Audit.LogAuthzDecision(ctx, e); err != nil {
+		slog.Warn("failed to write authz audit log", "error", err, "operation", e.Operation, "allowed", e.Allowed)
+	}
+}
