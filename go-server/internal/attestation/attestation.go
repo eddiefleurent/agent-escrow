@@ -175,8 +175,16 @@ func ValidateChain(attestations []CompletionAttestation, childEscrowIDs []int64,
 		if a.ParentLinkID == "" {
 			continue
 		}
-		if _, ok := linkByID[a.ParentLinkID]; !ok {
+		parent, ok := linkByID[a.ParentLinkID]
+		if !ok {
 			result.Reasons = append(result.Reasons, fmt.Sprintf("link %s references missing parent_link_id %s", a.LinkID, a.ParentLinkID))
+			return result
+		}
+		if !strings.EqualFold(a.FromAddress, parent.ToAddress) {
+			result.Reasons = append(result.Reasons, fmt.Sprintf(
+				"link %s has from_address %s which does not match parent %s to_address %s",
+				a.LinkID, a.FromAddress, a.ParentLinkID, parent.ToAddress,
+			))
 			return result
 		}
 	}

@@ -755,6 +755,9 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 	}
 
 	var milestoneIdxPtr *int
+	if escrow.MilestoneCount > 1 && args.MilestoneIndex.String() == "" {
+		return textResult("milestone_index required for multi-milestone escrow"), nil, nil
+	}
 	if args.MilestoneIndex.String() != "" {
 		msVal, msErr := strconv.Atoi(args.MilestoneIndex.String())
 		if msErr != nil {
@@ -782,7 +785,13 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 		if !chainResult.Valid {
 			return textResult("attestation chain validation failed: " + strings.Join(chainResult.Reasons, "; ")), nil, nil
 		}
-		acRecord, acErr := s.db.CreateAttestationChain(ctx, &storage.AttestationChain{
+		tx, txErr := s.db.BeginTx(ctx)
+		if txErr != nil {
+			return textResult(fmt.Sprintf("failed to begin attestation persistence transaction: %v", txErr)), nil, nil
+		}
+		defer tx.Rollback()
+
+		acRecord, acErr := s.db.CreateAttestationChainTx(ctx, tx, &storage.AttestationChain{
 			EscrowID:                escrow.ID,
 			MilestoneIndex:          milestoneIdxPtr,
 			RootHash:                chainResult.RootHash,
@@ -793,7 +802,7 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 			return textResult(fmt.Sprintf("failed to persist attestation chain: %v", acErr)), nil, nil
 		}
 		for _, att := range atts {
-			if _, linkErr := s.db.CreateAttestationLink(ctx, &storage.AttestationLink{
+			if _, linkErr := s.db.CreateAttestationLinkTx(ctx, tx, &storage.AttestationLink{
 				ChainID:       acRecord.ID,
 				LinkID:        att.LinkID,
 				ParentLinkID:  att.ParentLinkID,
@@ -810,6 +819,9 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 				return textResult(fmt.Sprintf("failed to persist attestation link %s: %v", att.LinkID, linkErr)), nil, nil
 			}
 		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			return textResult(fmt.Sprintf("failed to persist attestation chain: %v", commitErr)), nil, nil
+		}
 	} else if args.AttestationChainJSON != "" && args.AttestationChainJSON != "[]" {
 		atts, parseErr := attestation.ParseCompletionAttestations(args.AttestationChainJSON)
 		if parseErr != nil {
@@ -820,7 +832,13 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 			if !chainResult.Valid {
 				return textResult("attestation chain validation failed: " + strings.Join(chainResult.Reasons, "; ")), nil, nil
 			}
-			acRecord, acErr := s.db.CreateAttestationChain(ctx, &storage.AttestationChain{
+			tx, txErr := s.db.BeginTx(ctx)
+			if txErr != nil {
+				return textResult(fmt.Sprintf("failed to begin attestation persistence transaction: %v", txErr)), nil, nil
+			}
+			defer tx.Rollback()
+
+			acRecord, acErr := s.db.CreateAttestationChainTx(ctx, tx, &storage.AttestationChain{
 				EscrowID:                escrow.ID,
 				MilestoneIndex:          milestoneIdxPtr,
 				RootHash:                chainResult.RootHash,
@@ -831,7 +849,7 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 				return textResult(fmt.Sprintf("failed to persist attestation chain: %v", acErr)), nil, nil
 			}
 			for _, att := range atts {
-				if _, linkErr := s.db.CreateAttestationLink(ctx, &storage.AttestationLink{
+				if _, linkErr := s.db.CreateAttestationLinkTx(ctx, tx, &storage.AttestationLink{
 					ChainID:       acRecord.ID,
 					LinkID:        att.LinkID,
 					ParentLinkID:  att.ParentLinkID,
@@ -847,6 +865,9 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 				}); linkErr != nil {
 					return textResult(fmt.Sprintf("failed to persist attestation link %s: %v", att.LinkID, linkErr)), nil, nil
 				}
+			}
+			if commitErr := tx.Commit(); commitErr != nil {
+				return textResult(fmt.Sprintf("failed to persist attestation chain: %v", commitErr)), nil, nil
 			}
 		}
 	}

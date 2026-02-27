@@ -1698,6 +1698,9 @@ func createAttestationChainOn(ctx context.Context, q dbExecer, ac *AttestationCh
 	if summaryJSON == "" {
 		summaryJSON = "{}"
 	}
+	if !json.Valid([]byte(summaryJSON)) {
+		return nil, errors.New("invalid verification_summary_json")
+	}
 	res, err := q.ExecContext(ctx,
 		`INSERT INTO attestation_chains (escrow_id, milestone_index, root_hash, verified, verification_summary_json)
 		 VALUES (?, ?, ?, ?, ?)`,
@@ -1815,11 +1818,24 @@ func (d *DB) UpdateAttestationChainVerification(ctx context.Context, id int64, v
 	if summaryJSON == "" {
 		summaryJSON = "{}"
 	}
-	_, err := d.db.ExecContext(ctx,
+	if !json.Valid([]byte(summaryJSON)) {
+		return errors.New("invalid verification_summary_json")
+	}
+	res, err := d.db.ExecContext(ctx,
 		`UPDATE attestation_chains SET verified = ?, root_hash = ?, verification_summary_json = ?, updated_at = datetime('now') WHERE id = ?`,
 		boolToInt(verified), rootHash, summaryJSON, id,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected update attestation_chain: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("update attestation_chain id=%d: %w", id, sql.ErrNoRows)
+	}
+	return nil
 }
 
 func createAttestationLinkOn(ctx context.Context, q dbExecer, link *AttestationLink) (*AttestationLink, error) {
@@ -1827,10 +1843,21 @@ func createAttestationLinkOn(ctx context.Context, q dbExecer, link *AttestationL
 	if payloadJSON == "" {
 		payloadJSON = "{}"
 	}
+	if !json.Valid([]byte(payloadJSON)) {
+		return nil, errors.New("invalid payload_json")
+	}
+	parentLinkID := sql.NullString{
+		String: link.ParentLinkID,
+		Valid:  link.ParentLinkID != "",
+	}
+	if !parentLinkID.Valid {
+		// attestation_links.parent_link_id is currently NOT NULL in schema.
+		parentLinkID = sql.NullString{String: "", Valid: true}
+	}
 	res, err := q.ExecContext(ctx,
 		`INSERT INTO attestation_links (chain_id, link_id, parent_link_id, from_address, to_address, child_escrow_id, task_spec_hash, outcome_hash, issued_at, expires_at, nonce, signature, payload_json)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		link.ChainID, link.LinkID, link.ParentLinkID, link.FromAddress, link.ToAddress,
+		link.ChainID, link.LinkID, parentLinkID, link.FromAddress, link.ToAddress,
 		link.ChildEscrowID, link.TaskSpecHash, link.OutcomeHash,
 		link.IssuedAt, link.ExpiresAt, link.Nonce, link.Signature, payloadJSON,
 	)
@@ -1845,15 +1872,19 @@ func createAttestationLinkOn(ctx context.Context, q dbExecer, link *AttestationL
 	out := &AttestationLink{}
 	var createdAt string
 	var childEscrowID sql.NullInt64
+	var storedParentLinkID sql.NullString
 	err = q.QueryRowContext(ctx,
 		`SELECT id, chain_id, link_id, parent_link_id, from_address, to_address, child_escrow_id,
 		        task_spec_hash, outcome_hash, issued_at, expires_at, nonce, signature, payload_json, created_at
 		 FROM attestation_links WHERE id = ?`, id,
-	).Scan(&out.ID, &out.ChainID, &out.LinkID, &out.ParentLinkID, &out.FromAddress, &out.ToAddress,
+	).Scan(&out.ID, &out.ChainID, &out.LinkID, &storedParentLinkID, &out.FromAddress, &out.ToAddress,
 		&childEscrowID, &out.TaskSpecHash, &out.OutcomeHash,
 		&out.IssuedAt, &out.ExpiresAt, &out.Nonce, &out.Signature, &out.PayloadJSON, &createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("get attestation_link: %w", err)
+	}
+	if storedParentLinkID.Valid {
+		out.ParentLinkID = storedParentLinkID.String
 	}
 	if childEscrowID.Valid {
 		v := childEscrowID.Int64
@@ -1878,15 +1909,19 @@ func (d *DB) GetAttestationLink(ctx context.Context, id int64) (*AttestationLink
 	link := &AttestationLink{}
 	var createdAt string
 	var childEscrowID sql.NullInt64
+	var parentLinkID sql.NullString
 	err := d.db.QueryRowContext(ctx,
 		`SELECT id, chain_id, link_id, parent_link_id, from_address, to_address, child_escrow_id,
 		        task_spec_hash, outcome_hash, issued_at, expires_at, nonce, signature, payload_json, created_at
 		 FROM attestation_links WHERE id = ?`, id,
-	).Scan(&link.ID, &link.ChainID, &link.LinkID, &link.ParentLinkID, &link.FromAddress, &link.ToAddress,
+	).Scan(&link.ID, &link.ChainID, &link.LinkID, &parentLinkID, &link.FromAddress, &link.ToAddress,
 		&childEscrowID, &link.TaskSpecHash, &link.OutcomeHash,
 		&link.IssuedAt, &link.ExpiresAt, &link.Nonce, &link.Signature, &link.PayloadJSON, &createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("get attestation_link: %w", err)
+	}
+	if parentLinkID.Valid {
+		link.ParentLinkID = parentLinkID.String
 	}
 	if childEscrowID.Valid {
 		v := childEscrowID.Int64
@@ -1915,10 +1950,14 @@ func (d *DB) GetAttestationLinksByChain(ctx context.Context, chainID int64) ([]*
 		link := &AttestationLink{}
 		var createdAt string
 		var childEscrowID sql.NullInt64
-		if err := rows.Scan(&link.ID, &link.ChainID, &link.LinkID, &link.ParentLinkID, &link.FromAddress, &link.ToAddress,
+		var parentLinkID sql.NullString
+		if err := rows.Scan(&link.ID, &link.ChainID, &link.LinkID, &parentLinkID, &link.FromAddress, &link.ToAddress,
 			&childEscrowID, &link.TaskSpecHash, &link.OutcomeHash,
 			&link.IssuedAt, &link.ExpiresAt, &link.Nonce, &link.Signature, &link.PayloadJSON, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan attestation_link: %w", err)
+		}
+		if parentLinkID.Valid {
+			link.ParentLinkID = parentLinkID.String
 		}
 		if childEscrowID.Valid {
 			v := childEscrowID.Int64

@@ -394,7 +394,8 @@ func (h *Handlers) GetAttestationChain(w http.ResponseWriter, r *http.Request) {
 		links, linkErr := h.db.GetAttestationLinksByChain(r.Context(), ac.ID)
 		if linkErr != nil {
 			slog.Error("failed to fetch attestation links", "chain_id", ac.ID, "error", linkErr)
-			links = nil
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch attestation links"})
+			return
 		}
 		out = append(out, chainWithLinks{Chain: ac, Links: links})
 	}
@@ -573,6 +574,18 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if escrow.MilestoneCount > 1 {
+		if req.MilestoneIndex == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "milestone_index required for multi-milestone escrow"})
+			return
+		}
+		msIdx := *req.MilestoneIndex
+		if msIdx < 0 || msIdx >= escrow.MilestoneCount {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdx, escrow.MilestoneCount)})
+			return
+		}
+	}
+
 	// Attestation chain validation for sub-delegation (paper §4.8).
 	childEscrows, childErr := h.db.ListChildEscrows(r.Context(), id)
 	if childErr != nil {
@@ -702,15 +715,7 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 	addr := common.HexToAddress(escrow.EscrowAddress)
 
 	if escrow.MilestoneCount > 1 {
-		if req.MilestoneIndex == nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "milestone_index required for multi-milestone escrow"})
-			return
-		}
 		msIdx := *req.MilestoneIndex
-		if msIdx < 0 || msIdx >= escrow.MilestoneCount {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdx, escrow.MilestoneCount)})
-			return
-		}
 		msIdxU8, convErr := numconv.IntToUint8(msIdx, "milestone_index")
 		if convErr != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": convErr.Error()})

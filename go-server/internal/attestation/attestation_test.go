@@ -319,6 +319,82 @@ func TestValidateChain_BranchingTree(t *testing.T) {
 	}
 }
 
+func TestValidateChain_ParentChildActorMismatch(t *testing.T) {
+	key1, _ := crypto.GenerateKey()
+	key2, _ := crypto.GenerateKey()
+	key3, _ := crypto.GenerateKey()
+	addr1 := crypto.PubkeyToAddress(key1.PublicKey).Hex()
+	addr2 := crypto.PubkeyToAddress(key2.PublicKey).Hex()
+	addr3 := crypto.PubkeyToAddress(key3.PublicKey).Hex()
+	now := time.Now()
+
+	parent := CompletionAttestation{
+		Profile:     CompletionAttestationV1,
+		LinkID:      "parent",
+		FromAddress: addr1,
+		ToAddress:   addr2,
+		IssuedAt:    now.Unix() - 60,
+		ExpiresAt:   now.Unix() + 3600,
+		Nonce:       "n-parent",
+	}
+	signAttestation(t, key1, &parent)
+
+	child := CompletionAttestation{
+		Profile:      CompletionAttestationV1,
+		LinkID:       "child",
+		ParentLinkID: "parent",
+		FromAddress:  addr3, // mismatch: expected parent.ToAddress (addr2)
+		ToAddress:    addr1,
+		IssuedAt:     now.Unix() - 30,
+		ExpiresAt:    now.Unix() + 3600,
+		Nonce:        "n-child",
+	}
+	signAttestation(t, key3, &child)
+
+	result := ValidateChain([]CompletionAttestation{parent, child}, nil, now)
+	if result.Valid {
+		t.Fatal("expected actor continuity mismatch to fail")
+	}
+}
+
+func TestValidateChain_ParentChildActorContinuity(t *testing.T) {
+	key1, _ := crypto.GenerateKey()
+	key2, _ := crypto.GenerateKey()
+	key3, _ := crypto.GenerateKey()
+	addr1 := crypto.PubkeyToAddress(key1.PublicKey).Hex()
+	addr2 := crypto.PubkeyToAddress(key2.PublicKey).Hex()
+	addr3 := crypto.PubkeyToAddress(key3.PublicKey).Hex()
+	now := time.Now()
+
+	parent := CompletionAttestation{
+		Profile:     CompletionAttestationV1,
+		LinkID:      "parent",
+		FromAddress: addr1,
+		ToAddress:   addr2,
+		IssuedAt:    now.Unix() - 60,
+		ExpiresAt:   now.Unix() + 3600,
+		Nonce:       "n-parent",
+	}
+	signAttestation(t, key1, &parent)
+
+	child := CompletionAttestation{
+		Profile:      CompletionAttestationV1,
+		LinkID:       "child",
+		ParentLinkID: "parent",
+		FromAddress:  addr2, // matches parent.ToAddress
+		ToAddress:    addr3,
+		IssuedAt:     now.Unix() - 30,
+		ExpiresAt:    now.Unix() + 3600,
+		Nonce:        "n-child",
+	}
+	signAttestation(t, key2, &child)
+
+	result := ValidateChain([]CompletionAttestation{parent, child}, nil, now)
+	if !result.Valid {
+		t.Fatalf("expected valid actor continuity chain, got reasons: %v", result.Reasons)
+	}
+}
+
 func TestParseCompletionAttestations(t *testing.T) {
 	tests := []struct {
 		raw     string

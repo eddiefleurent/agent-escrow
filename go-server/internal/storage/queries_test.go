@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"testing"
@@ -1191,6 +1192,9 @@ func TestAttestationChainCRUD(t *testing.T) {
 	if links[0].ChildEscrowID == nil || *links[0].ChildEscrowID != childEscrow.ID {
 		t.Fatalf("expected child_escrow_id=%d, got %v", childEscrow.ID, links[0].ChildEscrowID)
 	}
+	if links[0].ParentLinkID != "" {
+		t.Fatalf("expected empty parent_link_id, got %q", links[0].ParentLinkID)
+	}
 
 	err = db.UpdateAttestationChainVerification(ctx, ac.ID, false, "0xupdatedhash", `{"valid":false}`)
 	if err != nil {
@@ -1202,6 +1206,73 @@ func TestAttestationChainCRUD(t *testing.T) {
 	}
 	if updated.Verified {
 		t.Fatal("expected verified=false after update")
+	}
+
+	err = db.UpdateAttestationChainVerification(ctx, ac.ID+999, false, "0xupdatedhash", `{"valid":false}`)
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected sql.ErrNoRows for missing chain update, got %v", err)
+	}
+}
+
+func TestAttestationJSONValidation(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	task, err := db.CreateTask(ctx, "Task", "", "0x123")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	escrow, err := db.CreateEscrow(ctx, &Escrow{
+		TaskID:                   task.ID,
+		ChainID:                  84532,
+		FactoryAddress:           "0xFactory",
+		EscrowAddress:            "0xEscrowJSON",
+		Buyer:                    "0xBuyer",
+		Worker:                   "0xWorker",
+		Verifier:                 "0xVerifier",
+		Arbitrator:               "0xArbitrator",
+		Amount:                   "1000000000000000000",
+		Status:                   "created",
+		SubmissionDeadline:       1700000000,
+		ReviewPeriodSeconds:      86400,
+		DisputePeriodSeconds:     172800,
+		ArbitratorTimeoutSeconds: 604800,
+	})
+	if err != nil {
+		t.Fatalf("create escrow: %v", err)
+	}
+
+	if _, err := db.CreateAttestationChain(ctx, &AttestationChain{
+		EscrowID:                escrow.ID,
+		RootHash:                "0xroothash",
+		Verified:                true,
+		VerificationSummaryJSON: "{invalid",
+	}); err == nil {
+		t.Fatal("expected invalid verification_summary_json error")
+	}
+
+	ac, err := db.CreateAttestationChain(ctx, &AttestationChain{
+		EscrowID:                escrow.ID,
+		RootHash:                "0xroothash",
+		Verified:                true,
+		VerificationSummaryJSON: `{"valid":true}`,
+	})
+	if err != nil {
+		t.Fatalf("create attestation chain: %v", err)
+	}
+
+	if _, err := db.CreateAttestationLink(ctx, &AttestationLink{
+		ChainID:     ac.ID,
+		LinkID:      "link-json",
+		FromAddress: "0xBuyer",
+		ToAddress:   "0xWorker",
+		IssuedAt:    1700000000,
+		ExpiresAt:   1800000000,
+		Nonce:       "nonce-1",
+		Signature:   "0xsig",
+		PayloadJSON: "{invalid",
+	}); err == nil {
+		t.Fatal("expected invalid payload_json error")
 	}
 }
 
