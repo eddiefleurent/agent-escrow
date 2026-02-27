@@ -89,6 +89,7 @@ type CreateRFQParams struct {
 	CommitDeadline           int64
 	RevealDeadline           int64
 	ExpiresAt                int64
+	ParentEscrowID           *int64 // Optional: links RFQ to a parent escrow for sub-delegation (paper §4.8)
 }
 
 type CommitBidParams struct {
@@ -203,6 +204,23 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 		return nil, fmt.Errorf("invalid required_credentials_json: %w", err)
 	}
 
+	// Validate parent_escrow_id when sub-delegating: the buyer of the child RFQ
+	// must be the active worker of the parent escrow (paper §4.8).
+	if p.ParentEscrowID != nil {
+		parentEscrow, err := s.DB.GetEscrow(ctx, *p.ParentEscrowID)
+		if err != nil {
+			return nil, fmt.Errorf("parent_escrow_id %d not found: %w", *p.ParentEscrowID, err)
+		}
+		activeWorker := parentEscrow.ActiveWorker
+		if activeWorker == "" {
+			activeWorker = parentEscrow.Worker
+		}
+		if !strings.EqualFold(common.HexToAddress(p.Buyer).Hex(), common.HexToAddress(activeWorker).Hex()) {
+			return nil, fmt.Errorf("sub-delegation RFQ buyer (%s) must be the active worker of parent escrow %d (%s)",
+				p.Buyer, *p.ParentEscrowID, activeWorker)
+		}
+	}
+
 	specHash := crypto.Keccak256Hash([]byte(p.Title + p.Description))
 
 	rfq, err := s.DB.CreateRFQ(ctx, &storage.RFQ{
@@ -226,6 +244,7 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 		BiddingMode:              "sealed",
 		CommitDeadline:           p.CommitDeadline,
 		RevealDeadline:           p.RevealDeadline,
+		ParentEscrowID:           p.ParentEscrowID,
 		Status:                   "open",
 		ExpiresAt:                p.ExpiresAt,
 	})
@@ -734,6 +753,7 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 		MilestoneCount:           milestoneCount,
 		CurrentMilestone:         0,
 		ActiveWorker:             bid.Bidder,
+		ParentEscrowID:           rfq.ParentEscrowID,
 	})
 	if err != nil {
 		dbTx.Rollback()

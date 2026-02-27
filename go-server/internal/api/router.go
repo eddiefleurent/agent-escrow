@@ -37,6 +37,8 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	mux.HandleFunc("POST /api/v1/escrows/{id}/resolve", h.ResolveDispute)
 	mux.HandleFunc("POST /api/v1/escrows/{id}/abort-milestones", h.AbortRemainingMilestones)
 	mux.HandleFunc("POST /api/v1/escrows/{id}/activate-backup", h.ActivateBackup)
+	mux.HandleFunc("GET /api/v1/escrows/{id}/attestation-chain", h.GetAttestationChain)
+	mux.HandleFunc("GET /api/v1/escrows/{id}/children", h.ListChildEscrows)
 	mux.HandleFunc("GET /api/v1/reputation/{address}", h.GetReputation)
 	mux.HandleFunc("POST /api/v1/dcts/mint", h.MintDCT)
 	mux.HandleFunc("POST /api/v1/dcts/delegate", h.DelegateDCT)

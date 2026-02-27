@@ -455,6 +455,8 @@ SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 | `emergency_actions` | Audit log of emergency actions (freeze, unfreeze, emergency resolve) |
 | `dct_tokens` | Delegation Capability Tokens (off-chain authorization layer): strict canonical profile (`dct-profile-v1`), deterministic caveats (`caveats_json`), lineage depth, scope (operations/resources), expiry, and revocation state |
 | `dct_authorization_audit` | Authorization decision audit log for DCT operations: every permit/deny is recorded with caller, escrow, token, reason, and request correlation ID (paper §4.7, §4.9) |
+| `attestation_chains` | Submission-scoped metadata for signed completion attestation chains: root hash, verification status, verification summary JSON (paper §4.8: transitive liability) |
+| `attestation_links` | Individual signed links in an attestation chain: from/to addresses, child escrow reference, task spec/outcome hashes, signature, time bounds (paper §4.8: chain of custody) |
 
 ![Reputation Seed Sequence](diagrams/reputation-seed-sequence.png)
 
@@ -574,6 +576,30 @@ The emergency protocol spans on-chain (factory + escrow contracts) and off-chain
 
 **Config:** `EMERGENCY_ENABLED` env var controls whether emergency endpoints are registered (default: true).
 
+### Attestation Chains (Paper §4.8)
+
+Attestation chains implement recursive delegation verification. When an agent sub-delegates work (A delegates to B, B delegates to C), each link in the chain produces a signed `completion-attestation-v1` attestation of sub-task completion. The full chain provides transitive liability tracking and chain-of-custody evidence.
+
+![Attestation Chain Sequence](diagrams/attestation-chain-sequence.png)
+
+**Parent-child escrow linkage.** RFQs and escrows carry an optional `parent_escrow_id` linking sub-delegated tasks to their parent. When creating a sub-delegation RFQ, the buyer must be the active worker of the parent escrow (enforced by the bidding service). Bid acceptance propagates the parent link to the newly created child escrow.
+
+**Completion-attestation-v1 profile.** Each attestation link is a signed message with a deterministic canonical format: `completion-attestation-v1|link_id|parent_link_id|from|to|child_escrow_id|task_spec_hash|outcome_hash|issued_at|expires_at|nonce`. The `from_address` (delegator) signs the message; verification recovers the signer via secp256k1 `Ecrecover` and checks it matches `from_address`.
+
+**Chain validation.** The `attestation` package validates chains as DAGs:
+- Signature verification on every link
+- Duplicate `link_id` detection
+- Parent-link integrity (non-root links must reference existing parents)
+- Cycle detection via DFS
+- Child escrow coverage (every known child escrow must be referenced by at least one link)
+- Time-bound validation (issued_at not in the future, expires_at not expired)
+
+The validated chain produces a `root_hash` (Keccak256 of sorted canonical messages) and a `ChainValidationResult` with coverage metadata.
+
+**Integration surfaces.** Attestation chains are accepted on submission (`submit_work` MCP tool and `POST /api/v1/escrows/{id}/submit` HTTP endpoint via `attestation_chain_json`). When an escrow has child escrows, the attestation chain is required and must pass validation. Chains are persisted in `attestation_chains` and `attestation_links` tables and retrievable via `get_attestation_chain` MCP tool, `GET /api/v1/escrows/{id}/attestation-chain` HTTP endpoint, and `escrow-cli attestation-chain` command. The `GET /api/v1/escrows/{id}` response is enriched with attestation chain summaries and child escrow IDs.
+
+**Design choice: off-chain only.** Attestation chains are stored and verified entirely off-chain. On-chain settlement contracts remain unchanged -- the chain provides verifiable evidence for dispute resolution and audit, not consensus-level enforcement. This keeps gas costs low and avoids contract size bloat while preserving the paper's accountability guarantees.
+
 ### MCP Tools (Primary Interface)
 
 | Tool | Inputs | Chain Method |
@@ -611,6 +637,7 @@ The emergency protocol spans on-chain (factory + escrow contracts) and off-chain
 | `emergency_resolve` | escrow_id, worker_award_bps | `Factory.emergencyResolve` (owner-only) |
 | `list_frozen_addresses` | (none) | DB read |
 | `list_emergency_actions` | limit, offset (optional) | DB read |
+| `get_attestation_chain` | escrow_id | DB read (attestation chains + links) |
 
 ### HTTP API (Secondary Interface)
 
@@ -661,6 +688,8 @@ The emergency protocol spans on-chain (factory + escrow contracts) and off-chain
 | POST | `/api/v1/emergency/resolve` | Emergency resolve frozen escrow (owner-only; body: escrow_id, worker_award_bps) |
 | GET | `/api/v1/emergency/frozen-addresses` | List frozen addresses |
 | GET | `/api/v1/emergency/actions` | List emergency action audit log (query: limit, offset) |
+| GET | `/api/v1/escrows/{id}/attestation-chain` | Get attestation chain(s) for escrow (links + verification status) |
+| GET | `/api/v1/escrows/{id}/children` | List child escrows for a parent escrow |
 
 ### Configuration
 

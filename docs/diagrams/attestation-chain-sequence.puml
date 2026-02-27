@@ -1,0 +1,110 @@
+@startuml attestation-chain-sequence
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam sequenceArrowThickness 1.5
+skinparam sequenceLifeLineBorderColor #CCCCCC
+skinparam sequenceDividerBackgroundColor #F5F5F5
+skinparam sequenceDividerFontStyle bold
+skinparam sequenceGroupBackgroundColor #FAFAFA
+skinparam sequenceGroupBorderColor #CCCCCC
+
+skinparam participant {
+  BorderColor #42A5F5
+  BackgroundColor #E3F2FD
+  FontColor #1565C0
+}
+
+skinparam note {
+  BorderColor #FFB74D
+  BackgroundColor #FFF3E0
+  FontColor #E65100
+}
+
+title Attestation Chain: Recursive Delegation Verification (Paper §4.8)
+
+actor "Agent A\n(Buyer)" as A
+participant "Go Server" as Server
+participant "SQLite" as DB
+actor "Agent B\n(Worker/Sub-delegator)" as B
+actor "Agent C\n(Sub-worker)" as C
+participant "Base Chain" as Chain
+
+== Phase 1: Parent Escrow Creation ==
+
+A -> Server: create_rfq(task_spec)
+Server -> DB: insert rfq
+Server --> A: rfq_id
+
+B -> Server: commit_bid(rfq_id) + reveal_bid
+A -> Server: accept_bid(rfq_id, bid_id)
+Server -> Chain: Factory.createEscrow()
+Server -> DB: insert escrow (id=E1)
+Server --> A: escrow E1 created
+
+A -> Server: fund_escrow(E1)
+Server -> Chain: Escrow.fund()
+
+== Phase 2: Sub-delegation (B delegates to C) ==
+
+B -> Server: create_rfq(sub_task,\n  parent_escrow_id=E1)
+note right of Server
+  Validates: B must be active
+  worker of parent escrow E1
+end note
+Server -> DB: insert rfq (parent_escrow_id=E1)
+Server --> B: rfq_id (sub)
+
+C -> Server: commit_bid + reveal_bid
+B -> Server: accept_bid(sub_rfq, bid_id)
+Server -> Chain: Factory.createEscrow()
+Server -> DB: insert escrow (id=E2,\n  parent_escrow_id=E1)
+Server --> B: child escrow E2 created
+
+B -> Server: fund_escrow(E2)
+
+== Phase 3: Sub-task Completion ==
+
+C -> Server: submit_work(E2, uri)
+Server -> Chain: Escrow.submit()
+B -> Server: approve_work(E2)
+Server -> Chain: Escrow.approve()
+
+== Phase 4: Attestation Chain Construction ==
+
+note over B
+  B signs completion-attestation-v1:
+  "A attests C completed work on E2"
+  canonical: profile|link_id|parent_link_id|
+    from|to|child_escrow_id|task_spec_hash|
+    outcome_hash|issued_at|expires_at|nonce
+  signature: secp256k1 sign(keccak256(msg))
+end note
+
+B -> Server: submit_work(E1, uri,\n  attestation_chain_json=[\n    {link_id, from=B, to=C,\n     child_escrow_id=E2, sig...}])
+
+Server -> Server: Parse attestation chain
+Server -> DB: ListChildEscrows(E1) → [E2]
+Server -> Server: ValidateChain:\n  ✓ Signature verification\n  ✓ DAG structure (no cycles)\n  ✓ Parent-link integrity\n  ✓ Child escrow coverage\n  ✓ Time bounds
+
+alt Chain Valid
+  Server -> DB: store attestation_chain\n  (root_hash, verified=true)
+  Server -> DB: store attestation_links
+  Server -> Chain: Escrow.submit(E1)
+  Server --> B: tx_hash
+else Chain Invalid
+  Server --> B: error: validation failed
+end
+
+== Phase 5: Retrieval & Audit ==
+
+A -> Server: GET /api/v1/escrows/E1/attestation-chain
+Server -> DB: fetch chains + links
+Server --> A: {chains: [{root_hash,\n  verified, links: [...]}]}
+
+A -> Server: GET /api/v1/escrows/E1/children
+Server -> DB: ListChildEscrows(E1)
+Server --> A: {children: [E2]}
+
+@enduml

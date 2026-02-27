@@ -85,13 +85,14 @@ func createEscrowOn(ctx context.Context, q dbExecer, e *Escrow) (*Escrow, error)
 		activeWorker = e.Worker
 	}
 	res, err := q.ExecContext(ctx,
-		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, parent_escrow_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.TaskID, e.ChainID, e.FactoryAddress, e.EscrowAddress, e.EscrowID,
 		e.Buyer, e.Worker, e.Verifier, e.Arbitrator, e.Amount, e.WorkerStake, e.Token, e.Status,
 		e.SubmissionDeadline, e.ReviewPeriodSeconds, e.DisputePeriodSeconds, e.ArbitratorTimeoutSeconds,
 		msCount, e.CurrentMilestone,
 		e.BackupWorker, e.BackupDeadlineExtension, activeWorker, boolToInt(e.BackupActivated), boolToInt(e.Frozen),
+		e.ParentEscrowID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert escrow: %w", err)
@@ -116,23 +117,29 @@ func (d *DB) CreateEscrowTx(ctx context.Context, tx *sql.Tx, e *Escrow) (*Escrow
 	return createEscrowOn(ctx, tx, e)
 }
 
-const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, created_at, updated_at`
+const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, parent_escrow_id, created_at, updated_at`
 
 func scanEscrow(scanner interface{ Scan(...any) error }) (*Escrow, error) {
 	e := &Escrow{}
 	var createdAt, updatedAt string
 	var backupActivatedInt, frozenInt int
+	var parentEscrowID sql.NullInt64
 	err := scanner.Scan(&e.ID, &e.TaskID, &e.ChainID, &e.FactoryAddress, &e.EscrowAddress, &e.EscrowID,
 		&e.Buyer, &e.Worker, &e.Verifier, &e.Arbitrator, &e.Amount, &e.WorkerStake, &e.Token, &e.Status,
 		&e.SubmissionDeadline, &e.ReviewPeriodSeconds, &e.DisputePeriodSeconds, &e.ArbitratorTimeoutSeconds,
 		&e.MilestoneCount, &e.CurrentMilestone,
 		&e.BackupWorker, &e.BackupDeadlineExtension, &e.ActiveWorker, &backupActivatedInt, &frozenInt,
+		&parentEscrowID,
 		&createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
 	e.BackupActivated = backupActivatedInt != 0
 	e.Frozen = frozenInt != 0
+	if parentEscrowID.Valid {
+		v := parentEscrowID.Int64
+		e.ParentEscrowID = &v
+	}
 	e.CreatedAt, err = parseSQLiteTime(createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("parse created_at: %w", err)
@@ -499,21 +506,27 @@ func (d *DB) ListReputations(ctx context.Context, minCompleted int) ([]*Reputati
 const rfqColumns = `id, title, description, spec_hash, buyer, token, budget_min, budget_max,
 	deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds,
 	verifier, arbitrator, worker_stake, milestones_json, requirements_json, required_credentials_json,
-	bidding_mode, commit_deadline, reveal_deadline,
+	bidding_mode, commit_deadline, reveal_deadline, parent_escrow_id,
 	status, expires_at, created_at, updated_at`
 
 func scanRFQ(scanner interface{ Scan(...any) error }) (*RFQ, error) {
 	r := &RFQ{}
 	var createdAt, updatedAt string
+	var parentEscrowID sql.NullInt64
 	err := scanner.Scan(&r.ID, &r.Title, &r.Description, &r.SpecHash, &r.Buyer, &r.Token,
 		&r.BudgetMin, &r.BudgetMax, &r.Deadline, &r.ReviewPeriodSeconds,
 		&r.DisputePeriodSeconds, &r.ArbitratorTimeoutSeconds,
 		&r.Verifier, &r.Arbitrator, &r.WorkerStake, &r.MilestonesJSON, &r.RequirementsJSON,
 		&r.RequiredCredentialsJSON,
 		&r.BiddingMode, &r.CommitDeadline, &r.RevealDeadline,
+		&parentEscrowID,
 		&r.Status, &r.ExpiresAt, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
+	}
+	if parentEscrowID.Valid {
+		v := parentEscrowID.Int64
+		r.ParentEscrowID = &v
 	}
 	r.CreatedAt, err = parseSQLiteTime(createdAt)
 	if err != nil {
@@ -531,13 +544,13 @@ func (d *DB) CreateRFQ(ctx context.Context, r *RFQ) (*RFQ, error) {
 		`INSERT INTO rfqs (title, description, spec_hash, buyer, token, budget_min, budget_max,
 			deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds,
 			verifier, arbitrator, worker_stake, milestones_json, requirements_json, required_credentials_json,
-			bidding_mode, commit_deadline, reveal_deadline, status, expires_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			bidding_mode, commit_deadline, reveal_deadline, parent_escrow_id, status, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.Title, r.Description, r.SpecHash, r.Buyer, r.Token, r.BudgetMin, r.BudgetMax,
 		r.Deadline, r.ReviewPeriodSeconds, r.DisputePeriodSeconds, r.ArbitratorTimeoutSeconds,
 		r.Verifier, r.Arbitrator, r.WorkerStake, r.MilestonesJSON, r.RequirementsJSON,
 		r.RequiredCredentialsJSON,
-		r.BiddingMode, r.CommitDeadline, r.RevealDeadline, r.Status, r.ExpiresAt,
+		r.BiddingMode, r.CommitDeadline, r.RevealDeadline, r.ParentEscrowID, r.Status, r.ExpiresAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert rfq: %w", err)
@@ -1672,4 +1685,294 @@ func (d *DB) ListEmergencyActions(ctx context.Context, limit, offset int) ([]*Em
 		actions = append(actions, a)
 	}
 	return actions, rows.Err()
+}
+
+// ── Attestation chain queries (paper §4.8) ──
+
+func createAttestationChainOn(ctx context.Context, q dbExecer, ac *AttestationChain) (*AttestationChain, error) {
+	var milestoneIdx any
+	if ac.MilestoneIndex != nil {
+		milestoneIdx = *ac.MilestoneIndex
+	}
+	summaryJSON := ac.VerificationSummaryJSON
+	if summaryJSON == "" {
+		summaryJSON = "{}"
+	}
+	if !json.Valid([]byte(summaryJSON)) {
+		return nil, errors.New("invalid verification_summary_json")
+	}
+	res, err := q.ExecContext(ctx,
+		`INSERT INTO attestation_chains (escrow_id, milestone_index, root_hash, verified, verification_summary_json)
+		 VALUES (?, ?, ?, ?, ?)`,
+		ac.EscrowID, milestoneIdx, ac.RootHash, boolToInt(ac.Verified), summaryJSON,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert attestation_chain: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("last insert id: %w", err)
+	}
+
+	out := &AttestationChain{}
+	var createdAt, updatedAt string
+	var verifiedInt int
+	var storedMilestoneIdx sql.NullInt64
+	err = q.QueryRowContext(ctx,
+		`SELECT id, escrow_id, milestone_index, root_hash, verified, verification_summary_json, created_at, updated_at
+		 FROM attestation_chains WHERE id = ?`, id,
+	).Scan(&out.ID, &out.EscrowID, &storedMilestoneIdx, &out.RootHash, &verifiedInt, &out.VerificationSummaryJSON, &createdAt, &updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("get attestation_chain: %w", err)
+	}
+	out.Verified = verifiedInt != 0
+	if storedMilestoneIdx.Valid {
+		v := int(storedMilestoneIdx.Int64)
+		out.MilestoneIndex = &v
+	}
+	out.CreatedAt, err = parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse created_at: %w", err)
+	}
+	out.UpdatedAt, err = parseSQLiteTime(updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse updated_at: %w", err)
+	}
+	return out, nil
+}
+
+func (d *DB) CreateAttestationChain(ctx context.Context, ac *AttestationChain) (*AttestationChain, error) {
+	return createAttestationChainOn(ctx, d.db, ac)
+}
+
+func (d *DB) CreateAttestationChainTx(ctx context.Context, tx *sql.Tx, ac *AttestationChain) (*AttestationChain, error) {
+	return createAttestationChainOn(ctx, tx, ac)
+}
+
+func (d *DB) GetAttestationChain(ctx context.Context, id int64) (*AttestationChain, error) {
+	ac := &AttestationChain{}
+	var createdAt, updatedAt string
+	var verifiedInt int
+	var milestoneIdx sql.NullInt64
+	err := d.db.QueryRowContext(ctx,
+		`SELECT id, escrow_id, milestone_index, root_hash, verified, verification_summary_json, created_at, updated_at
+		 FROM attestation_chains WHERE id = ?`, id,
+	).Scan(&ac.ID, &ac.EscrowID, &milestoneIdx, &ac.RootHash, &verifiedInt, &ac.VerificationSummaryJSON, &createdAt, &updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("get attestation_chain: %w", err)
+	}
+	ac.Verified = verifiedInt != 0
+	if milestoneIdx.Valid {
+		v := int(milestoneIdx.Int64)
+		ac.MilestoneIndex = &v
+	}
+	ac.CreatedAt, err = parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse created_at: %w", err)
+	}
+	ac.UpdatedAt, err = parseSQLiteTime(updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse updated_at: %w", err)
+	}
+	return ac, nil
+}
+
+func (d *DB) GetAttestationChainsByEscrow(ctx context.Context, escrowID int64) ([]*AttestationChain, error) {
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT id, escrow_id, milestone_index, root_hash, verified, verification_summary_json, created_at, updated_at
+		 FROM attestation_chains WHERE escrow_id = ? ORDER BY id DESC`, escrowID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list attestation_chains: %w", err)
+	}
+	defer rows.Close()
+
+	var chains []*AttestationChain
+	for rows.Next() {
+		ac := &AttestationChain{}
+		var createdAt, updatedAt string
+		var verifiedInt int
+		var milestoneIdx sql.NullInt64
+		if err := rows.Scan(&ac.ID, &ac.EscrowID, &milestoneIdx, &ac.RootHash, &verifiedInt, &ac.VerificationSummaryJSON, &createdAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scan attestation_chain: %w", err)
+		}
+		ac.Verified = verifiedInt != 0
+		if milestoneIdx.Valid {
+			v := int(milestoneIdx.Int64)
+			ac.MilestoneIndex = &v
+		}
+		ac.CreatedAt, err = parseSQLiteTime(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+		ac.UpdatedAt, err = parseSQLiteTime(updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse updated_at: %w", err)
+		}
+		chains = append(chains, ac)
+	}
+	return chains, rows.Err()
+}
+
+func (d *DB) UpdateAttestationChainVerification(ctx context.Context, id int64, verified bool, rootHash, summaryJSON string) error {
+	if summaryJSON == "" {
+		summaryJSON = "{}"
+	}
+	if !json.Valid([]byte(summaryJSON)) {
+		return errors.New("invalid verification_summary_json")
+	}
+	res, err := d.db.ExecContext(ctx,
+		`UPDATE attestation_chains SET verified = ?, root_hash = ?, verification_summary_json = ?, updated_at = datetime('now') WHERE id = ?`,
+		boolToInt(verified), rootHash, summaryJSON, id,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected update attestation_chain: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("update attestation_chain id=%d: %w", id, sql.ErrNoRows)
+	}
+	return nil
+}
+
+func createAttestationLinkOn(ctx context.Context, q dbExecer, link *AttestationLink) (*AttestationLink, error) {
+	payloadJSON := link.PayloadJSON
+	if payloadJSON == "" {
+		payloadJSON = "{}"
+	}
+	if !json.Valid([]byte(payloadJSON)) {
+		return nil, errors.New("invalid payload_json")
+	}
+	parentLinkID := sql.NullString{
+		String: link.ParentLinkID,
+		Valid:  link.ParentLinkID != "",
+	}
+	if !parentLinkID.Valid {
+		// attestation_links.parent_link_id is currently NOT NULL in schema.
+		parentLinkID = sql.NullString{String: "", Valid: true}
+	}
+	res, err := q.ExecContext(ctx,
+		`INSERT INTO attestation_links (chain_id, link_id, parent_link_id, from_address, to_address, child_escrow_id, task_spec_hash, outcome_hash, issued_at, expires_at, nonce, signature, payload_json)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		link.ChainID, link.LinkID, parentLinkID, link.FromAddress, link.ToAddress,
+		link.ChildEscrowID, link.TaskSpecHash, link.OutcomeHash,
+		link.IssuedAt, link.ExpiresAt, link.Nonce, link.Signature, payloadJSON,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert attestation_link: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("last insert id: %w", err)
+	}
+
+	out := &AttestationLink{}
+	var createdAt string
+	var childEscrowID sql.NullInt64
+	var storedParentLinkID sql.NullString
+	err = q.QueryRowContext(ctx,
+		`SELECT id, chain_id, link_id, parent_link_id, from_address, to_address, child_escrow_id,
+		        task_spec_hash, outcome_hash, issued_at, expires_at, nonce, signature, payload_json, created_at
+		 FROM attestation_links WHERE id = ?`, id,
+	).Scan(&out.ID, &out.ChainID, &out.LinkID, &storedParentLinkID, &out.FromAddress, &out.ToAddress,
+		&childEscrowID, &out.TaskSpecHash, &out.OutcomeHash,
+		&out.IssuedAt, &out.ExpiresAt, &out.Nonce, &out.Signature, &out.PayloadJSON, &createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("get attestation_link: %w", err)
+	}
+	if storedParentLinkID.Valid {
+		out.ParentLinkID = storedParentLinkID.String
+	}
+	if childEscrowID.Valid {
+		v := childEscrowID.Int64
+		out.ChildEscrowID = &v
+	}
+	out.CreatedAt, err = parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse created_at: %w", err)
+	}
+	return out, nil
+}
+
+func (d *DB) CreateAttestationLink(ctx context.Context, link *AttestationLink) (*AttestationLink, error) {
+	return createAttestationLinkOn(ctx, d.db, link)
+}
+
+func (d *DB) CreateAttestationLinkTx(ctx context.Context, tx *sql.Tx, link *AttestationLink) (*AttestationLink, error) {
+	return createAttestationLinkOn(ctx, tx, link)
+}
+
+func (d *DB) GetAttestationLink(ctx context.Context, id int64) (*AttestationLink, error) {
+	link := &AttestationLink{}
+	var createdAt string
+	var childEscrowID sql.NullInt64
+	var parentLinkID sql.NullString
+	err := d.db.QueryRowContext(ctx,
+		`SELECT id, chain_id, link_id, parent_link_id, from_address, to_address, child_escrow_id,
+		        task_spec_hash, outcome_hash, issued_at, expires_at, nonce, signature, payload_json, created_at
+		 FROM attestation_links WHERE id = ?`, id,
+	).Scan(&link.ID, &link.ChainID, &link.LinkID, &parentLinkID, &link.FromAddress, &link.ToAddress,
+		&childEscrowID, &link.TaskSpecHash, &link.OutcomeHash,
+		&link.IssuedAt, &link.ExpiresAt, &link.Nonce, &link.Signature, &link.PayloadJSON, &createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("get attestation_link: %w", err)
+	}
+	if parentLinkID.Valid {
+		link.ParentLinkID = parentLinkID.String
+	}
+	if childEscrowID.Valid {
+		v := childEscrowID.Int64
+		link.ChildEscrowID = &v
+	}
+	link.CreatedAt, err = parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse created_at: %w", err)
+	}
+	return link, nil
+}
+
+func (d *DB) GetAttestationLinksByChain(ctx context.Context, chainID int64) ([]*AttestationLink, error) {
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT id, chain_id, link_id, parent_link_id, from_address, to_address, child_escrow_id,
+		        task_spec_hash, outcome_hash, issued_at, expires_at, nonce, signature, payload_json, created_at
+		 FROM attestation_links WHERE chain_id = ? ORDER BY id`, chainID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list attestation_links: %w", err)
+	}
+	defer rows.Close()
+
+	var links []*AttestationLink
+	for rows.Next() {
+		link := &AttestationLink{}
+		var createdAt string
+		var childEscrowID sql.NullInt64
+		var parentLinkID sql.NullString
+		if err := rows.Scan(&link.ID, &link.ChainID, &link.LinkID, &parentLinkID, &link.FromAddress, &link.ToAddress,
+			&childEscrowID, &link.TaskSpecHash, &link.OutcomeHash,
+			&link.IssuedAt, &link.ExpiresAt, &link.Nonce, &link.Signature, &link.PayloadJSON, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan attestation_link: %w", err)
+		}
+		if parentLinkID.Valid {
+			link.ParentLinkID = parentLinkID.String
+		}
+		if childEscrowID.Valid {
+			v := childEscrowID.Int64
+			link.ChildEscrowID = &v
+		}
+		link.CreatedAt, err = parseSQLiteTime(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+		links = append(links, link)
+	}
+	return links, rows.Err()
+}
+
+// ListChildEscrows returns escrows whose parent_escrow_id matches the given ID.
+func (d *DB) ListChildEscrows(ctx context.Context, parentEscrowID int64) ([]*Escrow, error) {
+	return d.queryEscrows(ctx, `SELECT `+escrowColumns+` FROM escrows WHERE parent_escrow_id = ? ORDER BY id`, parentEscrowID)
 }

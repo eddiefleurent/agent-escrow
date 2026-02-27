@@ -13,6 +13,7 @@ import (
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/a2a"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/ap2"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/attestation"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/authz"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/bidding"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
@@ -54,9 +55,14 @@ type escrowIDArgs struct {
 }
 
 type submitArgs struct {
-	EscrowID       FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID or on-chain escrow address (0x...)"`
-	SubmissionURI  string         `json:"submission_uri" jsonschema:"URI of submission"`
-	MilestoneIndex FlexibleString `json:"milestone_index,omitempty" jsonschema:"Milestone index (required for multi-milestone escrows)"`
+	EscrowID             FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID or on-chain escrow address (0x...)"`
+	SubmissionURI        string         `json:"submission_uri" jsonschema:"URI of submission"`
+	MilestoneIndex       FlexibleString `json:"milestone_index,omitempty" jsonschema:"Milestone index (required for multi-milestone escrows)"`
+	AttestationChainJSON string         `json:"attestation_chain_json,omitempty" jsonschema:"JSON array of completion-attestation-v1 payloads for delegation chain verification (paper §4.8). Required when escrow has sub-delegated child escrows."`
+}
+
+type getAttestationChainArgs struct {
+	EscrowID FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID or on-chain escrow address (0x...)"`
 }
 
 type approveArgs struct {
@@ -105,6 +111,7 @@ type createRFQArgs struct {
 	CommitDeadline           FlexibleString `json:"commit_deadline,omitempty" jsonschema:"Unix timestamp: end of commit phase (sealed bids)"`
 	RevealDeadline           FlexibleString `json:"reveal_deadline,omitempty" jsonschema:"Unix timestamp: end of reveal phase (must be >= commit_deadline and <= deadline)"`
 	ExpiresAt                FlexibleString `json:"expires_at" jsonschema:"Unix timestamp: when the RFQ stops accepting bids (distinct from deadline which is when work must be done)"`
+	ParentEscrowID           FlexibleString `json:"parent_escrow_id,omitempty" jsonschema:"Optional parent escrow ID for sub-delegation (paper §4.8). Buyer must be active worker of parent."`
 }
 
 type commitBidArgs struct {
@@ -338,6 +345,11 @@ func (s *Server) registerTools(srv *mcp.Server) {
 	}, s.handleAcceptBid)
 
 	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "get_attestation_chain",
+		Description: "Get attestation chain(s) for an escrow, including signed completion-attestation-v1 links and verification status. Paper §4.8: recursive delegation verification and chain of custody.",
+	}, s.handleGetAttestationChain)
+
+	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "fund_via_mandate",
 		Description: "Fund an escrow via an AP2 mandate with EIP-3009 gasless authorization. Paper §6: AP2 stake-on-bid + conditional settlement.",
 	}, s.handleFundViaMandate)
@@ -411,6 +423,40 @@ func (s *Server) resolveEscrowID(ctx context.Context, raw string) (*storage.Escr
 		return nil, fmt.Errorf("escrow_id must be a numeric database ID or an on-chain address (0x...); got %q", raw)
 	}
 	return s.db.GetEscrow(ctx, id)
+}
+
+// persistAttestationChainTx creates an AttestationChain record and its links inside an
+// existing transaction. The caller is responsible for Commit/Rollback.
+func (s *Server) persistAttestationChainTx(ctx context.Context, tx *sql.Tx, escrowID int64, milestoneIdxPtr *int, chainResult attestation.ChainValidationResult, atts []attestation.CompletionAttestation) (*mcp.CallToolResult, error) {
+	acRecord, acErr := s.db.CreateAttestationChainTx(ctx, tx, &storage.AttestationChain{
+		EscrowID:                escrowID,
+		MilestoneIndex:          milestoneIdxPtr,
+		RootHash:                chainResult.RootHash,
+		Verified:                chainResult.Valid,
+		VerificationSummaryJSON: attestation.MarshalChainValidationResult(chainResult),
+	})
+	if acErr != nil {
+		return textResult(fmt.Sprintf("failed to persist attestation chain: %v", acErr)), acErr
+	}
+	for _, att := range atts {
+		if _, linkErr := s.db.CreateAttestationLinkTx(ctx, tx, &storage.AttestationLink{
+			ChainID:       acRecord.ID,
+			LinkID:        att.LinkID,
+			ParentLinkID:  att.ParentLinkID,
+			FromAddress:   att.FromAddress,
+			ToAddress:     att.ToAddress,
+			ChildEscrowID: att.ChildEscrowID,
+			TaskSpecHash:  att.TaskSpecHash,
+			OutcomeHash:   att.OutcomeHash,
+			IssuedAt:      att.IssuedAt,
+			ExpiresAt:     att.ExpiresAt,
+			Nonce:         att.Nonce,
+			Signature:     att.Signature,
+		}); linkErr != nil {
+			return textResult(fmt.Sprintf("failed to persist attestation link %s: %v", att.LinkID, linkErr)), linkErr
+		}
+	}
+	return nil, nil
 }
 
 func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolRequest, args createEscrowArgs) (*mcp.CallToolResult, any, error) {
@@ -736,6 +782,80 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 		)), nil, nil
 	}
 
+	// Attestation chain validation for sub-delegation (paper §4.8).
+	childEscrows, childErr := s.db.ListChildEscrows(ctx, escrow.ID)
+	if childErr != nil {
+		return textResult(fmt.Sprintf("failed to check child escrows: %v", childErr)), nil, nil
+	}
+
+	var milestoneIdxPtr *int
+	if escrow.MilestoneCount > 1 && args.MilestoneIndex.String() == "" {
+		return textResult("milestone_index required for multi-milestone escrow"), nil, nil
+	}
+	if args.MilestoneIndex.String() != "" {
+		msVal, msErr := strconv.Atoi(args.MilestoneIndex.String())
+		if msErr != nil {
+			return textResult(fmt.Sprintf("invalid milestone_index: %v", msErr)), nil, nil
+		}
+		if msVal < 0 || msVal >= escrow.MilestoneCount {
+			return textResult(fmt.Sprintf("invalid milestone_index: %d out of range [0, %d)", msVal, escrow.MilestoneCount)), nil, nil
+		}
+		milestoneIdxPtr = &msVal
+	}
+
+	if len(childEscrows) > 0 {
+		atts, parseErr := attestation.ParseCompletionAttestations(args.AttestationChainJSON)
+		if parseErr != nil {
+			return textResult(fmt.Sprintf("invalid attestation_chain_json: %v", parseErr)), nil, nil
+		}
+		if len(atts) == 0 {
+			return textResult("attestation_chain_json required when escrow has sub-delegated child escrows"), nil, nil
+		}
+		childIDs := make([]int64, len(childEscrows))
+		for i, ce := range childEscrows {
+			childIDs[i] = ce.ID
+		}
+		chainResult := attestation.ValidateChain(atts, childIDs, time.Now())
+		if !chainResult.Valid {
+			return textResult("attestation chain validation failed: " + strings.Join(chainResult.Reasons, "; ")), nil, nil
+		}
+		tx, txErr := s.db.BeginTx(ctx)
+		if txErr != nil {
+			return textResult(fmt.Sprintf("failed to begin attestation persistence transaction: %v", txErr)), nil, nil
+		}
+		defer tx.Rollback()
+
+		if errResult, persistErr := s.persistAttestationChainTx(ctx, tx, escrow.ID, milestoneIdxPtr, chainResult, atts); persistErr != nil {
+			return errResult, nil, nil
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			return textResult(fmt.Sprintf("failed to persist attestation chain: %v", commitErr)), nil, nil
+		}
+	} else if args.AttestationChainJSON != "" && args.AttestationChainJSON != "[]" {
+		atts, parseErr := attestation.ParseCompletionAttestations(args.AttestationChainJSON)
+		if parseErr != nil {
+			return textResult(fmt.Sprintf("invalid attestation_chain_json: %v", parseErr)), nil, nil
+		}
+		if len(atts) > 0 {
+			chainResult := attestation.ValidateChain(atts, nil, time.Now())
+			if !chainResult.Valid {
+				return textResult("attestation chain validation failed: " + strings.Join(chainResult.Reasons, "; ")), nil, nil
+			}
+			tx, txErr := s.db.BeginTx(ctx)
+			if txErr != nil {
+				return textResult(fmt.Sprintf("failed to begin attestation persistence transaction: %v", txErr)), nil, nil
+			}
+			defer tx.Rollback()
+
+			if errResult, persistErr := s.persistAttestationChainTx(ctx, tx, escrow.ID, milestoneIdxPtr, chainResult, atts); persistErr != nil {
+				return errResult, nil, nil
+			}
+			if commitErr := tx.Commit(); commitErr != nil {
+				return textResult(fmt.Sprintf("failed to persist attestation chain: %v", commitErr)), nil, nil
+			}
+		}
+	}
+
 	hash := crypto.Keccak256Hash([]byte(args.SubmissionURI))
 	var hashBytes [32]byte
 	copy(hashBytes[:], hash.Bytes())
@@ -743,12 +863,9 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 	addr := common.HexToAddress(escrow.EscrowAddress)
 
 	if escrow.MilestoneCount > 1 {
-		if args.MilestoneIndex.String() == "" {
-			return textResult("milestone_index required for multi-milestone escrow"), nil, nil
-		}
-		msIdx, err := parseMilestoneIndex(args.MilestoneIndex.String())
-		if err != nil {
-			return textResult(err.Error()), nil, nil
+		msIdx, msConvErr := numconv.IntToUint8(*milestoneIdxPtr, "milestone_index")
+		if msConvErr != nil {
+			return textResult(msConvErr.Error()), nil, nil
 		}
 		tx, err := s.chain.SubmitMilestone(ctx, addr, msIdx, hashBytes, args.SubmissionURI)
 		if err != nil {
@@ -1252,6 +1369,15 @@ func (s *Server) handleCreateRFQ(ctx context.Context, req *mcp.CallToolRequest, 
 	// Normalize token field.
 	token := normalizeToken(args.Token)
 
+	var parentEscrowID *int64
+	if args.ParentEscrowID.String() != "" {
+		pid, pidErr := strconv.ParseInt(args.ParentEscrowID.String(), 10, 64)
+		if pidErr != nil {
+			return textResult(fmt.Sprintf("invalid parent_escrow_id: %v", pidErr)), nil, nil
+		}
+		parentEscrowID = &pid
+	}
+
 	svc := s.biddingService()
 	rfq, err := svc.CreateRFQ(ctx, bidding.CreateRFQParams{
 		Title:                    args.Title,
@@ -1273,6 +1399,7 @@ func (s *Server) handleCreateRFQ(ctx context.Context, req *mcp.CallToolRequest, 
 		CommitDeadline:           commitDeadline,
 		RevealDeadline:           revealDeadline,
 		ExpiresAt:                expiresAt,
+		ParentEscrowID:           parentEscrowID,
 	})
 	if err != nil {
 		return textResult(err.Error()), nil, nil
@@ -1433,6 +1560,39 @@ func (s *Server) handleAcceptBid(ctx context.Context, req *mcp.CallToolRequest, 
 		"bid_id":          result.Bid.ID,
 		"bid_status":      result.Bid.Status,
 		"next_steps":      "An escrow has been deployed on-chain. Call fund_escrow with the escrow_id to fund it.",
+	})
+}
+
+func (s *Server) handleGetAttestationChain(ctx context.Context, req *mcp.CallToolRequest, args getAttestationChainArgs) (*mcp.CallToolResult, any, error) {
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return textResult(fmt.Sprintf("escrow not found: %v", err)), nil, nil
+		}
+		return textResult(fmt.Sprintf("failed to look up escrow: %v", err)), nil, nil
+	}
+
+	chains, err := s.db.GetAttestationChainsByEscrow(ctx, escrow.ID)
+	if err != nil {
+		return textResult(fmt.Sprintf("failed to get attestation chains: %v", err)), nil, nil
+	}
+
+	type chainWithLinks struct {
+		Chain *storage.AttestationChain  `json:"chain"`
+		Links []*storage.AttestationLink `json:"links"`
+	}
+	result := make([]chainWithLinks, 0, len(chains))
+	for _, ch := range chains {
+		links, linkErr := s.db.GetAttestationLinksByChain(ctx, ch.ID)
+		if linkErr != nil {
+			return textResult(fmt.Sprintf("failed to get links for chain %d: %v", ch.ID, linkErr)), nil, nil
+		}
+		result = append(result, chainWithLinks{Chain: ch, Links: links})
+	}
+
+	return jsonResult(map[string]any{
+		"escrow_id": escrow.ID,
+		"chains":    result,
 	})
 }
 

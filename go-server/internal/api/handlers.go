@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/attestation"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/bidding"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
@@ -347,7 +348,93 @@ func (h *Handlers) GetEscrow(w http.ResponseWriter, r *http.Request) {
 		result["milestones"] = milestones
 	}
 
+	// Include attestation chain summary if present.
+	chains, chainErr := h.db.GetAttestationChainsByEscrow(r.Context(), id)
+	if chainErr != nil {
+		slog.Error("failed to fetch optional attestation_chains for escrow response", "escrow_id", id, "result_key", "attestation_chains", "error", chainErr)
+	} else if len(chains) > 0 {
+		result["attestation_chains"] = chains
+	}
+
+	// Include child escrow count for delegation visibility.
+	children, childErr := h.db.ListChildEscrows(r.Context(), id)
+	if childErr != nil {
+		slog.Error("failed to fetch optional child_escrow_ids for escrow response", "escrow_id", id, "result_key", "child_escrow_ids", "error", childErr)
+	} else if len(children) > 0 {
+		childIDs := make([]int64, len(children))
+		for i, c := range children {
+			childIDs[i] = c.ID
+		}
+		result["child_escrow_ids"] = childIDs
+	}
+
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handlers) GetAttestationChain(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+
+	if _, err := h.db.GetEscrow(r.Context(), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		} else {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch escrow"})
+		}
+		return
+	}
+
+	chains, err := h.db.GetAttestationChainsByEscrow(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch attestation chains"})
+		return
+	}
+
+	type chainWithLinks struct {
+		Chain *storage.AttestationChain  `json:"chain"`
+		Links []*storage.AttestationLink `json:"links"`
+	}
+
+	var out []chainWithLinks
+	for _, ac := range chains {
+		links, linkErr := h.db.GetAttestationLinksByChain(r.Context(), ac.ID)
+		if linkErr != nil {
+			slog.Error("failed to fetch attestation links", "chain_id", ac.ID, "error", linkErr)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch attestation links"})
+			return
+		}
+		out = append(out, chainWithLinks{Chain: ac, Links: links})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"escrow_id": id, "attestation_chains": out})
+}
+
+func (h *Handlers) ListChildEscrows(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+
+	if _, err := h.db.GetEscrow(r.Context(), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		} else {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch escrow"})
+		}
+		return
+	}
+
+	children, err := h.db.ListChildEscrows(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list child escrows"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"parent_escrow_id": id, "children": children})
 }
 
 func (h *Handlers) ListEscrows(w http.ResponseWriter, r *http.Request) {
@@ -481,8 +568,62 @@ func (h *Handlers) DepositStake(w http.ResponseWriter, r *http.Request) {
 }
 
 type submitRequest struct {
-	SubmissionURI  string `json:"submission_uri"`
-	MilestoneIndex *int   `json:"milestone_index,omitempty"`
+	SubmissionURI        string `json:"submission_uri"`
+	MilestoneIndex       *int   `json:"milestone_index,omitempty"`
+	AttestationChainJSON string `json:"attestation_chain_json,omitempty"`
+}
+
+// persistAttestationChain persists an attestation chain and its links inside a single
+// transaction. It writes an appropriate HTTP error response and returns true if an
+// error occurred; the caller should return immediately in that case.
+func (h *Handlers) persistAttestationChain(ctx context.Context, w http.ResponseWriter, escrowID int64, milestoneIndex *int, chainResult attestation.ChainValidationResult, atts []attestation.CompletionAttestation) bool {
+	tx, txErr := h.db.BeginTx(ctx)
+	if txErr != nil {
+		slog.Error("failed to begin attestation persistence transaction", "escrow_id", escrowID, "error", txErr)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist attestation chain"})
+		return true
+	}
+	defer tx.Rollback()
+
+	acRecord, acErr := h.db.CreateAttestationChainTx(ctx, tx, &storage.AttestationChain{
+		EscrowID:                escrowID,
+		MilestoneIndex:          milestoneIndex,
+		RootHash:                chainResult.RootHash,
+		Verified:                chainResult.Valid,
+		VerificationSummaryJSON: attestation.MarshalChainValidationResult(chainResult),
+	})
+	if acErr != nil {
+		slog.Error("failed to persist attestation chain", "escrow_id", escrowID, "error", acErr)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist attestation chain"})
+		return true
+	}
+	for _, att := range atts {
+		_, linkErr := h.db.CreateAttestationLinkTx(ctx, tx, &storage.AttestationLink{
+			ChainID:       acRecord.ID,
+			LinkID:        att.LinkID,
+			ParentLinkID:  att.ParentLinkID,
+			FromAddress:   att.FromAddress,
+			ToAddress:     att.ToAddress,
+			ChildEscrowID: att.ChildEscrowID,
+			TaskSpecHash:  att.TaskSpecHash,
+			OutcomeHash:   att.OutcomeHash,
+			IssuedAt:      att.IssuedAt,
+			ExpiresAt:     att.ExpiresAt,
+			Nonce:         att.Nonce,
+			Signature:     att.Signature,
+		})
+		if linkErr != nil {
+			slog.Error("failed to persist attestation link", "chain_id", acRecord.ID, "link_id", att.LinkID, "error", linkErr)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist attestation chain"})
+			return true
+		}
+	}
+	if commitErr := tx.Commit(); commitErr != nil {
+		slog.Error("failed to commit attestation persistence transaction", "escrow_id", escrowID, "chain_id", acRecord.ID, "error", commitErr)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist attestation chain"})
+		return true
+	}
+	return false
 }
 
 func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
@@ -504,12 +645,6 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hash := crypto.Keccak256Hash([]byte(req.SubmissionURI))
-	var hashBytes [32]byte
-	copy(hashBytes[:], hash.Bytes())
-
-	addr := common.HexToAddress(escrow.EscrowAddress)
-
 	if escrow.MilestoneCount > 1 {
 		if req.MilestoneIndex == nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "milestone_index required for multi-milestone escrow"})
@@ -520,6 +655,70 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdx, escrow.MilestoneCount)})
 			return
 		}
+	}
+
+	// Attestation chain validation for sub-delegation (paper §4.8).
+	childEscrows, childErr := h.db.ListChildEscrows(r.Context(), id)
+	if childErr != nil {
+		slog.Error("failed to fetch child escrows", "escrow_id", id, "error", childErr)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to check child escrows"})
+		return
+	}
+	if len(childEscrows) > 0 {
+		atts, parseErr := attestation.ParseCompletionAttestations(req.AttestationChainJSON)
+		if parseErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid attestation_chain_json: %v", parseErr)})
+			return
+		}
+		if len(atts) == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "attestation_chain_json required when escrow has sub-delegated child escrows"})
+			return
+		}
+		childIDs := make([]int64, len(childEscrows))
+		for i, ce := range childEscrows {
+			childIDs[i] = ce.ID
+		}
+		chainResult := attestation.ValidateChain(atts, childIDs, time.Now())
+		if !chainResult.Valid {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error":   "attestation chain validation failed",
+				"reasons": strings.Join(chainResult.Reasons, "; "),
+			})
+			return
+		}
+		if h.persistAttestationChain(r.Context(), w, id, req.MilestoneIndex, chainResult, atts) {
+			return
+		}
+	} else if req.AttestationChainJSON != "" && req.AttestationChainJSON != "[]" {
+		// No child escrows but chain provided -- store it anyway for provenance.
+		atts, parseErr := attestation.ParseCompletionAttestations(req.AttestationChainJSON)
+		if parseErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid attestation_chain_json: %v", parseErr)})
+			return
+		}
+		if len(atts) > 0 {
+			chainResult := attestation.ValidateChain(atts, nil, time.Now())
+			if !chainResult.Valid {
+				writeJSON(w, http.StatusBadRequest, map[string]string{
+					"error":   "attestation chain validation failed",
+					"reasons": strings.Join(chainResult.Reasons, "; "),
+				})
+				return
+			}
+			if h.persistAttestationChain(r.Context(), w, id, req.MilestoneIndex, chainResult, atts) {
+				return
+			}
+		}
+	}
+
+	hash := crypto.Keccak256Hash([]byte(req.SubmissionURI))
+	var hashBytes [32]byte
+	copy(hashBytes[:], hash.Bytes())
+
+	addr := common.HexToAddress(escrow.EscrowAddress)
+
+	if escrow.MilestoneCount > 1 {
+		msIdx := *req.MilestoneIndex
 		msIdxU8, convErr := numconv.IntToUint8(msIdx, "milestone_index")
 		if convErr != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": convErr.Error()})
@@ -950,6 +1149,7 @@ type createRFQRequest struct {
 	CommitDeadline           string `json:"commit_deadline,omitempty"`
 	RevealDeadline           string `json:"reveal_deadline,omitempty"`
 	ExpiresAt                string `json:"expires_at"`
+	ParentEscrowID           *int64 `json:"parent_escrow_id,omitempty"`
 }
 
 func (h *Handlers) CreateRFQ(w http.ResponseWriter, r *http.Request) {
@@ -1022,6 +1222,7 @@ func (h *Handlers) CreateRFQ(w http.ResponseWriter, r *http.Request) {
 		CommitDeadline:           commitDeadline,
 		RevealDeadline:           revealDeadline,
 		ExpiresAt:                expiresAt,
+		ParentEscrowID:           req.ParentEscrowID,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
