@@ -1859,6 +1859,10 @@ func (h *Handlers) CommitCheckpoint(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.MetadataJSON != "" && !json.Valid([]byte(req.MetadataJSON)) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "metadata_json must be valid JSON"})
+		return
+	}
 
 	cp, err := h.db.CreateCheckpoint(r.Context(), &storage.Checkpoint{
 		EscrowID:         id,
@@ -1886,7 +1890,8 @@ func (h *Handlers) ListCheckpoints(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.db.GetEscrow(r.Context(), id); err != nil {
+	escrow, err := h.db.GetEscrow(r.Context(), id)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "escrow not found"})
 		} else {
@@ -1900,6 +1905,10 @@ func (h *Handlers) ListCheckpoints(w http.ResponseWriter, r *http.Request) {
 		v, err := strconv.Atoi(msStr)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid milestone_index"})
+			return
+		}
+		if v < 0 || v >= escrow.MilestoneCount {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", v, escrow.MilestoneCount)})
 			return
 		}
 		milestoneIndex = &v
@@ -1925,7 +1934,8 @@ func (h *Handlers) GetLatestCheckpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.db.GetEscrow(r.Context(), id); err != nil {
+	escrow, err := h.db.GetEscrow(r.Context(), id)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "escrow not found"})
 		} else {
@@ -1939,6 +1949,10 @@ func (h *Handlers) GetLatestCheckpoint(w http.ResponseWriter, r *http.Request) {
 		v, err := strconv.Atoi(msStr)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid milestone_index"})
+			return
+		}
+		if v < 0 || v >= escrow.MilestoneCount {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", v, escrow.MilestoneCount)})
 			return
 		}
 		milestoneIndex = &v

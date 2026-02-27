@@ -302,8 +302,11 @@ func TestCLICheckpointList(t *testing.T) {
 	escrow := createCLICheckpointEscrow(t, env)
 	id := strconv.FormatInt(escrow.ID, 10)
 
-	runCLI(t, env.server.URL, "escrow", "checkpoint-commit", id,
+	_, setupStderr, setupErr := runCLI(t, env.server.URL, "escrow", "checkpoint-commit", id,
 		"--data", `{"state_snapshot_uri":"ipfs://snap1","committed_by":"0xW"}`)
+	if setupErr != nil {
+		t.Fatalf("setup checkpoint-commit: %v stderr=%s", setupErr, setupStderr)
+	}
 
 	stdout, stderr, err := runCLI(t, env.server.URL, "escrow", "checkpoints", id)
 	if err != nil {
@@ -324,10 +327,16 @@ func TestCLICheckpointLatest(t *testing.T) {
 	escrow := createCLICheckpointEscrow(t, env)
 	id := strconv.FormatInt(escrow.ID, 10)
 
-	runCLI(t, env.server.URL, "escrow", "checkpoint-commit", id,
+	_, setupStderr1, setupErr1 := runCLI(t, env.server.URL, "escrow", "checkpoint-commit", id,
 		"--data", `{"state_snapshot_uri":"ipfs://old","committed_by":"0xW"}`)
-	runCLI(t, env.server.URL, "escrow", "checkpoint-commit", id,
+	if setupErr1 != nil {
+		t.Fatalf("setup checkpoint-commit old: %v stderr=%s", setupErr1, setupStderr1)
+	}
+	_, setupStderr2, setupErr2 := runCLI(t, env.server.URL, "escrow", "checkpoint-commit", id,
 		"--data", `{"state_snapshot_uri":"ipfs://latest","committed_by":"0xW"}`)
+	if setupErr2 != nil {
+		t.Fatalf("setup checkpoint-commit latest: %v stderr=%s", setupErr2, setupStderr2)
+	}
 
 	stdout, stderr, err := runCLI(t, env.server.URL, "escrow", "checkpoint-latest", id)
 	if err != nil {

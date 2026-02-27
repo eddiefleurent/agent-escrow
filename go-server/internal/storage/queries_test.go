@@ -1580,6 +1580,14 @@ func TestCheckpointValidation(t *testing.T) {
 	escrow := createTestEscrowForCheckpoints(t, db)
 
 	_, err := db.CreateCheckpoint(ctx, &Checkpoint{
+		EscrowID:    0,
+		CommittedBy: "0xWorker",
+	})
+	if err == nil {
+		t.Fatal("expected error for non-positive escrow_id")
+	}
+
+	_, err = db.CreateCheckpoint(ctx, &Checkpoint{
 		EscrowID:    escrow.ID,
 		CommittedBy: "0xWorker",
 	})
@@ -1614,6 +1622,17 @@ func TestCheckpointValidation(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for invalid metadata_json")
+	}
+
+	negativeMilestone := -1
+	_, err = db.CreateCheckpoint(ctx, &Checkpoint{
+		EscrowID:         escrow.ID,
+		MilestoneIndex:   &negativeMilestone,
+		StateSnapshotURI: "ipfs://test",
+		CommittedBy:      "0xWorker",
+	})
+	if err == nil {
+		t.Fatal("expected error for milestone_index < 0")
 	}
 }
 

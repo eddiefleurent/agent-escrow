@@ -2130,15 +2130,33 @@ func TestCheckpointCommit_InvalidCompletionPct(t *testing.T) {
 	}
 }
 
+func TestCheckpointCommit_InvalidMetadataJSON(t *testing.T) {
+	env := setup(t)
+	escrow := createCheckpointTestEscrow(t, env)
+	id := strconv.FormatInt(escrow.ID, 10)
+
+	body := `{"state_snapshot_uri":"ipfs://snap","committed_by":"0xWorker","metadata_json":"not-json"}`
+	rr := env.request(t, "POST", "/api/v1/escrows/"+id+"/checkpoints", body)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestCheckpointList(t *testing.T) {
 	env := setup(t)
 	escrow := createCheckpointTestEscrow(t, env)
 	id := strconv.FormatInt(escrow.ID, 10)
 
-	env.request(t, "POST", "/api/v1/escrows/"+id+"/checkpoints",
+	rrSetup1 := env.request(t, "POST", "/api/v1/escrows/"+id+"/checkpoints",
 		`{"state_snapshot_uri":"ipfs://snap1","committed_by":"0xWorker","milestone_index":0}`)
-	env.request(t, "POST", "/api/v1/escrows/"+id+"/checkpoints",
+	if rrSetup1.Code != http.StatusCreated {
+		t.Fatalf("expected setup checkpoint 1 to return 201, got %d: %s", rrSetup1.Code, rrSetup1.Body.String())
+	}
+	rrSetup2 := env.request(t, "POST", "/api/v1/escrows/"+id+"/checkpoints",
 		`{"state_snapshot_uri":"ipfs://snap2","committed_by":"0xWorker","milestone_index":1}`)
+	if rrSetup2.Code != http.StatusCreated {
+		t.Fatalf("expected setup checkpoint 2 to return 201, got %d: %s", rrSetup2.Code, rrSetup2.Body.String())
+	}
 
 	rr := env.request(t, "GET", "/api/v1/escrows/"+id+"/checkpoints", "")
 	if rr.Code != http.StatusOK {
@@ -2166,6 +2184,17 @@ func TestCheckpointList(t *testing.T) {
 	}
 }
 
+func TestCheckpointList_InvalidMilestoneFilter(t *testing.T) {
+	env := setup(t)
+	escrow := createCheckpointTestEscrow(t, env)
+	id := strconv.FormatInt(escrow.ID, 10)
+
+	rr := env.request(t, "GET", "/api/v1/escrows/"+id+"/checkpoints?milestone_index=-1", "")
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestCheckpointList_EscrowNotFound(t *testing.T) {
 	env := setup(t)
 	rr := env.request(t, "GET", "/api/v1/escrows/99999/checkpoints", "")
@@ -2179,10 +2208,16 @@ func TestCheckpointLatest(t *testing.T) {
 	escrow := createCheckpointTestEscrow(t, env)
 	id := strconv.FormatInt(escrow.ID, 10)
 
-	env.request(t, "POST", "/api/v1/escrows/"+id+"/checkpoints",
+	rrSetup1 := env.request(t, "POST", "/api/v1/escrows/"+id+"/checkpoints",
 		`{"state_snapshot_uri":"ipfs://old","committed_by":"0xWorker"}`)
-	env.request(t, "POST", "/api/v1/escrows/"+id+"/checkpoints",
+	if rrSetup1.Code != http.StatusCreated {
+		t.Fatalf("expected setup checkpoint old to return 201, got %d: %s", rrSetup1.Code, rrSetup1.Body.String())
+	}
+	rrSetup2 := env.request(t, "POST", "/api/v1/escrows/"+id+"/checkpoints",
 		`{"state_snapshot_uri":"ipfs://latest","committed_by":"0xWorker"}`)
+	if rrSetup2.Code != http.StatusCreated {
+		t.Fatalf("expected setup checkpoint latest to return 201, got %d: %s", rrSetup2.Code, rrSetup2.Body.String())
+	}
 
 	rr := env.request(t, "GET", "/api/v1/escrows/"+id+"/checkpoints/latest", "")
 	if rr.Code != http.StatusOK {
@@ -2192,6 +2227,17 @@ func TestCheckpointLatest(t *testing.T) {
 	resp := decodeJSON(t, rr)
 	if resp["state_snapshot_uri"] != "ipfs://latest" {
 		t.Fatalf("expected latest URI, got %v", resp["state_snapshot_uri"])
+	}
+}
+
+func TestCheckpointLatest_InvalidMilestoneFilter(t *testing.T) {
+	env := setup(t)
+	escrow := createCheckpointTestEscrow(t, env)
+	id := strconv.FormatInt(escrow.ID, 10)
+
+	rr := env.request(t, "GET", "/api/v1/escrows/"+id+"/checkpoints/latest?milestone_index=999", "")
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 

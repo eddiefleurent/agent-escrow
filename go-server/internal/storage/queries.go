@@ -2010,6 +2010,9 @@ func scanCheckpoint(row interface{ Scan(...any) error }) (*Checkpoint, error) {
 const checkpointColumns = `id, escrow_id, milestone_index, state_snapshot_uri, snapshot_hash, schema_version, committed_by, completion_pct, metadata_json, created_at`
 
 func createCheckpointOn(ctx context.Context, q dbExecer, cp *Checkpoint) (*Checkpoint, error) {
+	if cp.EscrowID <= 0 {
+		return nil, errors.New("escrow_id must be > 0")
+	}
 	if cp.StateSnapshotURI == "" {
 		return nil, errors.New("state_snapshot_uri is required")
 	}
@@ -2029,6 +2032,9 @@ func createCheckpointOn(ctx context.Context, q dbExecer, cp *Checkpoint) (*Check
 
 	var milestoneIdx any
 	if cp.MilestoneIndex != nil {
+		if *cp.MilestoneIndex < 0 {
+			return nil, errors.New("milestone_index must be >= 0")
+		}
 		milestoneIdx = *cp.MilestoneIndex
 	}
 	var completionPct any

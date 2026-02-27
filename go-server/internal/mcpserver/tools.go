@@ -1679,6 +1679,9 @@ func (s *Server) handleCommitCheckpoint(ctx context.Context, req *mcp.CallToolRe
 	if schemaVersion == "" {
 		schemaVersion = "checkpoint-v1"
 	}
+	if args.MetadataJSON != "" && !json.Valid([]byte(args.MetadataJSON)) {
+		return textResult("metadata_json must be valid JSON"), nil, nil
+	}
 
 	cp, err := s.db.CreateCheckpoint(ctx, &storage.Checkpoint{
 		EscrowID:         escrow.ID,
@@ -1731,6 +1734,9 @@ func (s *Server) handleListCheckpoints(ctx context.Context, req *mcp.CallToolReq
 		if parseErr != nil {
 			return textResult(fmt.Sprintf("invalid milestone_index: %v", parseErr)), nil, nil
 		}
+		if v < 0 || v >= escrow.MilestoneCount {
+			return textResult(fmt.Sprintf("milestone_index %d out of range [0, %d)", v, escrow.MilestoneCount)), nil, nil
+		}
 		milestoneIndex = &v
 	}
 
@@ -1760,6 +1766,9 @@ func (s *Server) handleGetLatestCheckpoint(ctx context.Context, req *mcp.CallToo
 		v, parseErr := strconv.Atoi(ms)
 		if parseErr != nil {
 			return textResult(fmt.Sprintf("invalid milestone_index: %v", parseErr)), nil, nil
+		}
+		if v < 0 || v >= escrow.MilestoneCount {
+			return textResult(fmt.Sprintf("milestone_index %d out of range [0, %d)", v, escrow.MilestoneCount)), nil, nil
 		}
 		milestoneIndex = &v
 	}
