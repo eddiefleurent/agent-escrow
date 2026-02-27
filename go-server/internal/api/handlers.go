@@ -698,6 +698,13 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(atts) > 0 {
 			chainResult := attestation.ValidateChain(atts, nil, time.Now())
+			if !chainResult.Valid {
+				writeJSON(w, http.StatusBadRequest, map[string]string{
+					"error":   "attestation chain validation failed",
+					"reasons": strings.Join(chainResult.Reasons, "; "),
+				})
+				return
+			}
 			if h.persistAttestationChain(r.Context(), w, id, req.MilestoneIndex, chainResult, atts) {
 				return
 			}
