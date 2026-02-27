@@ -145,7 +145,7 @@ POST /api/v1/rfqs
 
 Required fields: `title`, `description`, `buyer`, `budget_min`, `budget_max`, `deadline`, `review_period_seconds`, `dispute_period_seconds`, `arbitrator_timeout_seconds`, `expires_at`
 
-Optional fields: `token`, `verifier`, `arbitrator`, `worker_stake`, `milestones_json`, `requirements_json`
+Optional fields: `token`, `verifier`, `arbitrator`, `worker_stake`, `milestones_json`, `requirements_json`, `required_credentials_json` (JSON array of credential requirement selectors, e.g. `[{"domain":"code-review","capabilities":["solidity"],"trusted_issuers":["0x..."]}]`), `commit_deadline`, `reveal_deadline`
 
 #### `rfq list`
 
@@ -178,21 +178,35 @@ No body.
 
 ### `bid`
 
-#### `bid place <rfq-id>` (body required)
+#### `bid commit <rfq-id>` (body required)
 
 ```
-POST /api/v1/rfqs/{id}/bids
+POST /api/v1/rfqs/{id}/bids/commit
 ```
 
-Required fields: `bidder`, `amount`, `expires_at`
+Required fields: `bidder`, `commitment` (0x-prefixed 32-byte hex hash), `nonce`
 
-Optional fields: `estimated_duration` (int, seconds), `reputation_bond`, `milestones_json`, `message`
+Submits a sealed-bid commitment during the commit phase (before `commit_deadline`).
+
+#### `bid reveal <rfq-id>` (body required)
+
+```
+POST /api/v1/rfqs/{id}/bids/reveal
+```
+
+Required fields: `bidder`, `nonce`, `salt`, `amount`
+
+Optional fields: `expires_at` (Unix timestamp; when omitted defaults to the RFQ deadline), `estimated_duration` (int, seconds), `reputation_bond`, `milestones_json`, `message`, `stake_mandate_id`, `credentials_json` (JSON array of attestation-v1 payloads for verifiable credentials)
+
+Reveals a sealed bid during the reveal phase. The reveal must match the prior commitment hash. When `credentials_json` is provided, the server validates attestation signatures, subject binding, and expiry, then matches against the RFQ's `required_credentials_json`.
 
 #### `bid list <rfq-id>`
 
 ```
 GET /api/v1/rfqs/{id}/bids
 ```
+
+Returns bids with `credential_verified` and `credential_match_summary` fields.
 
 #### `bid accept <rfq-id>` (body required)
 
@@ -202,7 +216,7 @@ POST /api/v1/rfqs/{id}/accept
 
 Fields: `bid_id` (required, int), `caller` (optional)
 
-Accepting a bid atomically creates an on-chain escrow.
+Accepting a bid atomically creates an on-chain escrow. When the RFQ has `required_credentials_json`, only bids with `credential_verified=true` can be accepted.
 
 ---
 

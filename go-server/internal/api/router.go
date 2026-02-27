@@ -45,6 +45,9 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	mux.HandleFunc("GET /api/v1/dcts/audit", h.ListDCTAudit)
 	mux.HandleFunc("GET /api/v1/escrows/{id}/dcts", h.ListEscrowDCTs)
 
+	// Bazaar-compatible discovery metadata (paper §4.6 Table 3, Bazaar extensions)
+	mux.HandleFunc("GET /api/v1/bazaar/discovery", h.BazaarDiscovery)
+
 	// RFQ bidding protocol endpoints (paper §6.1)
 	mux.HandleFunc("POST /api/v1/rfqs", h.CreateRFQ)
 	mux.HandleFunc("GET /api/v1/rfqs", h.ListRFQs)

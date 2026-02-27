@@ -44,7 +44,7 @@ The paper defines intelligent delegation across five pillars (Section 4), nine t
 | **Dynamic Assessment** | 4.1, 4.2 | Task decomposition, capability matching, smart-contract formalization | Settlement kernel (V1) → Bidding marketplace (V2) → Decomposition tooling (V3) |
 | **Adaptive Execution** | 4.4 | Runtime re-delegation, failure recovery, checkpoint-based re-allocation | Timeout/escalation (V1) → Milestones + backup agents (V2) → Checkpoint/resume (V3) |
 | **Structural Transparency** | 4.5, 4.8 | Monitoring (outcome + process), verifiable task completion, attestation chains | Events + hash commitments (V1) → Milestones + L0-L3 subscriptions (V2) → Attestation chains + ZK verification (V3) |
-| **Scalable Market Coordination** | 4.3, 4.6 | Multi-objective optimization, reputation, trust calibration | Designated trust (V1) → Reputation + complexity floor + RFQ bidding (V2) → Credentials + market stability (V3) |
+| **Scalable Market Coordination** | 4.3, 4.6 | Multi-objective optimization, reputation, trust calibration, Web of Trust | Designated trust (V1) → Reputation + complexity floor + RFQ bidding (V2) → Verifiable credentials (attestation-v1) + market stability (V3) |
 | **Systemic Resilience** | 4.7, 4.9 | Permission handling, privilege attenuation, security defense-in-depth | Role gates + reentrancy guard (V1) → Emergency response + stake-based Sybil resistance (V2) → DCT attenuation + principal authorization layer + tiered assurance (V3) |
 
 The paper also defines ethical dimensions (Section 5):
@@ -96,7 +96,7 @@ The paper's insight (Section 6): extend existing agent protocols rather than com
 |---|---|---|---|
 | **MCP** (Anthropic) | Liability, reputation, trust, conditional settlement | MCP server with escrow tools; future: monitoring stream, DCT-scoped permissions | V1 (complete) |
 | **[x402](https://docs.cdp.coinbase.com/x402/welcome)** (Coinbase) | Stateless payment; no conditionality, dispute resolution, or verification | Gasless escrow funding rail (EIP-3009 via facilitator); AP2 mandate funding mechanism; complexity floor calibration | V2 |
-| **[x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar)** (Coinbase) | Discovery only; no bidding, negotiation, or capability matching | Service discovery substrate for Task_RFQ; credential metadata via Bazaar extensions | V2-V3 |
+| **[x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar)** (Coinbase) | Discovery only; no bidding, negotiation, or capability matching | Service discovery substrate for Task_RFQ; credential metadata via `GET /api/v1/bazaar/discovery` (attestation-v1 profile, endpoint docs) | V2-V3 |
 | **A2A** (Google) | Verification, escrow, conditional settlement | Settlement adapter agent card with `verification_policy` + `escrow_trigger`; Bazaar-discoverable | V2 |
 | **AP2** (Google) | Conditional settlement, milestone releases, clawback | Mandate-to-escrow funding bridge via x402 payment rail; stake-on-bid Sybil resistance | V2 |
 | **UCP** | Delegation-specific settlement for computational tasks | UCP fulfillment provider exposing escrow lifecycle | V3 |
@@ -390,6 +390,7 @@ go-server/
     indexer/indexer.go             Event polling -> DB reconciliation
     bidding/
       bidding.go                   Shared bidding protocol logic (RFQ + Bid lifecycle)
+      credentials.go               Attestation-v1 verification, credential requirements matching (paper §4.6 Table 3)
     a2a/
       types.go                     A2A protocol types (AgentCard, Task, verification_policy)
       service.go                   A2A-to-escrow lifecycle mapping
@@ -444,8 +445,8 @@ SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 | `submissions` | Worker submission records |
 | `disputes` | Dispute and resolution records |
 | `reputation` | Per-address, per-role outcome counters (completed, disputed, failed) indexed from on-chain events |
-| `rfqs` | Task Request for Quote broadcasts (paper §6.1: Task_RFQ) |
-| `bids` | Signed Bid_Objects from worker agents (paper §6.1: Bid_Object); optional `stake_mandate_id` for Sybil resistance |
+| `rfqs` | Task Request for Quote broadcasts (paper §6.1: Task_RFQ); optional `required_credentials_json` for credential-gated bidding |
+| `bids` | Signed Bid_Objects from worker agents (paper §6.1: Bid_Object); optional `stake_mandate_id` for Sybil resistance; `credentials_json` (attestation-v1 payloads), `credential_verified` when RFQ has requirements |
 | `ap2_mandates` | AP2 mandate records for gasless escrow funding via x402 facilitator |
 | `a2a_tasks` | A2A protocol tasks linked to escrows (paper §6: A2A Task object extension) |
 | `chain_logs` | Raw chain event log (idempotent by tx_hash + log_index) |
@@ -533,6 +534,8 @@ The bidding protocol implements the paper's decentralized market mechanism (§4.
 5. Acceptance atomically creates an on-chain escrow, closes the RFQ, and rejects remaining bids
 
 **Data model:** Two new tables (`rfqs`, `bids`) with status-based lifecycle management. RFQs have budget ranges enabling competitive bidding within buyer constraints. Both RFQs and bids have expiry timestamps checked at read time (no background cleanup needed).
+
+**Verifiable bid credentials (attestation-v1).** RFQ buyers can specify `required_credentials_json` with domain/capability/trusted-issuer selectors (paper §4.6 Table 3: Web of Trust; §6.1: Bid_Object). Workers present signed attestation-v1 payloads during bid reveal. The server verifies secp256k1 signatures, subject binding (bidder must match attestation subject_address), expiry, and matches attestations against requirements. Accept is gated on `credential_verified` when requirements are present — bids that fail credential verification cannot be accepted. Bazaar-compatible discovery metadata at `GET /api/v1/bazaar/discovery` exposes credential schemas and endpoint documentation. The attestation format includes an optional `issuer_did` field, forward-compatible with DID methods for V4.
 
 ### A2A Settlement Adapter (Paper §6)
 
@@ -644,6 +647,7 @@ The emergency protocol spans on-chain (factory + escrow contracts) and off-chain
 | POST | `/api/v1/rfqs/{id}/bids/reveal` | Reveal sealed bid during reveal phase |
 | GET | `/api/v1/rfqs/{id}/bids` | List bids for RFQ |
 | POST | `/api/v1/rfqs/{id}/accept` | Accept bid and create escrow |
+| GET | `/api/v1/bazaar/discovery` | Bazaar-compatible discovery metadata (credential schemas, attestation-v1 profile, endpoint docs) |
 | GET | `/api/v1/events` | SSE event stream for all escrows (query: granularity) |
 | GET | `/api/v1/escrows/{id}/events` | SSE event stream for specific escrow (query: granularity) |
 | GET | `/api/v1/events/ws` | WebSocket event stream (subscription message protocol) |

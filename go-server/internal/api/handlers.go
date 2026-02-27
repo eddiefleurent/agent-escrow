@@ -946,6 +946,7 @@ type createRFQRequest struct {
 	WorkerStake              string `json:"worker_stake,omitempty"`
 	MilestonesJSON           string `json:"milestones_json,omitempty"`
 	RequirementsJSON         string `json:"requirements_json,omitempty"`
+	RequiredCredentialsJSON  string `json:"required_credentials_json,omitempty"`
 	CommitDeadline           string `json:"commit_deadline,omitempty"`
 	RevealDeadline           string `json:"reveal_deadline,omitempty"`
 	ExpiresAt                string `json:"expires_at"`
@@ -1017,6 +1018,7 @@ func (h *Handlers) CreateRFQ(w http.ResponseWriter, r *http.Request) {
 		WorkerStake:              req.WorkerStake,
 		MilestonesJSON:           req.MilestonesJSON,
 		RequirementsJSON:         req.RequirementsJSON,
+		RequiredCredentialsJSON:  req.RequiredCredentialsJSON,
 		CommitDeadline:           commitDeadline,
 		RevealDeadline:           revealDeadline,
 		ExpiresAt:                expiresAt,
@@ -1162,6 +1164,7 @@ type revealBidRequest struct {
 	Message           string `json:"message,omitempty"`
 	ExpiresAt         string `json:"expires_at"`
 	StakeMandateID    string `json:"stake_mandate_id,omitempty"`
+	CredentialsJSON   string `json:"credentials_json,omitempty"`
 }
 
 func (h *Handlers) CommitBid(w http.ResponseWriter, r *http.Request) {
@@ -1227,6 +1230,7 @@ func (h *Handlers) RevealBid(w http.ResponseWriter, r *http.Request) {
 		Message:           req.Message,
 		ExpiresAt:         expiresAt,
 		StakeMandateID:    req.StakeMandateID,
+		CredentialsJSON:   req.CredentialsJSON,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -1542,6 +1546,49 @@ func (h *Handlers) ListEmergencyActions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"actions": actions, "count": len(actions)})
+}
+
+// BazaarDiscovery returns Bazaar-compatible discovery metadata for credential schemas
+// used in the RFQ/bid protocol (paper §4.6 Table 3, Bazaar discovery extensions).
+func (h *Handlers) BazaarDiscovery(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"protocol":    "agent-escrow",
+		"version":     "v1",
+		"description": "Escrow-based delegation marketplace with verifiable bid credentials",
+		"credential_schemas": map[string]any{
+			"attestation-v1": map[string]any{
+				"profile":     "attestation-v1",
+				"description": "Signed capability attestation (secp256k1 over canonical message)",
+				"fields": map[string]string{
+					"profile":         "Must be 'attestation-v1'",
+					"issuer_address":  "Ethereum address of the endorser",
+					"issuer_did":      "Optional DID identifier for the issuer (forward-compatible)",
+					"subject_address": "Ethereum address of the attested agent (must match bidder)",
+					"domain":          "Capability domain (e.g. 'code-review', 'smart-contract-audit')",
+					"capabilities":    "JSON array of specific capabilities within the domain",
+					"issued_at":       "Unix timestamp when the attestation was created",
+					"expires_at":      "Unix timestamp when the attestation expires",
+					"nonce":           "Unique nonce to prevent replay",
+					"signature":       "0x-prefixed secp256k1 signature (65 bytes) over the canonical message",
+				},
+				"canonical_message_format": "attestation-v1|issuer|subject|domain|cap1,cap2,...|issued_at|expires_at|nonce",
+			},
+		},
+		"rfq_credential_requirement_schema": map[string]any{
+			"description": "Buyer-specified credential filter attached to an RFQ",
+			"fields": map[string]string{
+				"domain":          "Required capability domain",
+				"capabilities":    "JSON array of required capabilities",
+				"trusted_issuers": "Optional array of trusted issuer addresses",
+			},
+		},
+		"endpoints": map[string]string{
+			"create_rfq_attested":          "POST /api/v1/rfqs (include required_credentials_json)",
+			"reveal_bid_with_attestations": "POST /api/v1/rfqs/{id}/bids/reveal (include credentials_json)",
+			"list_bids_attested":           "GET /api/v1/rfqs/{id}/bids",
+			"bazaar_discovery":             "GET /api/v1/bazaar/discovery",
+		},
+	})
 }
 
 func isValidAddress(s string) bool {

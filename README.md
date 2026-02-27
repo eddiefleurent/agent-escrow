@@ -113,6 +113,9 @@ POST /api/v1/escrows/{id}/abort-milestones Abort remaining milestones
 POST /api/v1/escrows/{id}/activate-backup Activate backup worker
 GET  /api/v1/reputation/{address} Read on-chain outcome counters
 
+# Bazaar discovery
+GET  /api/v1/bazaar/discovery   Credential schema metadata
+
 # RFQ/bidding
 POST /api/v1/rfqs
 GET  /api/v1/rfqs
@@ -153,7 +156,7 @@ POST /a2a
 
 **V2 -- Market Primitives**: Complete (11/11 items). ERC20/USDC payments, worker stake, milestone-based escrow, backup agent clause, on-chain reputation, complexity floor, bidding protocol (Task_RFQ + Bid_Object), A2A settlement adapter, AP2 mandate-to-escrow bridge, real-time event subscriptions (SSE/WebSocket + MCP polling), and emergency response protocol.
 
-**V3 -- Delegation Intelligence**: In progress. DCTs (Delegation Capability Tokens) now enforce strict canonical profile `dct-profile-v1` (breaking dev-only, no legacy compatibility), deterministic caveat encoding, strict attenuation, full chain validation, revoke, and automatic invalidation on terminal escrow/emergency states across HTTP + MCP + `escrow-cli`. Remaining V3 items include ZK verification, checkpoint/resume, tiered service levels, multi-verifier quorum, and attestation chains.
+**V3 -- Delegation Intelligence**: In progress. DCTs (Delegation Capability Tokens) now enforce strict canonical profile `dct-profile-v1` (breaking dev-only, no legacy compatibility), deterministic caveat encoding, strict attenuation, full chain validation, revoke, and automatic invalidation on terminal escrow/emergency states across HTTP + MCP + `escrow-cli`. Verifiable bid credentials (attestation-v1 profile): buyers specify credential requirements on RFQs, workers present signed attestations during bid reveal, server verifies signatures and matches requirements, accept gated on credential match. Bazaar-compatible discovery metadata at `GET /api/v1/bazaar/discovery`. Remaining V3 items include ZK verification, checkpoint/resume, tiered service levels, multi-verifier quorum, and attestation chains.
 
 **V4 -- Ethical Safeguards**: Planned. Curriculum-aware task routing, liability firebreaks, governance safety floors.
 

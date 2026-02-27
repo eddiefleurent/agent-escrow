@@ -101,6 +101,7 @@ type createRFQArgs struct {
 	WorkerStake              FlexibleString `json:"worker_stake,omitempty" jsonschema:"Required worker stake; omit or 0 for none"`
 	MilestonesJSON           string         `json:"milestones_json,omitempty" jsonschema:"JSON array of milestone specs"`
 	RequirementsJSON         string         `json:"requirements_json,omitempty" jsonschema:"JSON: capability requirements, tags, constraints"`
+	RequiredCredentialsJSON  string         `json:"required_credentials_json,omitempty" jsonschema:"JSON array of credential requirement selectors [{domain, capabilities, trusted_issuers}]. Bidders must present matching attestations."`
 	CommitDeadline           FlexibleString `json:"commit_deadline,omitempty" jsonschema:"Unix timestamp: end of commit phase (sealed bids)"`
 	RevealDeadline           FlexibleString `json:"reveal_deadline,omitempty" jsonschema:"Unix timestamp: end of reveal phase (must be >= commit_deadline and <= deadline)"`
 	ExpiresAt                FlexibleString `json:"expires_at" jsonschema:"Unix timestamp: when the RFQ stops accepting bids (distinct from deadline which is when work must be done)"`
@@ -125,6 +126,7 @@ type revealBidArgs struct {
 	Message           string         `json:"message,omitempty" jsonschema:"Free-form bid justification"`
 	ExpiresAt         FlexibleString `json:"expires_at,omitempty" jsonschema:"Unix timestamp: bid expiry (must not exceed RFQ deadline)"`
 	StakeMandateID    string         `json:"stake_mandate_id,omitempty" jsonschema:"Optional AP2 mandate ID for Sybil-resistant stake-on-bid (paper §6)"`
+	CredentialsJSON   string         `json:"credentials_json,omitempty" jsonschema:"JSON array of attestation-v1 payloads proving bidder capabilities (paper §4.6 Table 3)"`
 }
 
 type listBidsArgs struct {
@@ -312,7 +314,7 @@ func (s *Server) registerTools(srv *mcp.Server) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "create_rfq",
-		Description: "Broadcast a Task_RFQ (Request for Quote) describing a task for agents to bid on. Supports sealed bidding with commit/reveal windows. 'deadline' is task submission deadline; 'commit_deadline' and 'reveal_deadline' define bid privacy windows. Paper §6.1: Task_RFQ broadcast.",
+		Description: "Broadcast a Task_RFQ (Request for Quote) describing a task for agents to bid on. Supports sealed bidding with commit/reveal windows. 'deadline' is task submission deadline; 'commit_deadline' and 'reveal_deadline' define bid privacy windows. Optional 'required_credentials_json' lets buyers require signed capability attestations from bidders. Paper §6.1: Task_RFQ broadcast; §4.6 Table 3: Web of Trust.",
 	}, s.handleCreateRFQ)
 
 	mcp.AddTool(srv, &mcp.Tool{
@@ -322,17 +324,17 @@ func (s *Server) registerTools(srv *mcp.Server) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "reveal_bid",
-		Description: "Reveal sealed-bid details during the reveal phase. The reveal must match the prior commitment.",
+		Description: "Reveal sealed-bid details during the reveal phase. The reveal must match the prior commitment. Include 'credentials_json' with signed attestation-v1 payloads to satisfy RFQ credential requirements.",
 	}, s.handleRevealBid)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_bids",
-		Description: "List revealed bids for an RFQ (buyer view) or by bidder address (worker view). Each bid includes an expired field.",
+		Description: "List revealed bids for an RFQ (buyer view) or by bidder address (worker view). Each bid includes expired and credential_verified fields.",
 	}, s.handleListBids)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "accept_bid",
-		Description: "Accept a bid on an RFQ. WARNING: This immediately deploys a new escrow contract on-chain (irreversible, costs gas). Returns escrow_id — the next step is to call fund_escrow. Paper §6.1: bid acceptance formalizes into escrow.",
+		Description: "Accept a bid on an RFQ. WARNING: This immediately deploys a new escrow contract on-chain (irreversible, costs gas). Returns escrow_id — the next step is to call fund_escrow. When the RFQ has required_credentials, only bids with credential_verified=true can be accepted. Paper §6.1: bid acceptance formalizes into escrow.",
 	}, s.handleAcceptBid)
 
 	mcp.AddTool(srv, &mcp.Tool{
@@ -1267,6 +1269,7 @@ func (s *Server) handleCreateRFQ(ctx context.Context, req *mcp.CallToolRequest, 
 		WorkerStake:              args.WorkerStake.String(),
 		MilestonesJSON:           args.MilestonesJSON,
 		RequirementsJSON:         args.RequirementsJSON,
+		RequiredCredentialsJSON:  args.RequiredCredentialsJSON,
 		CommitDeadline:           commitDeadline,
 		RevealDeadline:           revealDeadline,
 		ExpiresAt:                expiresAt,
@@ -1339,16 +1342,24 @@ func (s *Server) handleRevealBid(ctx context.Context, req *mcp.CallToolRequest, 
 		Message:           args.Message,
 		ExpiresAt:         expiresAt,
 		StakeMandateID:    args.StakeMandateID,
+		CredentialsJSON:   args.CredentialsJSON,
 	})
 	if err != nil {
 		return textResult(err.Error()), nil, nil
 	}
 
-	return jsonResult(map[string]any{
-		"bid_id":     bid.ID,
-		"status":     bid.Status,
-		"next_steps": "Buyer can accept this bid after reveal phase ends using accept_bid.",
-	})
+	resp := map[string]any{
+		"bid_id":              bid.ID,
+		"status":              bid.Status,
+		"credential_verified": bid.CredentialVerified,
+		"next_steps":          "Buyer can accept this bid after reveal phase ends using accept_bid.",
+	}
+	if summary := bid.CredentialMatchSummary; summary != "" && summary != "{}" {
+		if json.Valid([]byte(summary)) {
+			resp["credential_match"] = json.RawMessage(summary)
+		}
+	}
+	return jsonResult(resp)
 }
 
 func (s *Server) handleListBids(ctx context.Context, req *mcp.CallToolRequest, args listBidsArgs) (*mcp.CallToolResult, any, error) {
