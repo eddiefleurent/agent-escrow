@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
@@ -38,6 +37,7 @@ var (
 	ErrInvalidChain       = errors.New("invalid delegation chain")
 	ErrInactiveEscrow     = errors.New("escrow is inactive for dct operations")
 	ErrUnauthorized       = errors.New("authorization denied")
+	ErrInternal           = errors.New("internal error")
 )
 
 type Service struct {
@@ -230,7 +230,7 @@ func (s *Service) Mint(ctx context.Context, p MintParams) (*storage.DCTToken, st
 	caller := authz.CallerFrom(ctx)
 	escrowCtx := escrowContext(escrow)
 	result := authz.Authorize(authz.OpMint, caller, escrowCtx, nil)
-	s.logAudit(ctx, authz.AuditEntry{
+	if err := s.logAudit(ctx, authz.AuditEntry{
 		Operation:     authz.OpMint,
 		Allowed:       result.Allowed,
 		CallerAddress: caller.Address,
@@ -238,7 +238,9 @@ func (s *Service) Mint(ctx context.Context, p MintParams) (*storage.DCTToken, st
 		Reason:        result.Reason,
 		RequestID:     authz.RequestIDFrom(ctx),
 		Metadata:      map[string]any{"subject": p.Subject, "caller_role": string(authz.ResolveRole(caller.Address, escrowCtx))},
-	})
+	}); err != nil {
+		return nil, "", wrapInternal("audit mint authorization decision", err)
+	}
 	if !result.Allowed {
 		return nil, "", fmt.Errorf("%w: %s", ErrUnauthorized, result.Reason)
 	}
@@ -316,7 +318,7 @@ func (s *Service) Delegate(ctx context.Context, p DelegateParams) (*storage.DCTT
 	}
 	tokenCtx := tokenContext(parent)
 	result := authz.Authorize(authz.OpDelegate, caller, escrowCtx, tokenCtx)
-	s.logAudit(ctx, authz.AuditEntry{
+	if err := s.logAudit(ctx, authz.AuditEntry{
 		Operation:     authz.OpDelegate,
 		Allowed:       result.Allowed,
 		CallerAddress: caller.Address,
@@ -325,7 +327,9 @@ func (s *Service) Delegate(ctx context.Context, p DelegateParams) (*storage.DCTT
 		Reason:        result.Reason,
 		RequestID:     authz.RequestIDFrom(ctx),
 		Metadata:      map[string]any{"subject": p.Subject},
-	})
+	}); err != nil {
+		return nil, "", wrapInternal("audit delegate authorization decision", err)
+	}
 	if !result.Allowed {
 		return nil, "", fmt.Errorf("%w: %s", ErrUnauthorized, result.Reason)
 	}
@@ -526,12 +530,13 @@ func (s *Service) Revoke(ctx context.Context, p RevokeParams) error {
 	}
 	var escrowCtx *authz.EscrowContext
 	escrow, escErr := s.DB.GetEscrow(ctx, token.EscrowID)
-	if escErr == nil {
-		escrowCtx = escrowContext(escrow)
+	if escErr != nil {
+		return wrapInternal("escrow lookup for revoke", escErr)
 	}
+	escrowCtx = escrowContext(escrow)
 	tokenCtx := tokenContext(token)
 	result := authz.Authorize(authz.OpRevoke, caller, escrowCtx, tokenCtx)
-	s.logAudit(ctx, authz.AuditEntry{
+	if err := s.logAudit(ctx, authz.AuditEntry{
 		Operation:     authz.OpRevoke,
 		Allowed:       result.Allowed,
 		CallerAddress: caller.Address,
@@ -539,7 +544,9 @@ func (s *Service) Revoke(ctx context.Context, p RevokeParams) error {
 		TokenID:       p.TokenID,
 		Reason:        result.Reason,
 		RequestID:     authz.RequestIDFrom(ctx),
-	})
+	}); err != nil {
+		return wrapInternal("audit revoke authorization decision", err)
+	}
 	if !result.Allowed {
 		return fmt.Errorf("%w: %s", ErrUnauthorized, result.Reason)
 	}
@@ -591,7 +598,31 @@ func (s *Service) EmergencyOverride(ctx context.Context, p EmergencyOverridePara
 		return errors.New("override reason is required")
 	}
 
-	s.logAudit(ctx, authz.AuditEntry{
+	if _, err := s.DB.GetEscrow(ctx, p.EscrowID); err != nil {
+		return fmt.Errorf("escrow lookup: %w", err)
+	}
+
+	caller := authz.CallerFrom(ctx)
+	if !caller.Authenticated || !strings.EqualFold(caller.Address, p.OwnerAddress) {
+		if err := s.logAudit(ctx, authz.AuditEntry{
+			Operation:     authz.Operation("emergency_override"),
+			Allowed:       false,
+			CallerAddress: firstNonEmpty(caller.Address, p.OwnerAddress),
+			EscrowID:      p.EscrowID,
+			Reason:        authz.ReasonNotAuthorizedToRevoke,
+			RequestID:     authz.RequestIDFrom(ctx),
+			Metadata: map[string]any{
+				"target_operation": p.Operation,
+				"target_caller":    p.CallerAddress,
+				"override_reason":  p.Reason,
+			},
+		}); err != nil {
+			return wrapInternal("audit emergency override denial", err)
+		}
+		return fmt.Errorf("%w: caller is not the declared owner", ErrUnauthorized)
+	}
+
+	if err := s.logAudit(ctx, authz.AuditEntry{
 		Operation:     authz.Operation("emergency_override"),
 		Allowed:       true,
 		CallerAddress: p.OwnerAddress,
@@ -603,12 +634,17 @@ func (s *Service) EmergencyOverride(ctx context.Context, p EmergencyOverridePara
 			"target_caller":    p.CallerAddress,
 			"override_reason":  p.Reason,
 		},
-	})
+	}); err != nil {
+		return wrapInternal("audit emergency override allowance", err)
+	}
 
 	switch strings.ToLower(p.Operation) {
 	case "revoke_all":
 		_, err := s.RevokeByEscrow(ctx, p.EscrowID, "emergency_override: "+p.Reason, p.OwnerAddress)
-		return err
+		if err != nil {
+			return wrapInternal("revoke by escrow in emergency override", err)
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported override operation: %s", p.Operation)
 	}
@@ -654,11 +690,16 @@ func safeTokenID(t *storage.DCTToken) string {
 	return t.TokenID
 }
 
-func (s *Service) logAudit(ctx context.Context, e authz.AuditEntry) {
+func (s *Service) logAudit(ctx context.Context, e authz.AuditEntry) error {
 	if s.Audit == nil {
-		return
+		return nil
 	}
 	if err := s.Audit.LogAuthzDecision(ctx, e); err != nil {
-		slog.Warn("failed to write authz audit log", "error", err, "operation", e.Operation, "allowed", e.Allowed)
+		return fmt.Errorf("audit log write: %w", err)
 	}
+	return nil
+}
+
+func wrapInternal(op string, err error) error {
+	return errors.Join(ErrInternal, fmt.Errorf("%s: %w", op, err))
 }

@@ -47,6 +47,11 @@ type SQLiteAuditStore struct {
 	DB *sql.DB
 }
 
+const (
+	defaultAuditLimit = 50
+	maxAuditLimit     = 1000
+)
+
 func (s *SQLiteAuditStore) LogAuthzDecision(ctx context.Context, e AuditEntry) error {
 	var metadataJSON string
 	if len(e.Metadata) > 0 {
@@ -80,7 +85,13 @@ func (s *SQLiteAuditStore) LogAuthzDecision(ctx context.Context, e AuditEntry) e
 
 func (s *SQLiteAuditStore) ListAuthzAudit(ctx context.Context, escrowID int64, limit, offset int) ([]AuditRecord, error) {
 	if limit <= 0 {
-		limit = 50
+		limit = defaultAuditLimit
+	}
+	if limit > maxAuditLimit {
+		limit = maxAuditLimit
+	}
+	if offset < 0 {
+		offset = 0
 	}
 
 	var rows *sql.Rows

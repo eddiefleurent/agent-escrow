@@ -145,6 +145,7 @@ package "Go Server" as server #E3F2FD {
   ap2 -down-> chain_client
   ap2 -down-> storage
   authz_engine -down-> storage : role lookup
+  authz_engine -right-> audit_store : emit decisions
   audit_store -down-> storage : audit log
   webhook -down-> storage
   webhook -right-> event_bus : publish

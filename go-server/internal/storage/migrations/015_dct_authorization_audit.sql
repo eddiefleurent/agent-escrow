@@ -5,13 +5,13 @@
 CREATE TABLE IF NOT EXISTS dct_authorization_audit (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp       TEXT NOT NULL DEFAULT (datetime('now')),
-    operation       TEXT NOT NULL,
-    allowed         INTEGER NOT NULL,
+    operation       TEXT NOT NULL CHECK(operation <> ''),
+    allowed         INTEGER NOT NULL CHECK(allowed IN (0, 1)),
     caller_address  TEXT NOT NULL,
     escrow_id       INTEGER,
     token_id        TEXT,
     parent_token_id TEXT,
-    reason          TEXT NOT NULL,
+    reason          TEXT NOT NULL CHECK(reason <> ''),
     request_id      TEXT,
     metadata        TEXT
 );

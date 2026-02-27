@@ -95,6 +95,26 @@ func TestIntrospectExpiry(t *testing.T) {
 	}
 }
 
+func TestIntrospectPublicUnauthenticated(t *testing.T) {
+	svc, escrowID := testService(t)
+	ctx := buyerCtx()
+	_, token, err := svc.Mint(ctx, MintParams{EscrowID: escrowID, Subject: "agent-a", Operations: []string{"submit_work"}, Resources: []string{"escrow:1"}, ExpiresAt: 2000})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, active, reasons, err := svc.Introspect(context.Background(), token)
+	if err != nil {
+		t.Fatalf("introspect failed: %v", err)
+	}
+	if !active {
+		t.Fatalf("expected active token for unauthenticated introspect, reasons=%v", reasons)
+	}
+	if strings.Contains(strings.Join(reasons, ","), string(authz.ReasonNotAuthenticated)) {
+		t.Fatalf("unexpected auth-only reason in introspect result: %v", reasons)
+	}
+}
+
 func TestIntrospectRevoke(t *testing.T) {
 	svc, escrowID := testService(t)
 	ctx := buyerCtx()
@@ -252,7 +272,8 @@ func TestEmergencyOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = svc.EmergencyOverride(ctx, EmergencyOverrideParams{
+	ownerCtx := callerCtx("0xowner")
+	err = svc.EmergencyOverride(ownerCtx, EmergencyOverrideParams{
 		EscrowID:      escrowID,
 		Operation:     "revoke_all",
 		CallerAddress: "0xcompromised",
@@ -271,5 +292,19 @@ func TestEmergencyOverride(t *testing.T) {
 		if tok.RevokedAt == nil {
 			t.Fatalf("expected token %s to be revoked after emergency override", tok.TokenID)
 		}
+	}
+
+	err = svc.EmergencyOverride(callerCtx("0xnotowner"), EmergencyOverrideParams{
+		EscrowID:      escrowID,
+		Operation:     "revoke_all",
+		CallerAddress: "0xcompromised",
+		Reason:        "key compromise",
+		OwnerAddress:  "0xowner",
+	})
+	if err == nil {
+		t.Fatal("expected non-owner emergency override to fail")
+	}
+	if !IsUnauthorized(err) {
+		t.Fatalf("expected ErrUnauthorized for non-owner override, got: %v", err)
 	}
 }

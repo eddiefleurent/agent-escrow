@@ -88,6 +88,24 @@ func mapDCTError(err error) (int, string) {
 	}
 }
 
+func mapEmergencyOverrideError(err error) (int, string) {
+	if err == nil {
+		return http.StatusOK, ""
+	}
+	switch {
+	case errors.Is(err, dct.ErrInternal):
+		return http.StatusInternalServerError, "internal error"
+	case errors.Is(err, dct.ErrUnauthorized),
+		errors.Is(err, sql.ErrNoRows),
+		strings.Contains(err.Error(), "owner address is required"),
+		strings.Contains(err.Error(), "override reason is required"),
+		strings.Contains(err.Error(), "unsupported override operation"):
+		return http.StatusBadRequest, err.Error()
+	default:
+		return http.StatusInternalServerError, "internal error"
+	}
+}
+
 // httpCallerCtx attaches an authenticated caller principal to the request context.
 func httpCallerCtx(r *http.Request, callerAddr string) *http.Request {
 	callerAddr = strings.TrimSpace(callerAddr)
@@ -173,6 +191,7 @@ func (h *Handlers) EmergencyOverrideDCT(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
+	r = httpCallerCtx(r, req.Owner)
 	if err := h.dctService().EmergencyOverride(r.Context(), dct.EmergencyOverrideParams{
 		EscrowID:      req.EscrowID,
 		Operation:     req.Operation,
@@ -180,7 +199,8 @@ func (h *Handlers) EmergencyOverrideDCT(w http.ResponseWriter, r *http.Request) 
 		Reason:        req.Reason,
 		OwnerAddress:  req.Owner,
 	}); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		code, msg := mapEmergencyOverrideError(err)
+		writeJSON(w, code, map[string]string{"error": msg})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "override_applied", "escrow_id": req.EscrowID})

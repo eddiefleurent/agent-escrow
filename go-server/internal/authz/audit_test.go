@@ -135,13 +135,16 @@ func TestAuditLog_ListAll(t *testing.T) {
 	ctx := context.Background()
 
 	for i := range 5 {
-		_ = store.LogAuthzDecision(ctx, AuditEntry{
+		err := store.LogAuthzDecision(ctx, AuditEntry{
 			Operation:     OpMint,
 			Allowed:       true,
 			CallerAddress: "0xbuyer",
 			EscrowID:      int64(i + 1),
 			Reason:        ReasonAllowed,
 		})
+		if err != nil {
+			t.Fatalf("insert audit entry %d: %v", i, err)
+		}
 	}
 
 	// List all (escrowID=0)

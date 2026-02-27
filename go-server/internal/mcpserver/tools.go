@@ -1150,6 +1150,7 @@ func (s *Server) handleEmergencyOverrideDCT(ctx context.Context, _ *mcp.CallTool
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
 	}
+	ctx = withCallerCtx(ctx, args.Owner)
 	if err := s.dctService().EmergencyOverride(ctx, dct.EmergencyOverrideParams{
 		EscrowID:      escrowID,
 		Operation:     args.Operation,

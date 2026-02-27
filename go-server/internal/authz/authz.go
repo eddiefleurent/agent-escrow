@@ -124,17 +124,17 @@ func RequestIDFrom(ctx context.Context) string {
 // specified escrow/token. It implements a default-deny policy: every path
 // that does not explicitly allow the operation returns a deny result.
 func Authorize(op Operation, principal Principal, escrow *EscrowContext, token *TokenContext) Result {
+	// Introspect is public — no authentication or escrow/token checks required.
+	if op == OpIntrospect {
+		return Allow()
+	}
+
 	if !principal.Authenticated {
 		return Deny(ReasonNotAuthenticated)
 	}
 
 	if principal.Frozen {
 		return Deny(ReasonCallerFrozen)
-	}
-
-	// Introspect is public — no further checks needed.
-	if op == OpIntrospect {
-		return Allow()
 	}
 
 	// Escrow state checks apply to mint, delegate, and revoke.
@@ -169,7 +169,7 @@ func Authorize(op Operation, principal Principal, escrow *EscrowContext, token *
 			return Allow()
 		}
 		// Buyer can revoke any token scoped to their escrow.
-		if escrow != nil && addressEq(principal.Address, escrow.Buyer) {
+		if escrow != nil && addressEq(principal.Address, escrow.Buyer) && token.EscrowID == escrow.EscrowID {
 			return Allow()
 		}
 		return Deny(ReasonNotAuthorizedToRevoke)

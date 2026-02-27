@@ -133,8 +133,7 @@ func TestAuthorize_Revoke_Unauthorized(t *testing.T) {
 }
 
 func TestAuthorize_Introspect_Public(t *testing.T) {
-	// Even unauthenticated callers cannot introspect (authentication is still required).
-	// But any authenticated caller can introspect.
+	// Any authenticated caller can introspect.
 	p := Principal{Address: "0xanyone", Authenticated: true}
 	r := Authorize(OpIntrospect, p, nil, nil)
 	if !r.Allowed {
@@ -145,8 +144,21 @@ func TestAuthorize_Introspect_Public(t *testing.T) {
 func TestAuthorize_Introspect_Unauthenticated(t *testing.T) {
 	p := Principal{}
 	r := Authorize(OpIntrospect, p, nil, nil)
+	if !r.Allowed {
+		t.Fatalf("expected unauthenticated introspect to be allowed, got: %s", r.Reason)
+	}
+}
+
+func TestAuthorize_Revoke_DeniedOnEscrowTokenMismatch(t *testing.T) {
+	p := Principal{Address: "0xbuyer", Authenticated: true}
+	e := &EscrowContext{EscrowID: 1, Buyer: "0xbuyer", Status: "funded"}
+	tok := &TokenContext{TokenID: "dct_abc", Subject: "0xholder", Issuer: "0xissuer", EscrowID: 2}
+	r := Authorize(OpRevoke, p, e, tok)
 	if r.Allowed {
-		t.Fatal("expected denied for unauthenticated introspect")
+		t.Fatal("expected denied when token escrow does not match buyer escrow")
+	}
+	if r.Reason != ReasonNotAuthorizedToRevoke {
+		t.Fatalf("expected caller_not_authorized_to_revoke, got %s", r.Reason)
 	}
 }
 
