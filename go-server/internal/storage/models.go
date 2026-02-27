@@ -106,6 +106,7 @@ type RFQ struct {
 	WorkerStake              string    `json:"worker_stake"`
 	MilestonesJSON           string    `json:"milestones_json"`
 	RequirementsJSON         string    `json:"requirements_json"`
+	RequiredCredentialsJSON  string    `json:"required_credentials_json"`
 	BiddingMode              string    `json:"bidding_mode"`
 	CommitDeadline           int64     `json:"commit_deadline"`
 	RevealDeadline           int64     `json:"reveal_deadline"`
@@ -117,20 +118,23 @@ type RFQ struct {
 
 // Bid represents a signed Bid_Object from a worker agent (paper §6.1).
 type Bid struct {
-	ID                int64     `json:"id"`
-	RFQID             int64     `json:"rfq_id"`
-	Bidder            string    `json:"bidder"`
-	Amount            string    `json:"amount"`
-	EstimatedDuration int64     `json:"estimated_duration"`
-	ReputationBond    string    `json:"reputation_bond"`
-	MilestonesJSON    string    `json:"milestones_json"`
-	Message           string    `json:"message"`
-	Status            string    `json:"status"`
-	EscrowID          *int64    `json:"escrow_id"`
-	ExpiresAt         int64     `json:"expires_at"`
-	StakeMandateID    string    `json:"stake_mandate_id,omitempty"` // AP2 mandate for Sybil-resistant stake-on-bid (paper §6)
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ID                     int64     `json:"id"`
+	RFQID                  int64     `json:"rfq_id"`
+	Bidder                 string    `json:"bidder"`
+	Amount                 string    `json:"amount"`
+	EstimatedDuration      int64     `json:"estimated_duration"`
+	ReputationBond         string    `json:"reputation_bond"`
+	MilestonesJSON         string    `json:"milestones_json"`
+	Message                string    `json:"message"`
+	Status                 string    `json:"status"`
+	EscrowID               *int64    `json:"escrow_id"`
+	ExpiresAt              int64     `json:"expires_at"`
+	StakeMandateID         string    `json:"stake_mandate_id,omitempty"` // AP2 mandate for Sybil-resistant stake-on-bid (paper §6)
+	CredentialsJSON        string    `json:"credentials_json"`
+	CredentialVerified     bool      `json:"credential_verified"`
+	CredentialMatchSummary string    `json:"credential_match_summary"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 // BidCommit represents a sealed-bid commitment before reveal.

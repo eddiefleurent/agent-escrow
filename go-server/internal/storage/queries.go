@@ -497,7 +497,8 @@ func (d *DB) ListReputations(ctx context.Context, minCompleted int) ([]*Reputati
 
 const rfqColumns = `id, title, description, spec_hash, buyer, token, budget_min, budget_max,
 	deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds,
-	verifier, arbitrator, worker_stake, milestones_json, requirements_json, bidding_mode, commit_deadline, reveal_deadline,
+	verifier, arbitrator, worker_stake, milestones_json, requirements_json, required_credentials_json,
+	bidding_mode, commit_deadline, reveal_deadline,
 	status, expires_at, created_at, updated_at`
 
 func scanRFQ(scanner interface{ Scan(...any) error }) (*RFQ, error) {
@@ -507,6 +508,7 @@ func scanRFQ(scanner interface{ Scan(...any) error }) (*RFQ, error) {
 		&r.BudgetMin, &r.BudgetMax, &r.Deadline, &r.ReviewPeriodSeconds,
 		&r.DisputePeriodSeconds, &r.ArbitratorTimeoutSeconds,
 		&r.Verifier, &r.Arbitrator, &r.WorkerStake, &r.MilestonesJSON, &r.RequirementsJSON,
+		&r.RequiredCredentialsJSON,
 		&r.BiddingMode, &r.CommitDeadline, &r.RevealDeadline,
 		&r.Status, &r.ExpiresAt, &createdAt, &updatedAt)
 	if err != nil {
@@ -527,12 +529,13 @@ func (d *DB) CreateRFQ(ctx context.Context, r *RFQ) (*RFQ, error) {
 	res, err := d.db.ExecContext(ctx,
 		`INSERT INTO rfqs (title, description, spec_hash, buyer, token, budget_min, budget_max,
 			deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds,
-			verifier, arbitrator, worker_stake, milestones_json, requirements_json,
+			verifier, arbitrator, worker_stake, milestones_json, requirements_json, required_credentials_json,
 			bidding_mode, commit_deadline, reveal_deadline, status, expires_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.Title, r.Description, r.SpecHash, r.Buyer, r.Token, r.BudgetMin, r.BudgetMax,
 		r.Deadline, r.ReviewPeriodSeconds, r.DisputePeriodSeconds, r.ArbitratorTimeoutSeconds,
 		r.Verifier, r.Arbitrator, r.WorkerStake, r.MilestonesJSON, r.RequirementsJSON,
+		r.RequiredCredentialsJSON,
 		r.BiddingMode, r.CommitDeadline, r.RevealDeadline, r.Status, r.ExpiresAt,
 	)
 	if err != nil {
@@ -615,16 +618,21 @@ func (d *DB) UpdateRFQStatusTx(ctx context.Context, tx *sql.Tx, id int64, status
 // Bid queries
 
 const bidColumns = `id, rfq_id, bidder, amount, estimated_duration, reputation_bond,
-	milestones_json, message, status, escrow_id, expires_at, stake_mandate_id, created_at, updated_at`
+	milestones_json, message, status, escrow_id, expires_at, stake_mandate_id,
+	credentials_json, credential_verified, credential_match_summary,
+	created_at, updated_at`
 
 func scanBid(scanner interface{ Scan(...any) error }) (*Bid, error) {
 	b := &Bid{}
 	var createdAt, updatedAt string
 	var escrowID sql.NullInt64
 	var stakeMandateID sql.NullString
+	var credentialVerifiedInt int
 	err := scanner.Scan(&b.ID, &b.RFQID, &b.Bidder, &b.Amount, &b.EstimatedDuration,
 		&b.ReputationBond, &b.MilestonesJSON, &b.Message, &b.Status,
-		&escrowID, &b.ExpiresAt, &stakeMandateID, &createdAt, &updatedAt)
+		&escrowID, &b.ExpiresAt, &stakeMandateID,
+		&b.CredentialsJSON, &credentialVerifiedInt, &b.CredentialMatchSummary,
+		&createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -635,6 +643,7 @@ func scanBid(scanner interface{ Scan(...any) error }) (*Bid, error) {
 	if stakeMandateID.Valid {
 		b.StakeMandateID = stakeMandateID.String
 	}
+	b.CredentialVerified = credentialVerifiedInt != 0
 	b.CreatedAt, err = parseSQLiteTime(createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("parse bid created_at: %w", err)
@@ -647,12 +656,22 @@ func scanBid(scanner interface{ Scan(...any) error }) (*Bid, error) {
 }
 
 func createBidOn(ctx context.Context, q dbExecer, b *Bid) (*Bid, error) {
+	credJSON := b.CredentialsJSON
+	if credJSON == "" {
+		credJSON = "[]"
+	}
+	matchSummary := b.CredentialMatchSummary
+	if matchSummary == "" {
+		matchSummary = "{}"
+	}
 	res, err := q.ExecContext(ctx,
 		`INSERT INTO bids (rfq_id, bidder, amount, estimated_duration, reputation_bond,
-			milestones_json, message, status, expires_at, stake_mandate_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			milestones_json, message, status, expires_at, stake_mandate_id,
+			credentials_json, credential_verified, credential_match_summary)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		b.RFQID, b.Bidder, b.Amount, b.EstimatedDuration, b.ReputationBond,
 		b.MilestonesJSON, b.Message, b.Status, b.ExpiresAt, nilIfEmpty(b.StakeMandateID),
+		credJSON, boolToInt(b.CredentialVerified), matchSummary,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert bid: %w", err)
@@ -742,6 +761,32 @@ func (d *DB) UpdateBidStatus(ctx context.Context, id int64, status string) error
 		return fmt.Errorf("UpdateBidStatus id=%d: %w", id, sql.ErrNoRows)
 	}
 	return nil
+}
+
+func updateBidCredentialVerificationOn(ctx context.Context, q dbExecer, bidID int64, verified bool, matchSummary string) error {
+	res, err := q.ExecContext(ctx,
+		`UPDATE bids SET credential_verified = ?, credential_match_summary = ?, updated_at = datetime('now') WHERE id = ?`,
+		boolToInt(verified), matchSummary, bidID,
+	)
+	if err != nil {
+		return fmt.Errorf("UpdateBidCredentialVerification: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("UpdateBidCredentialVerification rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("UpdateBidCredentialVerification bid=%d: %w", bidID, sql.ErrNoRows)
+	}
+	return nil
+}
+
+func (d *DB) UpdateBidCredentialVerification(ctx context.Context, bidID int64, verified bool, matchSummary string) error {
+	return updateBidCredentialVerificationOn(ctx, d.db, bidID, verified, matchSummary)
+}
+
+func (d *DB) UpdateBidCredentialVerificationTx(ctx context.Context, tx *sql.Tx, bidID int64, verified bool, matchSummary string) error {
+	return updateBidCredentialVerificationOn(ctx, tx, bidID, verified, matchSummary)
 }
 
 func acceptBidOn(ctx context.Context, q dbExecer, bidID, escrowID int64) error {

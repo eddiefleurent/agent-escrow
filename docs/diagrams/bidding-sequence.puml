@@ -27,7 +27,7 @@ skinparam note {
   FontSize 11
 }
 
-title Task_RFQ + Bid_Object Bidding Protocol\n(Paper §6.1: Task_RFQ broadcast + signed Bid_Objects)
+title Task_RFQ + Bid_Object Bidding Protocol\n(Paper §6.1: Sealed commit/reveal + verifiable credentials §4.6)
 
 actor "Buyer Agent" as Buyer
 participant "Go Server\n(MCP / HTTP)" as Server
@@ -38,20 +38,37 @@ participant "Base L2\n(Contracts)" as Chain
 
 == RFQ Broadcast ==
 
-Buyer -> Server : create_rfq / POST /api/v1/rfqs\n(title, budget_min/max, deadline, requirements)
-Server -> DB : INSERT rfq (status=open)
+Buyer -> Server : create_rfq / POST /api/v1/rfqs\n(title, budget_min/max, deadline, commit_deadline, reveal_deadline,\noptional required_credentials_json)
+Server -> DB : INSERT rfq (status=open, bidding_mode=sealed)
 Server --> Buyer : rfq_id, status=open
 
-note over Server : Workers discover RFQs via\nlist_rfqs / GET /api/v1/rfqs?status=open
+note over Server : Workers discover RFQs via list_rfqs / GET /api/v1/rfqs?status=open\nCredential schemas via Bazaar discovery: GET /api/v1/bazaar/discovery
 
-== Bid Submission ==
+== Commit Phase (sealed bids) ==
 
-WorkerA -> Server : place_bid / POST /api/v1/rfqs/{id}/bids\n(amount=200, duration=3600)
-Server -> DB : Validate: amount in [budget_min, budget_max],\nbidder != buyer, RFQ is open
-Server -> DB : INSERT bid (status=pending)
-Server --> WorkerA : bid_id, status=pending
+WorkerA -> Server : commit_bid / POST /api/v1/rfqs/{id}/bids/commit\n(commitment=0x..., nonce)
+Server -> DB : Validate: bidder != buyer, RFQ open, before commit_deadline
+Server -> DB : INSERT bid_commit (status=committed)
+Server --> WorkerA : commit_id, status=committed
 
-WorkerB -> Server : place_bid / POST /api/v1/rfqs/{id}/bids\n(amount=300, duration=7200)
+WorkerB -> Server : commit_bid / POST /api/v1/rfqs/{id}/bids/commit\n(commitment=0x..., nonce)
+Server -> DB : INSERT bid_commit (status=committed)
+Server --> WorkerB : commit_id, status=committed
+
+note over Server : Commitment = keccak256(amount|duration|salt|nonce|...)\nAmount/price hidden until reveal
+
+== Reveal Phase ==
+
+WorkerA -> Server : reveal_bid / POST /api/v1/rfqs/{id}/bids/reveal\n(amount=200, duration=3600, salt, nonce,\ncredentials_json=[attestation-v1 payloads])
+Server -> Server : Verify commitment matches stored hash
+Server -> Server : Validate attestations: signature, subject=bidder, expiry
+Server -> Server : Match credentials against RFQ required_credentials_json
+Server -> DB : INSERT bid (status=pending, credential_verified=true/false)
+Server -> DB : UPDATE bid_commit: status=revealed, bid_id=N
+Server --> WorkerA : bid_id, status=pending, credential_verified
+
+WorkerB -> Server : reveal_bid / POST /api/v1/rfqs/{id}/bids/reveal\n(amount=300, duration=7200, salt, nonce,\ncredentials_json=[...])
+Server -> Server : Verify + credential match
 Server -> DB : INSERT bid (status=pending)
 Server --> WorkerB : bid_id, status=pending
 
@@ -59,15 +76,16 @@ Server --> WorkerB : bid_id, status=pending
 
 Buyer -> Server : list_bids / GET /api/v1/rfqs/{id}/bids
 Server -> DB : SELECT bids WHERE rfq_id=?
-Server --> Buyer : [bid_A(200), bid_B(300)]
+Server --> Buyer : [bid_A(200, credential_verified), bid_B(300)]
 
-note over Buyer : Evaluate bids:\ncost, reputation, capability\n(Paper §4.3: multi-objective optimization)
+note over Buyer : Evaluate bids:\ncost, reputation, capability, credential_verified\n(Paper §4.3: multi-objective optimization)
 
 == Bid Acceptance → Escrow Formalization ==
 
 Buyer -> Server : accept_bid / POST /api/v1/rfqs/{id}/accept\n(bid_id=bid_A)
 
 group Atomic acceptance
+  Server -> Server : If required_credentials present:\nreject unless bid.credential_verified
   Server -> Chain : createEscrow(buyer, worker_A,\namount=200, verifier, arbitrator, deadline)
   Chain --> Server : tx_hash, escrow_address, escrow_id
 

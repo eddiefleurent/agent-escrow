@@ -85,6 +85,7 @@ type CreateRFQParams struct {
 	WorkerStake              string
 	MilestonesJSON           string
 	RequirementsJSON         string
+	RequiredCredentialsJSON  string
 	CommitDeadline           int64
 	RevealDeadline           int64
 	ExpiresAt                int64
@@ -109,6 +110,7 @@ type RevealBidParams struct {
 	Message           string
 	ExpiresAt         int64
 	StakeMandateID    string // Optional AP2 mandate ID for Sybil-resistant stake-on-bid (paper §6)
+	CredentialsJSON   string // JSON array of attestation-v1 payloads (paper §4.6 Table 3)
 }
 
 type AcceptBidParams struct {
@@ -194,6 +196,12 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 	if p.RequirementsJSON == "" {
 		p.RequirementsJSON = "{}"
 	}
+	if p.RequiredCredentialsJSON == "" {
+		p.RequiredCredentialsJSON = "[]"
+	}
+	if _, err := ParseCredentialRequirements(p.RequiredCredentialsJSON); err != nil {
+		return nil, fmt.Errorf("invalid required_credentials_json: %w", err)
+	}
 
 	specHash := crypto.Keccak256Hash([]byte(p.Title + p.Description))
 
@@ -214,6 +222,7 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 		WorkerStake:              p.WorkerStake,
 		MilestonesJSON:           p.MilestonesJSON,
 		RequirementsJSON:         p.RequirementsJSON,
+		RequiredCredentialsJSON:  p.RequiredCredentialsJSON,
 		BiddingMode:              "sealed",
 		CommitDeadline:           p.CommitDeadline,
 		RevealDeadline:           p.RevealDeadline,
@@ -498,21 +507,47 @@ func (s *Service) RevealBid(ctx context.Context, p RevealBidParams) (*storage.Bi
 		return nil, errors.New("invalid reputation_bond: negative value")
 	}
 
+	// Validate and verify attestation credentials if provided.
+	credJSON := p.CredentialsJSON
+	if credJSON == "" {
+		credJSON = "[]"
+	}
+	attestations, err := ParseAttestations(credJSON)
+	if err != nil {
+		return nil, fmt.Errorf("invalid credentials_json: %w", err)
+	}
+	now2 := time.Now()
+	for i, att := range attestations {
+		if err := ValidateAttestation(&att, p.Bidder, now2); err != nil {
+			return nil, fmt.Errorf("credential[%d] validation failed: %w", i, err)
+		}
+	}
+
+	requirements, err := ParseCredentialRequirements(rfq.RequiredCredentialsJSON)
+	if err != nil {
+		return nil, fmt.Errorf("parse rfq credential requirements: %w", err)
+	}
+	matchResult := MatchRequirements(requirements, attestations)
+	matchSummaryJSON := MarshalVerificationResult(matchResult)
+
 	dbTx, err := s.DB.BeginTx(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin db tx: %w", err)
 	}
 	bid, err := s.DB.CreateBidTx(ctx, dbTx, &storage.Bid{
-		RFQID:             p.RFQID,
-		Bidder:            p.Bidder,
-		Amount:            p.Amount,
-		EstimatedDuration: p.EstimatedDuration,
-		ReputationBond:    p.ReputationBond,
-		MilestonesJSON:    p.MilestonesJSON,
-		Message:           p.Message,
-		Status:            "pending",
-		ExpiresAt:         p.ExpiresAt,
-		StakeMandateID:    p.StakeMandateID,
+		RFQID:                  p.RFQID,
+		Bidder:                 p.Bidder,
+		Amount:                 p.Amount,
+		EstimatedDuration:      p.EstimatedDuration,
+		ReputationBond:         p.ReputationBond,
+		MilestonesJSON:         p.MilestonesJSON,
+		Message:                p.Message,
+		Status:                 "pending",
+		ExpiresAt:              p.ExpiresAt,
+		StakeMandateID:         p.StakeMandateID,
+		CredentialsJSON:        credJSON,
+		CredentialVerified:     matchResult.Verified,
+		CredentialMatchSummary: matchSummaryJSON,
 	})
 	if err != nil {
 		dbTx.Rollback()
@@ -568,6 +603,15 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 	if bid.ExpiresAt <= now {
 		return nil, errors.New("bid has expired")
 	}
+	// Enforce credential match when the RFQ has required credentials.
+	requirements, credErr := ParseCredentialRequirements(rfq.RequiredCredentialsJSON)
+	if credErr != nil {
+		return nil, fmt.Errorf("parse rfq credential requirements: %w", credErr)
+	}
+	if len(requirements) > 0 && !bid.CredentialVerified {
+		return nil, errors.New("bid does not satisfy rfq credential requirements")
+	}
+
 	commit, err := s.DB.GetBidCommitByRevealedBidID(ctx, bid.ID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
