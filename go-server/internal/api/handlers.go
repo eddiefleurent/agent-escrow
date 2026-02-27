@@ -378,6 +378,15 @@ func (h *Handlers) GetAttestationChain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, err := h.db.GetEscrow(r.Context(), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		} else {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch escrow"})
+		}
+		return
+	}
+
 	chains, err := h.db.GetAttestationChainsByEscrow(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch attestation chains"})
@@ -407,6 +416,15 @@ func (h *Handlers) ListChildEscrows(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+
+	if _, err := h.db.GetEscrow(r.Context(), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		} else {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch escrow"})
+		}
 		return
 	}
 
@@ -670,7 +688,15 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(atts) > 0 {
 			chainResult := attestation.ValidateChain(atts, nil, time.Now())
-			acRecord, acErr := h.db.CreateAttestationChain(r.Context(), &storage.AttestationChain{
+			tx, txErr := h.db.BeginTx(r.Context())
+			if txErr != nil {
+				slog.Error("failed to begin attestation persistence transaction", "escrow_id", id, "error", txErr)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist attestation chain"})
+				return
+			}
+			defer tx.Rollback()
+
+			acRecord, acErr := h.db.CreateAttestationChainTx(r.Context(), tx, &storage.AttestationChain{
 				EscrowID:                id,
 				MilestoneIndex:          req.MilestoneIndex,
 				RootHash:                chainResult.RootHash,
@@ -678,32 +704,35 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 				VerificationSummaryJSON: attestation.MarshalChainValidationResult(chainResult),
 			})
 			if acErr != nil {
-				slog.Error("failed to persist optional attestation chain",
-					"escrow_id", id,
-					"milestone_index", req.MilestoneIndex,
-					"root_hash", chainResult.RootHash,
-					"error", acErr,
-				)
-			} else {
-				for _, att := range atts {
-					_, linkErr := h.db.CreateAttestationLink(r.Context(), &storage.AttestationLink{
-						ChainID:       acRecord.ID,
-						LinkID:        att.LinkID,
-						ParentLinkID:  att.ParentLinkID,
-						FromAddress:   att.FromAddress,
-						ToAddress:     att.ToAddress,
-						ChildEscrowID: att.ChildEscrowID,
-						TaskSpecHash:  att.TaskSpecHash,
-						OutcomeHash:   att.OutcomeHash,
-						IssuedAt:      att.IssuedAt,
-						ExpiresAt:     att.ExpiresAt,
-						Nonce:         att.Nonce,
-						Signature:     att.Signature,
-					})
-					if linkErr != nil {
-						slog.Error("failed to persist optional attestation link", "chain_id", acRecord.ID, "link_id", att.LinkID, "error", linkErr)
-					}
+				slog.Error("failed to persist attestation chain", "escrow_id", id, "error", acErr)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist attestation chain"})
+				return
+			}
+			for _, att := range atts {
+				_, linkErr := h.db.CreateAttestationLinkTx(r.Context(), tx, &storage.AttestationLink{
+					ChainID:       acRecord.ID,
+					LinkID:        att.LinkID,
+					ParentLinkID:  att.ParentLinkID,
+					FromAddress:   att.FromAddress,
+					ToAddress:     att.ToAddress,
+					ChildEscrowID: att.ChildEscrowID,
+					TaskSpecHash:  att.TaskSpecHash,
+					OutcomeHash:   att.OutcomeHash,
+					IssuedAt:      att.IssuedAt,
+					ExpiresAt:     att.ExpiresAt,
+					Nonce:         att.Nonce,
+					Signature:     att.Signature,
+				})
+				if linkErr != nil {
+					slog.Error("failed to persist attestation link", "chain_id", acRecord.ID, "link_id", att.LinkID, "error", linkErr)
+					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist attestation chain"})
+					return
 				}
+			}
+			if commitErr := tx.Commit(); commitErr != nil {
+				slog.Error("failed to commit attestation persistence transaction", "escrow_id", id, "chain_id", acRecord.ID, "error", commitErr)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist attestation chain"})
+				return
 			}
 		}
 	}

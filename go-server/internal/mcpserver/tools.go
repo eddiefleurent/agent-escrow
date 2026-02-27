@@ -879,12 +879,9 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 	addr := common.HexToAddress(escrow.EscrowAddress)
 
 	if escrow.MilestoneCount > 1 {
-		if args.MilestoneIndex.String() == "" {
-			return textResult("milestone_index required for multi-milestone escrow"), nil, nil
-		}
-		msIdx, err := parseMilestoneIndex(args.MilestoneIndex.String())
-		if err != nil {
-			return textResult(err.Error()), nil, nil
+		msIdx, msConvErr := numconv.IntToUint8(*milestoneIdxPtr, "milestone_index")
+		if msConvErr != nil {
+			return textResult(msConvErr.Error()), nil, nil
 		}
 		tx, err := s.chain.SubmitMilestone(ctx, addr, msIdx, hashBytes, args.SubmissionURI)
 		if err != nil {
