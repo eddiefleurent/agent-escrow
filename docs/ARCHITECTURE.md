@@ -45,7 +45,7 @@ The paper defines intelligent delegation across five pillars (Section 4), nine t
 | **Adaptive Execution** | 4.4 | Runtime re-delegation, failure recovery, checkpoint-based re-allocation | Timeout/escalation (V1) → Milestones + backup agents (V2) → Checkpoint/resume (V3) |
 | **Structural Transparency** | 4.5, 4.8 | Monitoring (outcome + process), verifiable task completion, attestation chains | Events + hash commitments (V1) → Milestones + L0-L3 subscriptions (V2) → Attestation chains + ZK verification (V3) |
 | **Scalable Market Coordination** | 4.3, 4.6 | Multi-objective optimization, reputation, trust calibration | Designated trust (V1) → Reputation + complexity floor + RFQ bidding (V2) → Credentials + market stability (V3) |
-| **Systemic Resilience** | 4.7, 4.9 | Permission handling, privilege attenuation, security defense-in-depth | Role gates + reentrancy guard (V1) → Emergency response + stake-based Sybil resistance (V2) → DCT attenuation + tiered assurance (V3) |
+| **Systemic Resilience** | 4.7, 4.9 | Permission handling, privilege attenuation, security defense-in-depth | Role gates + reentrancy guard (V1) → Emergency response + stake-based Sybil resistance (V2) → DCT attenuation + principal authorization layer + tiered assurance (V3) |
 
 The paper also defines ethical dimensions (Section 5):
 
@@ -400,12 +400,15 @@ go-server/
       types.go                     AP2 mandate types
       service.go                   Mandate validation, binding, fund orchestration
       handler.go                   HTTP handlers (validate, fund, get mandate)
+    authz/
+      authz.go                     Principal authorization engine: default-deny policy, role resolution, context keys (paper §4.7)
+      audit.go                     Authorization audit store: SQLite-backed decision logging for security auditing (paper §4.9)
     events/
       types.go                     Event types, GranularityLevel enum, on-chain event name mapping
       bus.go                       In-process pub/sub EventBus (publish, subscribe, heartbeat, recent events ring buffer)
     mcpserver/
       server.go                    MCP server setup
-      tools.go                     31 registered tool handlers with default feature flags enabled (core + bidding + AP2 + emergency + events + A2A + DCT)
+      tools.go                     33 registered tool handlers with default feature flags enabled (core + bidding + AP2 + emergency + events + A2A + DCT + authz)
     api/
       router.go                    HTTP mux with middleware
       handlers.go                  JSON request/response handlers
@@ -450,6 +453,7 @@ SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 | `frozen_addresses` | Addresses frozen via emergency protocol (paper §4.9) |
 | `emergency_actions` | Audit log of emergency actions (freeze, unfreeze, emergency resolve) |
 | `dct_tokens` | Delegation Capability Tokens (off-chain authorization layer): strict canonical profile (`dct-profile-v1`), deterministic caveats (`caveats_json`), lineage depth, scope (operations/resources), expiry, and revocation state |
+| `dct_authorization_audit` | Authorization decision audit log for DCT operations: every permit/deny is recorded with caller, escrow, token, reason, and request correlation ID (paper §4.7, §4.9) |
 
 ![Reputation Seed Sequence](diagrams/reputation-seed-sequence.png)
 
@@ -583,10 +587,12 @@ The emergency protocol spans on-chain (factory + escrow contracts) and off-chain
 | `get_escrow` | escrow_id | DB read (includes milestone details) |
 | `list_escrows` | role, address, status | DB query |
 | `get_reputation` | address, role (optional) | DB read (indexed from on-chain OutcomeRecorded events) |
-| `mint_dct` | escrow_id, subject, operations, resources, expires_at, issuer (optional) | Off-chain DCT mint |
-| `delegate_dct` | parent_token, subject, operations/resources subsets, expires_at, issuer (optional) | Off-chain DCT attenuation/delegation |
-| `introspect_dct` | token | Off-chain DCT introspection |
-| `revoke_dct` | token_id, reason/by (optional) | Off-chain DCT revoke |
+| `mint_dct` | escrow_id, subject, operations, resources, expires_at, issuer (optional), caller | Off-chain DCT mint (authz: buyer only) |
+| `delegate_dct` | parent_token, subject, operations/resources subsets, expires_at, issuer (optional), caller | Off-chain DCT attenuation/delegation (authz: token holder only) |
+| `introspect_dct` | token | Off-chain DCT introspection (public) |
+| `revoke_dct` | token_id, reason/by (optional), caller | Off-chain DCT revoke (authz: issuer or buyer) |
+| `emergency_override_dct` | escrow_id, operation, caller_address, reason, owner | Emergency DCT override (factory owner only) |
+| `list_dct_audit` | escrow_id (optional), limit, offset | List DCT authorization audit entries |
 | `create_rfq` | title, description, buyer, budget_min/max, commit_deadline, reveal_deadline, expires_at, deadline, etc. | DB write (off-chain) |
 | `commit_bid` | rfq_id, bidder, commitment, nonce | DB write (off-chain) |
 | `reveal_bid` | rfq_id, bidder, nonce, salt, amount, estimated_duration, expires_at, etc. | DB write (off-chain) |
@@ -623,10 +629,12 @@ The emergency protocol spans on-chain (factory + escrow contracts) and off-chain
 | POST | `/api/v1/escrows/{id}/abort-milestones` | Abort remaining milestones (buyer only) |
 | POST | `/api/v1/escrows/{id}/activate-backup` | Activate backup worker (buyer only) |
 | GET | `/api/v1/reputation/{address}` | Get reputation (query: role) |
-| POST | `/api/v1/dcts/mint` | Mint Delegation Capability Token |
-| POST | `/api/v1/dcts/delegate` | Delegate DCT with strict attenuation |
-| POST | `/api/v1/dcts/introspect` | Introspect DCT |
-| POST | `/api/v1/dcts/revoke` | Revoke DCT |
+| POST | `/api/v1/dcts/mint` | Mint DCT (body: caller for authz) |
+| POST | `/api/v1/dcts/delegate` | Delegate DCT with strict attenuation (body: caller for authz) |
+| POST | `/api/v1/dcts/introspect` | Introspect DCT (public) |
+| POST | `/api/v1/dcts/revoke` | Revoke DCT (body: caller for authz) |
+| POST | `/api/v1/dcts/emergency-override` | Emergency DCT override (factory owner only) |
+| GET | `/api/v1/dcts/audit` | List DCT authorization audit entries (query: escrow_id, limit, offset) |
 | GET | `/api/v1/escrows/{id}/dcts` | List DCTs scoped to escrow |
 | POST | `/api/v1/rfqs` | Create RFQ (Task_RFQ broadcast) |
 | GET | `/api/v1/rfqs` | List RFQs (query: status, buyer) |

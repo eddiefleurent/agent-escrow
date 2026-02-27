@@ -124,6 +124,11 @@ package "Go Server" as server #E3F2FD {
     [Event Bus\n(in-process pub/sub)] as event_bus #BBDEFB
   }
 
+  package "Authorization" as authz_pkg #E8EAF6 {
+    [Authz Engine\n(default-deny policy)] as authz_engine #C5CAE9
+    [Audit Store\n(decision logging)] as audit_store #C5CAE9
+  }
+
   package "Data Layer" as data #E1F5FE {
     [Chain Client\n(go-ethereum)] as chain_client #B3E5FC
     [Storage\n(SQLite)] as storage #B3E5FC
@@ -133,10 +138,14 @@ package "Go Server" as server #E3F2FD {
   mcp_server -down-> chain_client
   mcp_server -down-> storage
   mcp_server -right-> event_bus : subscribe_events\n(polling)
+  mcp_server -down-> authz_engine : DCT authz
   http_api -down-> chain_client
   http_api -down-> storage
+  http_api -down-> authz_engine : DCT authz
   ap2 -down-> chain_client
   ap2 -down-> storage
+  authz_engine -down-> storage : role lookup
+  audit_store -down-> storage : audit log
   webhook -down-> storage
   webhook -right-> event_bus : publish
   indexer -down-> chain_client
