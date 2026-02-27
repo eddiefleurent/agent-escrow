@@ -12,6 +12,7 @@ This project implements the ["Intelligent AI Delegation"](https://arxiv.org/abs/
 - Visual diagrams (state machine, lifecycle, architecture): `docs/diagrams/*.puml`
 - Implementation status: `docs/ROADMAP.md`
 - Setup and deploy commands: `docs/SETUP.md`
+- Source paper (full text, agent-readable): `docs/intelligent-ai-delegation.md`
 
 ## Current Architecture
 
