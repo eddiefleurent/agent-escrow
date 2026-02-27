@@ -21,9 +21,9 @@ import (
 // X-Test-Caller header. Used in tests to simulate auth middleware.
 func testCallerMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if addr := r.Header.Get("X-Test-Caller"); addr != "" {
+		if addr := strings.TrimSpace(r.Header.Get("X-Test-Caller")); addr != "" {
 			ctx := authz.WithCaller(r.Context(), authz.Principal{
-				Address:       strings.ToLower(strings.TrimSpace(addr)),
+				Address:       strings.ToLower(addr),
 				Authenticated: true,
 			})
 			r = r.WithContext(ctx)
@@ -72,6 +72,23 @@ func TestDCTHTTPFlow(t *testing.T) {
 	if mint["token"] == nil {
 		t.Fatalf("expected token in mint response: %v", mint)
 	}
+
+	// Regression: handler must trust the middleware-injected principal, not the
+	// JSON body's "caller" field. Send a mismatched caller in the body but a
+	// valid buyer in the header — the request should still be authorized.
+	mintReq["caller"] = "0xc" // mismatched — different from authenticated header
+	body, _ = json.Marshal(mintReq)
+	req, err = http.NewRequestWithContext(ctx, http.MethodPost, ts.URL+"/api/v1/dcts/mint", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request (mismatch): %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Test-Caller", "0xb") // middleware still injects authorized buyer
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil || resp2.StatusCode != http.StatusCreated {
+		t.Fatalf("mint with mismatched JSON caller failed: err=%v status=%d", err, resp2.StatusCode)
+	}
+	resp2.Body.Close()
 }
 
 func TestListDCTAuditAuth(t *testing.T) {
