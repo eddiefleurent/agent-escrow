@@ -195,6 +195,10 @@ func ValidateChain(attestations []CompletionAttestation, childEscrowIDs []int64,
 	coveredEscrows := make(map[int64]bool)
 	for _, a := range attestations {
 		if a.ChildEscrowID != nil {
+			if len(childEscrowSet) > 0 && !childEscrowSet[*a.ChildEscrowID] {
+				result.Reasons = append(result.Reasons, fmt.Sprintf("attestation link %s references unknown child escrow %d", a.LinkID, *a.ChildEscrowID))
+				return result
+			}
 			coveredEscrows[*a.ChildEscrowID] = true
 		}
 	}

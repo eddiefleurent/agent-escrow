@@ -760,6 +760,9 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 		if msErr != nil {
 			return textResult(fmt.Sprintf("invalid milestone_index: %v", msErr)), nil, nil
 		}
+		if msVal < 0 || msVal >= escrow.MilestoneCount {
+			return textResult(fmt.Sprintf("invalid milestone_index: %d out of range [0, %d)", msVal, escrow.MilestoneCount)), nil, nil
+		}
 		milestoneIdxPtr = &msVal
 	}
 
@@ -786,9 +789,49 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 			Verified:                true,
 			VerificationSummaryJSON: attestation.MarshalChainValidationResult(chainResult),
 		})
-		if acErr == nil {
+		if acErr != nil {
+			return textResult(fmt.Sprintf("failed to persist attestation chain: %v", acErr)), nil, nil
+		}
+		for _, att := range atts {
+			if _, linkErr := s.db.CreateAttestationLink(ctx, &storage.AttestationLink{
+				ChainID:       acRecord.ID,
+				LinkID:        att.LinkID,
+				ParentLinkID:  att.ParentLinkID,
+				FromAddress:   att.FromAddress,
+				ToAddress:     att.ToAddress,
+				ChildEscrowID: att.ChildEscrowID,
+				TaskSpecHash:  att.TaskSpecHash,
+				OutcomeHash:   att.OutcomeHash,
+				IssuedAt:      att.IssuedAt,
+				ExpiresAt:     att.ExpiresAt,
+				Nonce:         att.Nonce,
+				Signature:     att.Signature,
+			}); linkErr != nil {
+				return textResult(fmt.Sprintf("failed to persist attestation link %s: %v", att.LinkID, linkErr)), nil, nil
+			}
+		}
+	} else if args.AttestationChainJSON != "" && args.AttestationChainJSON != "[]" {
+		atts, parseErr := attestation.ParseCompletionAttestations(args.AttestationChainJSON)
+		if parseErr != nil {
+			return textResult(fmt.Sprintf("invalid attestation_chain_json: %v", parseErr)), nil, nil
+		}
+		if len(atts) > 0 {
+			chainResult := attestation.ValidateChain(atts, nil, time.Now())
+			if !chainResult.Valid {
+				return textResult("attestation chain validation failed: " + strings.Join(chainResult.Reasons, "; ")), nil, nil
+			}
+			acRecord, acErr := s.db.CreateAttestationChain(ctx, &storage.AttestationChain{
+				EscrowID:                escrow.ID,
+				MilestoneIndex:          milestoneIdxPtr,
+				RootHash:                chainResult.RootHash,
+				Verified:                true,
+				VerificationSummaryJSON: attestation.MarshalChainValidationResult(chainResult),
+			})
+			if acErr != nil {
+				return textResult(fmt.Sprintf("failed to persist attestation chain: %v", acErr)), nil, nil
+			}
 			for _, att := range atts {
-				_, _ = s.db.CreateAttestationLink(ctx, &storage.AttestationLink{
+				if _, linkErr := s.db.CreateAttestationLink(ctx, &storage.AttestationLink{
 					ChainID:       acRecord.ID,
 					LinkID:        att.LinkID,
 					ParentLinkID:  att.ParentLinkID,
@@ -801,36 +844,8 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 					ExpiresAt:     att.ExpiresAt,
 					Nonce:         att.Nonce,
 					Signature:     att.Signature,
-				})
-			}
-		}
-	} else if args.AttestationChainJSON != "" && args.AttestationChainJSON != "[]" {
-		atts, parseErr := attestation.ParseCompletionAttestations(args.AttestationChainJSON)
-		if parseErr == nil && len(atts) > 0 {
-			chainResult := attestation.ValidateChain(atts, nil, time.Now())
-			acRecord, acErr := s.db.CreateAttestationChain(ctx, &storage.AttestationChain{
-				EscrowID:                escrow.ID,
-				MilestoneIndex:          milestoneIdxPtr,
-				RootHash:                chainResult.RootHash,
-				Verified:                chainResult.Valid,
-				VerificationSummaryJSON: attestation.MarshalChainValidationResult(chainResult),
-			})
-			if acErr == nil {
-				for _, att := range atts {
-					_, _ = s.db.CreateAttestationLink(ctx, &storage.AttestationLink{
-						ChainID:       acRecord.ID,
-						LinkID:        att.LinkID,
-						ParentLinkID:  att.ParentLinkID,
-						FromAddress:   att.FromAddress,
-						ToAddress:     att.ToAddress,
-						ChildEscrowID: att.ChildEscrowID,
-						TaskSpecHash:  att.TaskSpecHash,
-						OutcomeHash:   att.OutcomeHash,
-						IssuedAt:      att.IssuedAt,
-						ExpiresAt:     att.ExpiresAt,
-						Nonce:         att.Nonce,
-						Signature:     att.Signature,
-					})
+				}); linkErr != nil {
+					return textResult(fmt.Sprintf("failed to persist attestation link %s: %v", att.LinkID, linkErr)), nil, nil
 				}
 			}
 		}

@@ -592,11 +592,11 @@ Attestation chains implement recursive delegation verification. When an agent su
 - Parent-link integrity (non-root links must reference existing parents)
 - Cycle detection via DFS
 - Child escrow coverage (every known child escrow must be referenced by at least one link)
-- Time-bound validation (issued_at not in future, expires_at not expired)
+- Time-bound validation (issued_at not in the future, expires_at not expired)
 
 The validated chain produces a `root_hash` (Keccak256 of sorted canonical messages) and a `ChainValidationResult` with coverage metadata.
 
-**Integration surfaces.** Attestation chains are accepted on submission (`submit_work` MCP tool and `POST /submit` HTTP endpoint via `attestation_chain_json`). When an escrow has child escrows, the attestation chain is required and must pass validation. Chains are persisted in `attestation_chains` and `attestation_links` tables and retrievable via `get_attestation_chain` MCP tool, `GET /api/v1/escrows/{id}/attestation-chain` HTTP endpoint, and `escrow-cli attestation-chain` command. The `GET /escrows/{id}` response is enriched with attestation chain summaries and child escrow IDs.
+**Integration surfaces.** Attestation chains are accepted on submission (`submit_work` MCP tool and `POST /api/v1/escrows/{id}/submit` HTTP endpoint via `attestation_chain_json`). When an escrow has child escrows, the attestation chain is required and must pass validation. Chains are persisted in `attestation_chains` and `attestation_links` tables and retrievable via `get_attestation_chain` MCP tool, `GET /api/v1/escrows/{id}/attestation-chain` HTTP endpoint, and `escrow-cli attestation-chain` command. The `GET /api/v1/escrows/{id}` response is enriched with attestation chain summaries and child escrow IDs.
 
 **Design choice: off-chain only.** Attestation chains are stored and verified entirely off-chain. On-chain settlement contracts remain unchanged -- the chain provides verifiable evidence for dispute resolution and audit, not consensus-level enforcement. This keeps gas costs low and avoids contract size bloat while preserving the paper's accountability guarantees.
 

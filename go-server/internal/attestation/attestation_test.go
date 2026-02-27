@@ -199,6 +199,30 @@ func TestValidateChain_MissingChildEscrowCoverage(t *testing.T) {
 	}
 }
 
+func TestValidateChain_UnknownChildEscrowReference(t *testing.T) {
+	key, _ := crypto.GenerateKey()
+	addr := crypto.PubkeyToAddress(key.PublicKey).Hex()
+	now := time.Now()
+
+	unknownChildID := int64(99)
+	a := CompletionAttestation{
+		Profile:       CompletionAttestationV1,
+		LinkID:        "link-unknown-child",
+		FromAddress:   addr,
+		ToAddress:     "0x0000000000000000000000000000000000000001",
+		ChildEscrowID: &unknownChildID,
+		IssuedAt:      now.Unix() - 60,
+		ExpiresAt:     now.Unix() + 3600,
+		Nonce:         "n-unknown",
+	}
+	signAttestation(t, key, &a)
+
+	result := ValidateChain([]CompletionAttestation{a}, []int64{10, 20}, now)
+	if result.Valid {
+		t.Fatal("expected unknown child escrow reference to fail")
+	}
+}
+
 func TestValidateChain_CycleDetection(t *testing.T) {
 	key1, _ := crypto.GenerateKey()
 	key2, _ := crypto.GenerateKey()

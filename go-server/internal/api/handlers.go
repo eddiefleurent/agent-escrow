@@ -350,13 +350,17 @@ func (h *Handlers) GetEscrow(w http.ResponseWriter, r *http.Request) {
 
 	// Include attestation chain summary if present.
 	chains, chainErr := h.db.GetAttestationChainsByEscrow(r.Context(), id)
-	if chainErr == nil && len(chains) > 0 {
+	if chainErr != nil {
+		slog.Error("failed to fetch optional attestation_chains for escrow response", "escrow_id", id, "result_key", "attestation_chains", "error", chainErr)
+	} else if len(chains) > 0 {
 		result["attestation_chains"] = chains
 	}
 
 	// Include child escrow count for delegation visibility.
 	children, childErr := h.db.ListChildEscrows(r.Context(), id)
-	if childErr == nil && len(children) > 0 {
+	if childErr != nil {
+		slog.Error("failed to fetch optional child_escrow_ids for escrow response", "escrow_id", id, "result_key", "child_escrow_ids", "error", childErr)
+	} else if len(children) > 0 {
 		childIDs := make([]int64, len(children))
 		for i, c := range children {
 			childIDs[i] = c.ID
@@ -598,7 +602,15 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		acRecord, acErr := h.db.CreateAttestationChain(r.Context(), &storage.AttestationChain{
+		tx, txErr := h.db.BeginTx(r.Context())
+		if txErr != nil {
+			slog.Error("failed to begin attestation persistence transaction", "escrow_id", id, "error", txErr)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist attestation chain"})
+			return
+		}
+		defer tx.Rollback()
+
+		acRecord, acErr := h.db.CreateAttestationChainTx(r.Context(), tx, &storage.AttestationChain{
 			EscrowID:                id,
 			MilestoneIndex:          req.MilestoneIndex,
 			RootHash:                chainResult.RootHash,
@@ -611,7 +623,7 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, att := range atts {
-			_, linkErr := h.db.CreateAttestationLink(r.Context(), &storage.AttestationLink{
+			_, linkErr := h.db.CreateAttestationLinkTx(r.Context(), tx, &storage.AttestationLink{
 				ChainID:       acRecord.ID,
 				LinkID:        att.LinkID,
 				ParentLinkID:  att.ParentLinkID,
@@ -627,7 +639,14 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 			})
 			if linkErr != nil {
 				slog.Error("failed to persist attestation link", "chain_id", acRecord.ID, "link_id", att.LinkID, "error", linkErr)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist attestation chain"})
+				return
 			}
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			slog.Error("failed to commit attestation persistence transaction", "escrow_id", id, "chain_id", acRecord.ID, "error", commitErr)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist attestation chain"})
+			return
 		}
 	} else if req.AttestationChainJSON != "" && req.AttestationChainJSON != "[]" {
 		// No child escrows but chain provided -- store it anyway for provenance.
@@ -645,9 +664,16 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 				Verified:                chainResult.Valid,
 				VerificationSummaryJSON: attestation.MarshalChainValidationResult(chainResult),
 			})
-			if acErr == nil {
+			if acErr != nil {
+				slog.Error("failed to persist optional attestation chain",
+					"escrow_id", id,
+					"milestone_index", req.MilestoneIndex,
+					"root_hash", chainResult.RootHash,
+					"error", acErr,
+				)
+			} else {
 				for _, att := range atts {
-					_, _ = h.db.CreateAttestationLink(r.Context(), &storage.AttestationLink{
+					_, linkErr := h.db.CreateAttestationLink(r.Context(), &storage.AttestationLink{
 						ChainID:       acRecord.ID,
 						LinkID:        att.LinkID,
 						ParentLinkID:  att.ParentLinkID,
@@ -661,6 +687,9 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 						Nonce:         att.Nonce,
 						Signature:     att.Signature,
 					})
+					if linkErr != nil {
+						slog.Error("failed to persist optional attestation link", "chain_id", acRecord.ID, "link_id", att.LinkID, "error", linkErr)
+					}
 				}
 			}
 		}

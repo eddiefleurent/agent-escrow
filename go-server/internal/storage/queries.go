@@ -1689,7 +1689,7 @@ func (d *DB) ListEmergencyActions(ctx context.Context, limit, offset int) ([]*Em
 
 // ── Attestation chain queries (paper §4.8) ──
 
-func (d *DB) CreateAttestationChain(ctx context.Context, ac *AttestationChain) (*AttestationChain, error) {
+func createAttestationChainOn(ctx context.Context, q dbExecer, ac *AttestationChain) (*AttestationChain, error) {
 	var milestoneIdx any
 	if ac.MilestoneIndex != nil {
 		milestoneIdx = *ac.MilestoneIndex
@@ -1698,7 +1698,7 @@ func (d *DB) CreateAttestationChain(ctx context.Context, ac *AttestationChain) (
 	if summaryJSON == "" {
 		summaryJSON = "{}"
 	}
-	res, err := d.db.ExecContext(ctx,
+	res, err := q.ExecContext(ctx,
 		`INSERT INTO attestation_chains (escrow_id, milestone_index, root_hash, verified, verification_summary_json)
 		 VALUES (?, ?, ?, ?, ?)`,
 		ac.EscrowID, milestoneIdx, ac.RootHash, boolToInt(ac.Verified), summaryJSON,
@@ -1710,7 +1710,40 @@ func (d *DB) CreateAttestationChain(ctx context.Context, ac *AttestationChain) (
 	if err != nil {
 		return nil, fmt.Errorf("last insert id: %w", err)
 	}
-	return d.GetAttestationChain(ctx, id)
+
+	out := &AttestationChain{}
+	var createdAt, updatedAt string
+	var verifiedInt int
+	var storedMilestoneIdx sql.NullInt64
+	err = q.QueryRowContext(ctx,
+		`SELECT id, escrow_id, milestone_index, root_hash, verified, verification_summary_json, created_at, updated_at
+		 FROM attestation_chains WHERE id = ?`, id,
+	).Scan(&out.ID, &out.EscrowID, &storedMilestoneIdx, &out.RootHash, &verifiedInt, &out.VerificationSummaryJSON, &createdAt, &updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("get attestation_chain: %w", err)
+	}
+	out.Verified = verifiedInt != 0
+	if storedMilestoneIdx.Valid {
+		v := int(storedMilestoneIdx.Int64)
+		out.MilestoneIndex = &v
+	}
+	out.CreatedAt, err = parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse created_at: %w", err)
+	}
+	out.UpdatedAt, err = parseSQLiteTime(updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse updated_at: %w", err)
+	}
+	return out, nil
+}
+
+func (d *DB) CreateAttestationChain(ctx context.Context, ac *AttestationChain) (*AttestationChain, error) {
+	return createAttestationChainOn(ctx, d.db, ac)
+}
+
+func (d *DB) CreateAttestationChainTx(ctx context.Context, tx *sql.Tx, ac *AttestationChain) (*AttestationChain, error) {
+	return createAttestationChainOn(ctx, tx, ac)
 }
 
 func (d *DB) GetAttestationChain(ctx context.Context, id int64) (*AttestationChain, error) {
@@ -1789,12 +1822,12 @@ func (d *DB) UpdateAttestationChainVerification(ctx context.Context, id int64, v
 	return err
 }
 
-func (d *DB) CreateAttestationLink(ctx context.Context, link *AttestationLink) (*AttestationLink, error) {
+func createAttestationLinkOn(ctx context.Context, q dbExecer, link *AttestationLink) (*AttestationLink, error) {
 	payloadJSON := link.PayloadJSON
 	if payloadJSON == "" {
 		payloadJSON = "{}"
 	}
-	res, err := d.db.ExecContext(ctx,
+	res, err := q.ExecContext(ctx,
 		`INSERT INTO attestation_links (chain_id, link_id, parent_link_id, from_address, to_address, child_escrow_id, task_spec_hash, outcome_hash, issued_at, expires_at, nonce, signature, payload_json)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		link.ChainID, link.LinkID, link.ParentLinkID, link.FromAddress, link.ToAddress,
@@ -1808,7 +1841,37 @@ func (d *DB) CreateAttestationLink(ctx context.Context, link *AttestationLink) (
 	if err != nil {
 		return nil, fmt.Errorf("last insert id: %w", err)
 	}
-	return d.GetAttestationLink(ctx, id)
+
+	out := &AttestationLink{}
+	var createdAt string
+	var childEscrowID sql.NullInt64
+	err = q.QueryRowContext(ctx,
+		`SELECT id, chain_id, link_id, parent_link_id, from_address, to_address, child_escrow_id,
+		        task_spec_hash, outcome_hash, issued_at, expires_at, nonce, signature, payload_json, created_at
+		 FROM attestation_links WHERE id = ?`, id,
+	).Scan(&out.ID, &out.ChainID, &out.LinkID, &out.ParentLinkID, &out.FromAddress, &out.ToAddress,
+		&childEscrowID, &out.TaskSpecHash, &out.OutcomeHash,
+		&out.IssuedAt, &out.ExpiresAt, &out.Nonce, &out.Signature, &out.PayloadJSON, &createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("get attestation_link: %w", err)
+	}
+	if childEscrowID.Valid {
+		v := childEscrowID.Int64
+		out.ChildEscrowID = &v
+	}
+	out.CreatedAt, err = parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse created_at: %w", err)
+	}
+	return out, nil
+}
+
+func (d *DB) CreateAttestationLink(ctx context.Context, link *AttestationLink) (*AttestationLink, error) {
+	return createAttestationLinkOn(ctx, d.db, link)
+}
+
+func (d *DB) CreateAttestationLinkTx(ctx context.Context, tx *sql.Tx, link *AttestationLink) (*AttestationLink, error) {
+	return createAttestationLinkOn(ctx, tx, link)
 }
 
 func (d *DB) GetAttestationLink(ctx context.Context, id int64) (*AttestationLink, error) {

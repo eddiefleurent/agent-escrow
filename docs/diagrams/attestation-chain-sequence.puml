@@ -75,7 +75,7 @@ Server -> Chain: Escrow.approve()
 
 note over B
   B signs completion-attestation-v1:
-  "A attests B completed work on E2"
+  "A attests C completed work on E2"
   canonical: profile|link_id|parent_link_id|
     from|to|child_escrow_id|task_spec_hash|
     outcome_hash|issued_at|expires_at|nonce
@@ -99,11 +99,11 @@ end
 
 == Phase 5: Retrieval & Audit ==
 
-A -> Server: GET /escrows/E1/attestation-chain
+A -> Server: GET /api/v1/escrows/E1/attestation-chain
 Server -> DB: fetch chains + links
 Server --> A: {chains: [{root_hash,\n  verified, links: [...]}]}
 
-A -> Server: GET /escrows/E1/children
+A -> Server: GET /api/v1/escrows/E1/children
 Server -> DB: ListChildEscrows(E1)
 Server --> A: {children: [E2]}
 
