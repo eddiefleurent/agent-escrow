@@ -108,15 +108,17 @@ func mapEmergencyOverrideError(err error) (int, string) {
 	}
 }
 
-// httpCallerCtx attaches an authenticated caller principal to the request context.
+// httpCallerCtx attaches a caller principal to the request context.
+// If auth middleware has already set a verified (Authenticated=true) principal,
+// it is preserved unchanged. Otherwise, the caller address from the request
+// payload is set on the principal but Authenticated remains false — request
+// JSON is never treated as proof of authentication.
 func httpCallerCtx(r *http.Request, callerAddr string) *http.Request {
-	callerAddr = strings.TrimSpace(callerAddr)
-	p := authz.Principal{
-		Address:       strings.ToLower(callerAddr),
-		Authenticated: callerAddr != "",
+	if existing := authz.CallerFrom(r.Context()); existing.Authenticated {
+		return r
 	}
-	ctx := authz.WithCaller(r.Context(), p)
-	return r.WithContext(ctx)
+	callerAddr = strings.ToLower(strings.TrimSpace(callerAddr))
+	return r.WithContext(authz.WithCaller(r.Context(), authz.Principal{Address: callerAddr}))
 }
 
 func (h *Handlers) MintDCT(w http.ResponseWriter, r *http.Request) {
@@ -208,7 +210,16 @@ func (h *Handlers) EmergencyOverrideDCT(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "override_applied", "escrow_id": req.EscrowID})
 }
 
+const maxAuditListLimit = 1000
+
 func (h *Handlers) ListDCTAudit(w http.ResponseWriter, r *http.Request) {
+	// Audit logs are privileged: only the factory owner may access them.
+	caller := authz.CallerFrom(r.Context())
+	if !caller.Authenticated || !strings.EqualFold(caller.Address, h.cfg.OwnerAddress) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
+	}
+
 	var escrowID int64
 	if v := r.URL.Query().Get("escrow_id"); v != "" {
 		var err error
@@ -220,9 +231,16 @@ func (h *Handlers) ListDCTAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	limit := 50
 	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "limit must be a positive integer"})
+			return
 		}
+		if n > maxAuditListLimit {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "limit exceeds maximum of 1000"})
+			return
+		}
+		limit = n
 	}
 	offset := 0
 	if v := r.URL.Query().Get("offset"); v != "" {

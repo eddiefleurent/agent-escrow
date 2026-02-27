@@ -6,14 +6,31 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/authz"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 )
+
+// testCallerMiddleware injects an authenticated principal based on the
+// X-Test-Caller header. Used in tests to simulate auth middleware.
+func testCallerMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if addr := r.Header.Get("X-Test-Caller"); addr != "" {
+			ctx := authz.WithCaller(r.Context(), authz.Principal{
+				Address:       strings.ToLower(strings.TrimSpace(addr)),
+				Authenticated: true,
+			})
+			r = r.WithContext(ctx)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 func TestDCTHTTPFlow(t *testing.T) {
 	db, err := storage.Open(":memory:")
@@ -33,7 +50,7 @@ func TestDCTHTTPFlow(t *testing.T) {
 
 	mock := chain.NewMockClient()
 	cfg := &config.Config{ChainID: 1, FactoryAddress: "0xf", RequestTimeout: 10 * time.Second, TxTimeout: 10 * time.Second}
-	router := NewRouter(db, mock, indexer.New(db, mock, cfg.FactoryAddress), cfg, nil)
+	router := testCallerMiddleware(NewRouter(db, mock, indexer.New(db, mock, cfg.FactoryAddress), cfg, nil))
 	ts := httptest.NewServer(router)
 	defer ts.Close()
 
@@ -44,6 +61,7 @@ func TestDCTHTTPFlow(t *testing.T) {
 		t.Fatalf("new request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Test-Caller", "0xb") // auth middleware injects verified buyer
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil || resp.StatusCode != http.StatusCreated {
 		t.Fatalf("mint failed: err=%v status=%d", err, resp.StatusCode)
@@ -54,4 +72,90 @@ func TestDCTHTTPFlow(t *testing.T) {
 	if mint["token"] == nil {
 		t.Fatalf("expected token in mint response: %v", mint)
 	}
+}
+
+func TestListDCTAuditAuth(t *testing.T) {
+	db, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	mock := chain.NewMockClient()
+	cfg := &config.Config{
+		ChainID:        1,
+		FactoryAddress: "0xf",
+		OwnerAddress:   "0xowner",
+		RequestTimeout: 10 * time.Second,
+		TxTimeout:      10 * time.Second,
+	}
+	router := testCallerMiddleware(NewRouter(db, mock, indexer.New(db, mock, cfg.FactoryAddress), cfg, nil))
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	ctx := context.Background()
+
+	t.Run("forbidden without auth", func(t *testing.T) {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/dcts/audit", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request error: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("expected 403, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("forbidden for non-owner", func(t *testing.T) {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/dcts/audit", nil)
+		req.Header.Set("X-Test-Caller", "0xnotowner")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request error: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("expected 403, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("allowed for owner", func(t *testing.T) {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/dcts/audit", nil)
+		req.Header.Set("X-Test-Caller", "0xowner")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request error: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("limit exceeds max returns 400", func(t *testing.T) {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/dcts/audit?limit=9999", nil)
+		req.Header.Set("X-Test-Caller", "0xowner")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request error: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("invalid limit returns 400", func(t *testing.T) {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/dcts/audit?limit=0", nil)
+		req.Header.Set("X-Test-Caller", "0xowner")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request error: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", resp.StatusCode)
+		}
+	})
 }
