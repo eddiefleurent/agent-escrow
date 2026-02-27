@@ -182,7 +182,7 @@ func TestCLIDCTMintSmoke(t *testing.T) {
 		t.Fatalf("create escrow: %v", err)
 	}
 
-	payload := `{"escrow_id":` + strconv.FormatInt(escrow.ID, 10) + `,"subject":"agent-b","operations":["submit_work"],"resources":["escrow:1"],"expires_at":1999999999}`
+	payload := `{"escrow_id":` + strconv.FormatInt(escrow.ID, 10) + `,"subject":"agent-b","operations":["submit_work"],"resources":["escrow:1"],"expires_at":1999999999,"caller":"0xB"}`
 	stdout, stderr, err := runCLI(t, env.server.URL, "dct", "mint", "--data", payload)
 	if err != nil {
 		t.Fatalf("execute dct mint: %v stderr=%s", err, stderr)

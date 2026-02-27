@@ -37,7 +37,7 @@ func TestDCTHTTPFlow(t *testing.T) {
 	ts := httptest.NewServer(router)
 	defer ts.Close()
 
-	mintReq := map[string]any{"escrow_id": escrow.ID, "subject": "agent-b", "operations": []string{"submit_work"}, "resources": []string{"escrow:1"}, "expires_at": time.Now().Add(time.Hour).Unix()}
+	mintReq := map[string]any{"escrow_id": escrow.ID, "subject": "agent-b", "operations": []string{"submit_work"}, "resources": []string{"escrow:1"}, "expires_at": time.Now().Add(time.Hour).Unix(), "caller": "0xb"}
 	body, _ := json.Marshal(mintReq)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ts.URL+"/api/v1/dcts/mint", bytes.NewReader(body))
 	if err != nil {
