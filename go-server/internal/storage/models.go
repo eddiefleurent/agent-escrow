@@ -36,6 +36,7 @@ type Escrow struct {
 	ActiveWorker             string `json:"active_worker"`
 	BackupActivated          bool   `json:"backup_activated"`
 	Frozen                   bool   `json:"frozen"`
+	ParentEscrowID           *int64 `json:"parent_escrow_id,omitempty"`
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
 }
@@ -110,6 +111,7 @@ type RFQ struct {
 	BiddingMode              string    `json:"bidding_mode"`
 	CommitDeadline           int64     `json:"commit_deadline"`
 	RevealDeadline           int64     `json:"reveal_deadline"`
+	ParentEscrowID           *int64    `json:"parent_escrow_id,omitempty"`
 	Status                   string    `json:"status"`
 	ExpiresAt                int64     `json:"expires_at"`
 	CreatedAt                time.Time `json:"created_at"`
@@ -218,6 +220,37 @@ type ChainCursor struct {
 	CursorKey   string
 	BlockNumber int64
 	UpdatedAt   time.Time
+}
+
+// AttestationChain is submission-scoped metadata for a chain of signed completion attestations (paper §4.8).
+type AttestationChain struct {
+	ID                      int64     `json:"id"`
+	EscrowID                int64     `json:"escrow_id"`
+	MilestoneIndex          *int      `json:"milestone_index,omitempty"`
+	RootHash                string    `json:"root_hash"`
+	Verified                bool      `json:"verified"`
+	VerificationSummaryJSON string    `json:"verification_summary_json"`
+	CreatedAt               time.Time `json:"created_at"`
+	UpdatedAt               time.Time `json:"updated_at"`
+}
+
+// AttestationLink is a single signed link in an attestation chain (paper §4.8).
+type AttestationLink struct {
+	ID            int64     `json:"id"`
+	ChainID       int64     `json:"chain_id"`
+	LinkID        string    `json:"link_id"`
+	ParentLinkID  string    `json:"parent_link_id,omitempty"`
+	FromAddress   string    `json:"from_address"`
+	ToAddress     string    `json:"to_address"`
+	ChildEscrowID *int64    `json:"child_escrow_id,omitempty"`
+	TaskSpecHash  string    `json:"task_spec_hash,omitempty"`
+	OutcomeHash   string    `json:"outcome_hash,omitempty"`
+	IssuedAt      int64     `json:"issued_at"`
+	ExpiresAt     int64     `json:"expires_at"`
+	Nonce         string    `json:"nonce"`
+	Signature     string    `json:"signature"`
+	PayloadJSON   string    `json:"payload_json"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // DCTToken is an off-chain Delegation Capability Token record (paper §4.7, §6.1).
