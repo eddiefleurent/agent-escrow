@@ -5,19 +5,52 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/api"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/authz"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 )
+
+// cliTestAuthMiddleware simulates auth middleware for CLI integration tests.
+// It authenticates callers identified in the JSON request body's "caller",
+// "owner", or "caller_address" fields, mirroring what real auth middleware
+// would do after verifying a credential (signature, API key, etc.).
+func cliTestAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil && r.Method == http.MethodPost {
+			body, err := io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			if err == nil {
+				var payload map[string]any
+				if json.Unmarshal(body, &payload) == nil {
+					for _, field := range []string{"caller", "owner", "caller_address"} {
+						if addr, ok := payload[field].(string); ok && strings.TrimSpace(addr) != "" {
+							ctx := authz.WithCaller(r.Context(), authz.Principal{
+								Address:       strings.ToLower(strings.TrimSpace(addr)),
+								Authenticated: true,
+							})
+							r = r.WithContext(ctx)
+							break
+						}
+					}
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 type cliTestEnv struct {
 	db     *storage.DB
@@ -42,7 +75,7 @@ func setupCLITestEnv(t *testing.T) *cliTestEnv {
 		EmergencyEnabled: true,
 	}
 	idx := indexer.New(db, mock, cfg.FactoryAddress)
-	router := api.NewRouter(db, mock, idx, cfg, nil)
+	router := cliTestAuthMiddleware(api.NewRouter(db, mock, idx, cfg, nil))
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
 
@@ -182,7 +215,7 @@ func TestCLIDCTMintSmoke(t *testing.T) {
 		t.Fatalf("create escrow: %v", err)
 	}
 
-	payload := `{"escrow_id":` + strconv.FormatInt(escrow.ID, 10) + `,"subject":"agent-b","operations":["submit_work"],"resources":["escrow:1"],"expires_at":1999999999}`
+	payload := `{"escrow_id":` + strconv.FormatInt(escrow.ID, 10) + `,"subject":"agent-b","operations":["submit_work"],"resources":["escrow:1"],"expires_at":1999999999,"caller":"0xB"}`
 	stdout, stderr, err := runCLI(t, env.server.URL, "dct", "mint", "--data", payload)
 	if err != nil {
 		t.Fatalf("execute dct mint: %v stderr=%s", err, stderr)

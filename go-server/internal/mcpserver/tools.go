@@ -13,6 +13,7 @@ import (
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/a2a"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/ap2"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/authz"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/bidding"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/dct"
@@ -149,6 +150,7 @@ type mintDCTArgs struct {
 	Operations []string       `json:"operations" jsonschema:"Allowed operations, e.g. ['submit_work']"`
 	Resources  []string       `json:"resources" jsonschema:"Allowed resources, e.g. ['escrow:12']"`
 	ExpiresAt  FlexibleString `json:"expires_at" jsonschema:"Unix timestamp expiry"`
+	Caller     string         `json:"caller" jsonschema:"Caller address (0x...) for authorization"`
 }
 
 type delegateDCTArgs struct {
@@ -158,6 +160,7 @@ type delegateDCTArgs struct {
 	Operations  []string       `json:"operations" jsonschema:"Subset of parent operations"`
 	Resources   []string       `json:"resources" jsonschema:"Subset of parent resources"`
 	ExpiresAt   FlexibleString `json:"expires_at" jsonschema:"Unix timestamp <= parent expiry"`
+	Caller      string         `json:"caller" jsonschema:"Caller address (0x...) for authorization"`
 }
 
 type introspectDCTArgs struct {
@@ -168,6 +171,21 @@ type revokeDCTArgs struct {
 	TokenID string `json:"token_id" jsonschema:"DCT token ID (dct_...) to revoke"`
 	Reason  string `json:"reason,omitempty" jsonschema:"Optional revocation reason"`
 	By      string `json:"by,omitempty" jsonschema:"Revoker identity"`
+	Caller  string `json:"caller" jsonschema:"Caller address (0x...) for authorization"`
+}
+
+type emergencyOverrideDCTArgs struct {
+	EscrowID      FlexibleString `json:"escrow_id" jsonschema:"Escrow ID for the override"`
+	Operation     string         `json:"operation" jsonschema:"Operation to override (e.g. 'revoke_all')"`
+	CallerAddress string         `json:"caller_address" jsonschema:"Target caller address for the override"`
+	Reason        string         `json:"reason" jsonschema:"Reason for the emergency override"`
+	Owner         string         `json:"owner" jsonschema:"Factory owner address authorizing the override"`
+}
+
+type listDCTAuditArgs struct {
+	EscrowID FlexibleString `json:"escrow_id,omitempty" jsonschema:"Filter by escrow ID (optional)"`
+	Limit    FlexibleString `json:"limit,omitempty" jsonschema:"Max results (default 50)"`
+	Offset   FlexibleString `json:"offset,omitempty" jsonschema:"Offset for pagination"`
 }
 
 type fundViaMandateArgs struct {
@@ -287,6 +305,10 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Name:        "revoke_dct",
 		Description: "Revoke a DCT by token_id.",
 	}, s.handleRevokeDCT)
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "list_dct_audit",
+		Description: "List DCT authorization audit log entries.",
+	}, s.handleListDCTAudit)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "create_rfq",
@@ -319,6 +341,11 @@ func (s *Server) registerTools(srv *mcp.Server) {
 	}, s.handleFundViaMandate)
 
 	if s.cfg.EmergencyEnabled {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name:        "emergency_override_dct",
+			Description: "Emergency override for DCT operations (factory owner only). Bypasses normal authorization.",
+		}, s.handleEmergencyOverrideDCT)
+
 		mcp.AddTool(srv, &mcp.Tool{
 			Name:        "freeze_address",
 			Description: "Freeze an address so it cannot participate in new escrows. Paper §4.9: credential revocation propagation. Owner-only.",
@@ -1008,7 +1035,24 @@ func (s *Server) handleActivateBackup(ctx context.Context, req *mcp.CallToolRequ
 	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
 }
 
-func (s *Server) dctService() *dct.Service { return &dct.Service{DB: s.db} }
+func (s *Server) dctService() *dct.Service {
+	return &dct.Service{
+		DB:           s.db,
+		Audit:        &authz.SQLiteAuditStore{DB: s.db.SQLDB()},
+		FactoryOwner: s.cfg.OwnerAddress,
+	}
+}
+
+// withCallerCtx attaches an authenticated caller principal to the context.
+// If callerAddr is empty, an unauthenticated principal is set.
+func withCallerCtx(ctx context.Context, callerAddr string) context.Context {
+	callerAddr = strings.TrimSpace(callerAddr)
+	p := authz.Principal{
+		Address:       strings.ToLower(callerAddr),
+		Authenticated: callerAddr != "",
+	}
+	return authz.WithCaller(ctx, p)
+}
 
 func (s *Server) handleGetReputation(ctx context.Context, req *mcp.CallToolRequest, args reputationArgs) (*mcp.CallToolResult, any, error) {
 	if !common.IsHexAddress(args.Address) {
@@ -1063,6 +1107,7 @@ func (s *Server) handleMintDCT(ctx context.Context, _ *mcp.CallToolRequest, args
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid expires_at: %v", err)), nil, nil
 	}
+	ctx = withCallerCtx(ctx, args.Caller)
 	rec, token, err := s.dctService().Mint(ctx, dct.MintParams{EscrowID: escrowID, Subject: args.Subject, Issuer: args.Issuer, Operations: args.Operations, Resources: args.Resources, ExpiresAt: exp})
 	if err != nil {
 		return textResult(err.Error()), nil, nil
@@ -1075,6 +1120,7 @@ func (s *Server) handleDelegateDCT(ctx context.Context, _ *mcp.CallToolRequest, 
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid expires_at: %v", err)), nil, nil
 	}
+	ctx = withCallerCtx(ctx, args.Caller)
 	rec, token, err := s.dctService().Delegate(ctx, dct.DelegateParams{ParentToken: args.ParentToken, Subject: args.Subject, Issuer: args.Issuer, Operations: args.Operations, Resources: args.Resources, ExpiresAt: exp})
 	if err != nil {
 		return textResult(err.Error()), nil, nil
@@ -1091,6 +1137,7 @@ func (s *Server) handleIntrospectDCT(ctx context.Context, _ *mcp.CallToolRequest
 }
 
 func (s *Server) handleRevokeDCT(ctx context.Context, _ *mcp.CallToolRequest, args revokeDCTArgs) (*mcp.CallToolResult, any, error) {
+	ctx = withCallerCtx(ctx, args.Caller)
 	if err := s.dctService().Revoke(ctx, dct.RevokeParams{TokenID: args.TokenID, Reason: args.Reason, By: args.By}); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return textResult("token not found"), nil, nil
@@ -1098,6 +1145,61 @@ func (s *Server) handleRevokeDCT(ctx context.Context, _ *mcp.CallToolRequest, ar
 		return textResult(err.Error()), nil, nil
 	}
 	return jsonResult(map[string]any{"status": "revoked", "token_id": args.TokenID})
+}
+
+func (s *Server) handleEmergencyOverrideDCT(ctx context.Context, _ *mcp.CallToolRequest, args emergencyOverrideDCTArgs) (*mcp.CallToolResult, any, error) {
+	escrowID, err := strconv.ParseInt(args.EscrowID.String(), 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+	}
+	ctx = withCallerCtx(ctx, args.Owner)
+	if err := s.dctService().EmergencyOverride(ctx, dct.EmergencyOverrideParams{
+		EscrowID:      escrowID,
+		Operation:     args.Operation,
+		CallerAddress: args.CallerAddress,
+		Reason:        args.Reason,
+		OwnerAddress:  args.Owner,
+	}); err != nil {
+		switch {
+		case errors.Is(err, dct.ErrUnauthorized),
+			errors.Is(err, sql.ErrNoRows),
+			strings.Contains(err.Error(), "owner address is required"),
+			strings.Contains(err.Error(), "override reason is required"),
+			strings.Contains(err.Error(), "unsupported override operation"):
+			return textResult(err.Error()), nil, nil
+		default:
+			return textResult("internal error"), nil, nil
+		}
+	}
+	return jsonResult(map[string]any{"status": "override_applied", "escrow_id": escrowID, "operation": args.Operation})
+}
+
+func (s *Server) handleListDCTAudit(ctx context.Context, _ *mcp.CallToolRequest, args listDCTAuditArgs) (*mcp.CallToolResult, any, error) {
+	var escrowID int64
+	if args.EscrowID.String() != "" {
+		var err error
+		escrowID, err = strconv.ParseInt(args.EscrowID.String(), 10, 64)
+		if err != nil {
+			return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
+		}
+	}
+	limit := 50
+	if args.Limit.String() != "" {
+		if v, err := strconv.Atoi(args.Limit.String()); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	offset := 0
+	if args.Offset.String() != "" {
+		if v, err := strconv.Atoi(args.Offset.String()); err == nil && v >= 0 {
+			offset = v
+		}
+	}
+	records, err := s.dctService().Audit.ListAuthzAudit(ctx, escrowID, limit, offset)
+	if err != nil {
+		return textResult(fmt.Sprintf("audit query error: %v", err)), nil, nil
+	}
+	return jsonResult(map[string]any{"audit_entries": records, "count": len(records)})
 }
 
 func (s *Server) biddingService() *bidding.Service {

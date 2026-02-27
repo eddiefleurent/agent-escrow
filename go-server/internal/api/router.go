@@ -42,6 +42,7 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	mux.HandleFunc("POST /api/v1/dcts/delegate", h.DelegateDCT)
 	mux.HandleFunc("POST /api/v1/dcts/introspect", h.IntrospectDCT)
 	mux.HandleFunc("POST /api/v1/dcts/revoke", h.RevokeDCT)
+	mux.HandleFunc("GET /api/v1/dcts/audit", h.ListDCTAudit)
 	mux.HandleFunc("GET /api/v1/escrows/{id}/dcts", h.ListEscrowDCTs)
 
 	// RFQ bidding protocol endpoints (paper §6.1)
@@ -56,6 +57,7 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 
 	// Emergency response protocol endpoints (paper §4.9)
 	if cfg.EmergencyEnabled {
+		mux.HandleFunc("POST /api/v1/dcts/emergency-override", h.EmergencyOverrideDCT)
 		mux.HandleFunc("POST /api/v1/emergency/freeze-address", h.FreezeAddress)
 		mux.HandleFunc("POST /api/v1/emergency/unfreeze-address", h.UnfreezeAddress)
 		mux.HandleFunc("POST /api/v1/emergency/freeze-escrow", h.FreezeEscrow)

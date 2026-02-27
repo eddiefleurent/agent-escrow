@@ -53,7 +53,8 @@ type Config struct {
 	EventsHeartbeatInterval time.Duration // Heartbeat interval for L0 liveness (default 30s)
 
 	// Emergency response protocol (paper §4.9: rapid incident response).
-	EmergencyEnabled bool // Enable emergency freeze/resolve endpoints (default true)
+	EmergencyEnabled bool   // Enable emergency freeze/resolve endpoints (default true)
+	OwnerAddress     string // Factory owner address for emergency override authorization (OWNER_ADDRESS)
 }
 
 // WebhookMode reports whether CDP webhook mode is enabled (secret is configured).
@@ -237,6 +238,7 @@ func Load() (*Config, error) {
 		EventsBufferSize:        eventsBufferSize,
 		EventsHeartbeatInterval: eventsHeartbeatInterval,
 		EmergencyEnabled:        emergencyEnabled,
+		OwnerAddress:            strings.ToLower(strings.TrimSpace(os.Getenv("OWNER_ADDRESS"))),
 	}
 
 	result := cfg.Validate()
@@ -308,6 +310,10 @@ func (c *Config) Validate() ValidationResult {
 		if c.EventsHeartbeatInterval <= 0 {
 			r.Errors = append(r.Errors, "EVENTS_HEARTBEAT_INTERVAL must be positive when events are enabled")
 		}
+	}
+
+	if c.EmergencyEnabled && strings.TrimSpace(c.OwnerAddress) == "" {
+		r.Warnings = append(r.Warnings, "EMERGENCY_ENABLED is true but OWNER_ADDRESS is not set: emergency override authorization will always fail")
 	}
 
 	return r
