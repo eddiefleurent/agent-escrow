@@ -1583,10 +1583,10 @@ func (h *Handlers) BazaarDiscovery(w http.ResponseWriter, _ *http.Request) {
 			},
 		},
 		"endpoints": map[string]string{
-			"create_rfq_with_credentials":    "POST /api/v1/rfqs (include required_credentials_json)",
-			"reveal_bid_with_attestations":   "POST /api/v1/rfqs/{id}/bids/reveal (include credentials_json)",
-			"list_bids_with_credential_info": "GET /api/v1/rfqs/{id}/bids",
-			"bazaar_discovery":               "GET /api/v1/bazaar/discovery",
+			"create_rfq_attested":          "POST /api/v1/rfqs (include required_credentials_json)",
+			"reveal_bid_with_attestations": "POST /api/v1/rfqs/{id}/bids/reveal (include credentials_json)",
+			"list_bids_attested":           "GET /api/v1/rfqs/{id}/bids",
+			"bazaar_discovery":             "GET /api/v1/bazaar/discovery",
 		},
 	})
 }
