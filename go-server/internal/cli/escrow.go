@@ -26,6 +26,9 @@ func newEscrowCmd(opts *Options) *cobra.Command {
 	escrowCmd.AddCommand(newEscrowBackupCmd(opts))
 	escrowCmd.AddCommand(newEscrowAttestationChainCmd(opts))
 	escrowCmd.AddCommand(newEscrowChildrenCmd(opts))
+	escrowCmd.AddCommand(newEscrowCheckpointCommitCmd(opts))
+	escrowCmd.AddCommand(newEscrowCheckpointsCmd(opts))
+	escrowCmd.AddCommand(newEscrowCheckpointLatestCmd(opts))
 
 	return escrowCmd
 }
@@ -131,6 +134,62 @@ func newEscrowChildrenCmd(opts *Options) *cobra.Command {
 			return runGet(cmd, opts, "/api/v1/escrows/"+url.PathEscape(args[0])+"/children", nil)
 		},
 	}
+}
+
+func newEscrowCheckpointCommitCmd(opts *Options) *cobra.Command {
+	pf := payloadFlags{}
+	cmd := &cobra.Command{
+		Use:   "checkpoint-commit <id>",
+		Short: "Commit a checkpoint artifact for mid-task resume (paper §6.1)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			body, err := payloadFromFlags(pf, true)
+			if err != nil {
+				return err
+			}
+			escrowID := url.PathEscape(args[0])
+			path := fmt.Sprintf("/api/v1/escrows/%s/checkpoints", escrowID)
+			return runPost(cmd, opts, path, body)
+		},
+	}
+	attachPayloadFlags(cmd, &pf)
+	return cmd
+}
+
+func newEscrowCheckpointsCmd(opts *Options) *cobra.Command {
+	var milestoneIndex string
+	cmd := &cobra.Command{
+		Use:   "checkpoints <id>",
+		Short: "List checkpoint artifacts for an escrow",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := map[string]string{}
+			if milestoneIndex != "" {
+				q["milestone_index"] = milestoneIndex
+			}
+			return runGet(cmd, opts, "/api/v1/escrows/"+url.PathEscape(args[0])+"/checkpoints", q)
+		},
+	}
+	cmd.Flags().StringVar(&milestoneIndex, "milestone-index", "", "Filter by milestone index")
+	return cmd
+}
+
+func newEscrowCheckpointLatestCmd(opts *Options) *cobra.Command {
+	var milestoneIndex string
+	cmd := &cobra.Command{
+		Use:   "checkpoint-latest <id>",
+		Short: "Get the latest checkpoint artifact for an escrow",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := map[string]string{}
+			if milestoneIndex != "" {
+				q["milestone_index"] = milestoneIndex
+			}
+			return runGet(cmd, opts, "/api/v1/escrows/"+url.PathEscape(args[0])+"/checkpoints/latest", q)
+		},
+	}
+	cmd.Flags().StringVar(&milestoneIndex, "milestone-index", "", "Filter by milestone index")
+	return cmd
 }
 
 func postByEscrowIDCmd(opts *Options, use, short, actionPath string, requiresPayload bool) *cobra.Command {

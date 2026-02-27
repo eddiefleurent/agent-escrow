@@ -1796,6 +1796,182 @@ func isValidAddress(s string) bool {
 	return common.IsHexAddress(s) && s != "0x0000000000000000000000000000000000000000"
 }
 
+// Checkpoint handlers (paper §6.1: checkpoint artifacts for mid-task agent swaps)
+
+type commitCheckpointRequest struct {
+	StateSnapshotURI string `json:"state_snapshot_uri"`
+	SnapshotHash     string `json:"snapshot_hash,omitempty"`
+	SchemaVersion    string `json:"schema_version,omitempty"`
+	CommittedBy      string `json:"committed_by"`
+	MilestoneIndex   *int   `json:"milestone_index,omitempty"`
+	CompletionPct    *int   `json:"completion_pct,omitempty"`
+	MetadataJSON     string `json:"metadata_json,omitempty"`
+}
+
+func (h *Handlers) CommitCheckpoint(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+
+	var req commitCheckpointRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+
+	if req.StateSnapshotURI == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "state_snapshot_uri is required"})
+		return
+	}
+	if req.CommittedBy == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "committed_by is required"})
+		return
+	}
+
+	escrow, err := h.db.GetEscrow(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "escrow not found"})
+		} else {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch escrow"})
+		}
+		return
+	}
+
+	if !strings.EqualFold(req.CommittedBy, escrow.ActiveWorker) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "only the active worker can commit checkpoints"})
+		return
+	}
+
+	if req.MilestoneIndex != nil {
+		msIdx := *req.MilestoneIndex
+		if msIdx < 0 || msIdx >= escrow.MilestoneCount {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdx, escrow.MilestoneCount)})
+			return
+		}
+	}
+
+	if req.CompletionPct != nil {
+		if *req.CompletionPct < 0 || *req.CompletionPct > 100 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "completion_pct must be 0-100"})
+			return
+		}
+	}
+	if req.MetadataJSON != "" && !json.Valid([]byte(req.MetadataJSON)) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "metadata_json must be valid JSON"})
+		return
+	}
+
+	cp, err := h.db.CreateCheckpoint(r.Context(), &storage.Checkpoint{
+		EscrowID:         id,
+		MilestoneIndex:   req.MilestoneIndex,
+		StateSnapshotURI: req.StateSnapshotURI,
+		SnapshotHash:     req.SnapshotHash,
+		SchemaVersion:    req.SchemaVersion,
+		CommittedBy:      req.CommittedBy,
+		CompletionPct:    req.CompletionPct,
+		MetadataJSON:     req.MetadataJSON,
+	})
+	if err != nil {
+		slog.Error("failed to create checkpoint", "escrow_id", id, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create checkpoint"})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, cp)
+}
+
+func (h *Handlers) ListCheckpoints(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+
+	escrow, err := h.db.GetEscrow(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "escrow not found"})
+		} else {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch escrow"})
+		}
+		return
+	}
+
+	var milestoneIndex *int
+	if msStr := r.URL.Query().Get("milestone_index"); msStr != "" {
+		v, err := strconv.Atoi(msStr)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid milestone_index"})
+			return
+		}
+		if v < 0 || v >= escrow.MilestoneCount {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", v, escrow.MilestoneCount)})
+			return
+		}
+		milestoneIndex = &v
+	}
+
+	checkpoints, err := h.db.ListCheckpointsByEscrow(r.Context(), id, milestoneIndex)
+	if err != nil {
+		slog.Error("failed to list checkpoints", "escrow_id", id, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list checkpoints"})
+		return
+	}
+
+	if checkpoints == nil {
+		checkpoints = []*storage.Checkpoint{}
+	}
+	writeJSON(w, http.StatusOK, checkpoints)
+}
+
+func (h *Handlers) GetLatestCheckpoint(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+
+	escrow, err := h.db.GetEscrow(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "escrow not found"})
+		} else {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch escrow"})
+		}
+		return
+	}
+
+	var milestoneIndex *int
+	if msStr := r.URL.Query().Get("milestone_index"); msStr != "" {
+		v, err := strconv.Atoi(msStr)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid milestone_index"})
+			return
+		}
+		if v < 0 || v >= escrow.MilestoneCount {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", v, escrow.MilestoneCount)})
+			return
+		}
+		milestoneIndex = &v
+	}
+
+	cp, err := h.db.GetLatestCheckpoint(r.Context(), id, milestoneIndex)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "no checkpoints found"})
+		} else {
+			slog.Error("failed to get latest checkpoint", "escrow_id", id, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get latest checkpoint"})
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, cp)
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

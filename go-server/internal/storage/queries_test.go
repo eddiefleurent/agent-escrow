@@ -1406,3 +1406,281 @@ func TestRFQParentEscrowID(t *testing.T) {
 		t.Fatalf("expected parent_escrow_id=%d after get, got %v", parent.ID, got.ParentEscrowID)
 	}
 }
+
+// Checkpoint tests (paper §6.1)
+
+func createTestEscrowForCheckpoints(t *testing.T, db *DB) *Escrow {
+	t.Helper()
+	task, err := db.CreateTask(context.Background(), "Checkpoint Task", "desc", "0xspec")
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	escrow, err := db.CreateEscrow(context.Background(), &Escrow{
+		TaskID:                   task.ID,
+		ChainID:                  84532,
+		FactoryAddress:           "0xFactory",
+		EscrowAddress:            "0xEscrowCP",
+		Buyer:                    "0xBuyer",
+		Worker:                   "0xWorker",
+		Verifier:                 "0xVerifier",
+		Arbitrator:               "0xArbitrator",
+		Amount:                   "1000",
+		Status:                   "funded",
+		SubmissionDeadline:       1700000000,
+		ReviewPeriodSeconds:      86400,
+		DisputePeriodSeconds:     172800,
+		ArbitratorTimeoutSeconds: 604800,
+		MilestoneCount:           3,
+	})
+	if err != nil {
+		t.Fatalf("create escrow: %v", err)
+	}
+	return escrow
+}
+
+func TestCreateAndListCheckpoints(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	escrow := createTestEscrowForCheckpoints(t, db)
+
+	ms0 := 0
+	cp1, err := db.CreateCheckpoint(ctx, &Checkpoint{
+		EscrowID:         escrow.ID,
+		MilestoneIndex:   &ms0,
+		StateSnapshotURI: "ipfs://snapshot1",
+		SnapshotHash:     "0xhash1",
+		CommittedBy:      "0xWorker",
+		MetadataJSON:     `{"tool":"cursor"}`,
+	})
+	if err != nil {
+		t.Fatalf("create checkpoint 1: %v", err)
+	}
+	if cp1.ID == 0 {
+		t.Fatal("expected non-zero checkpoint ID")
+	}
+	if cp1.SchemaVersion != "checkpoint-v1" {
+		t.Fatalf("expected schema_version 'checkpoint-v1', got %q", cp1.SchemaVersion)
+	}
+	if cp1.MilestoneIndex == nil || *cp1.MilestoneIndex != 0 {
+		t.Fatalf("expected milestone_index=0, got %v", cp1.MilestoneIndex)
+	}
+
+	pct := 50
+	cp2, err := db.CreateCheckpoint(ctx, &Checkpoint{
+		EscrowID:         escrow.ID,
+		MilestoneIndex:   &ms0,
+		StateSnapshotURI: "ipfs://snapshot2",
+		SnapshotHash:     "0xhash2",
+		CommittedBy:      "0xWorker",
+		CompletionPct:    &pct,
+	})
+	if err != nil {
+		t.Fatalf("create checkpoint 2: %v", err)
+	}
+	if cp2.CompletionPct == nil || *cp2.CompletionPct != 50 {
+		t.Fatalf("expected completion_pct=50, got %v", cp2.CompletionPct)
+	}
+
+	ms1 := 1
+	_, err = db.CreateCheckpoint(ctx, &Checkpoint{
+		EscrowID:         escrow.ID,
+		MilestoneIndex:   &ms1,
+		StateSnapshotURI: "ipfs://snapshot3",
+		CommittedBy:      "0xWorker",
+	})
+	if err != nil {
+		t.Fatalf("create checkpoint 3: %v", err)
+	}
+
+	all, err := db.ListCheckpointsByEscrow(ctx, escrow.ID, nil)
+	if err != nil {
+		t.Fatalf("list all checkpoints: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("expected 3 checkpoints, got %d", len(all))
+	}
+	if all[0].ID < all[1].ID {
+		t.Fatal("expected newest-first ordering")
+	}
+
+	ms0Checkpoints, err := db.ListCheckpointsByEscrow(ctx, escrow.ID, &ms0)
+	if err != nil {
+		t.Fatalf("list milestone 0 checkpoints: %v", err)
+	}
+	if len(ms0Checkpoints) != 2 {
+		t.Fatalf("expected 2 checkpoints for milestone 0, got %d", len(ms0Checkpoints))
+	}
+
+	ms1Checkpoints, err := db.ListCheckpointsByEscrow(ctx, escrow.ID, &ms1)
+	if err != nil {
+		t.Fatalf("list milestone 1 checkpoints: %v", err)
+	}
+	if len(ms1Checkpoints) != 1 {
+		t.Fatalf("expected 1 checkpoint for milestone 1, got %d", len(ms1Checkpoints))
+	}
+}
+
+func TestGetLatestCheckpoint(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	escrow := createTestEscrowForCheckpoints(t, db)
+
+	_, err := db.GetLatestCheckpoint(ctx, escrow.ID, nil)
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected ErrNoRows for empty checkpoints, got: %v", err)
+	}
+
+	ms0 := 0
+	_, err = db.CreateCheckpoint(ctx, &Checkpoint{
+		EscrowID:         escrow.ID,
+		MilestoneIndex:   &ms0,
+		StateSnapshotURI: "ipfs://old",
+		CommittedBy:      "0xWorker",
+	})
+	if err != nil {
+		t.Fatalf("create first: %v", err)
+	}
+
+	_, err = db.CreateCheckpoint(ctx, &Checkpoint{
+		EscrowID:         escrow.ID,
+		MilestoneIndex:   &ms0,
+		StateSnapshotURI: "ipfs://latest",
+		CommittedBy:      "0xWorker",
+	})
+	if err != nil {
+		t.Fatalf("create second: %v", err)
+	}
+
+	latest, err := db.GetLatestCheckpoint(ctx, escrow.ID, nil)
+	if err != nil {
+		t.Fatalf("get latest: %v", err)
+	}
+	if latest.StateSnapshotURI != "ipfs://latest" {
+		t.Fatalf("expected latest URI 'ipfs://latest', got %q", latest.StateSnapshotURI)
+	}
+
+	latestMs0, err := db.GetLatestCheckpoint(ctx, escrow.ID, &ms0)
+	if err != nil {
+		t.Fatalf("get latest milestone 0: %v", err)
+	}
+	if latestMs0.StateSnapshotURI != "ipfs://latest" {
+		t.Fatalf("expected latest milestone 0 URI 'ipfs://latest', got %q", latestMs0.StateSnapshotURI)
+	}
+
+	ms1 := 1
+	_, err = db.GetLatestCheckpoint(ctx, escrow.ID, &ms1)
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected ErrNoRows for milestone 1, got: %v", err)
+	}
+}
+
+func TestCheckpointValidation(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	escrow := createTestEscrowForCheckpoints(t, db)
+
+	_, err := db.CreateCheckpoint(ctx, &Checkpoint{
+		EscrowID:    0,
+		CommittedBy: "0xWorker",
+	})
+	if err == nil {
+		t.Fatal("expected error for non-positive escrow_id")
+	}
+
+	_, err = db.CreateCheckpoint(ctx, &Checkpoint{
+		EscrowID:    escrow.ID,
+		CommittedBy: "0xWorker",
+	})
+	if err == nil {
+		t.Fatal("expected error for missing state_snapshot_uri")
+	}
+
+	_, err = db.CreateCheckpoint(ctx, &Checkpoint{
+		EscrowID:         escrow.ID,
+		StateSnapshotURI: "ipfs://test",
+	})
+	if err == nil {
+		t.Fatal("expected error for missing committed_by")
+	}
+
+	badPct := 150
+	_, err = db.CreateCheckpoint(ctx, &Checkpoint{
+		EscrowID:         escrow.ID,
+		StateSnapshotURI: "ipfs://test",
+		CommittedBy:      "0xWorker",
+		CompletionPct:    &badPct,
+	})
+	if err == nil {
+		t.Fatal("expected error for completion_pct > 100")
+	}
+
+	_, err = db.CreateCheckpoint(ctx, &Checkpoint{
+		EscrowID:         escrow.ID,
+		StateSnapshotURI: "ipfs://test",
+		CommittedBy:      "0xWorker",
+		MetadataJSON:     "not-json",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid metadata_json")
+	}
+
+	negativeMilestone := -1
+	_, err = db.CreateCheckpoint(ctx, &Checkpoint{
+		EscrowID:         escrow.ID,
+		MilestoneIndex:   &negativeMilestone,
+		StateSnapshotURI: "ipfs://test",
+		CommittedBy:      "0xWorker",
+	})
+	if err == nil {
+		t.Fatal("expected error for milestone_index < 0")
+	}
+}
+
+func TestCheckpointWithoutMilestone(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	task, err := db.CreateTask(ctx, "Single MS Task", "desc", "0xspec")
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	escrow, err := db.CreateEscrow(ctx, &Escrow{
+		TaskID:                   task.ID,
+		ChainID:                  84532,
+		FactoryAddress:           "0xFactory",
+		EscrowAddress:            "0xEscrowSingle",
+		Buyer:                    "0xBuyer",
+		Worker:                   "0xWorker",
+		Verifier:                 "0xVerifier",
+		Arbitrator:               "0xArbitrator",
+		Amount:                   "1000",
+		Status:                   "funded",
+		SubmissionDeadline:       1700000000,
+		ReviewPeriodSeconds:      86400,
+		DisputePeriodSeconds:     172800,
+		ArbitratorTimeoutSeconds: 604800,
+	})
+	if err != nil {
+		t.Fatalf("create escrow: %v", err)
+	}
+
+	cp, err := db.CreateCheckpoint(ctx, &Checkpoint{
+		EscrowID:         escrow.ID,
+		StateSnapshotURI: "ipfs://single-ms-snapshot",
+		CommittedBy:      "0xWorker",
+	})
+	if err != nil {
+		t.Fatalf("create checkpoint: %v", err)
+	}
+	if cp.MilestoneIndex != nil {
+		t.Fatalf("expected nil milestone_index, got %v", cp.MilestoneIndex)
+	}
+
+	latest, err := db.GetLatestCheckpoint(ctx, escrow.ID, nil)
+	if err != nil {
+		t.Fatalf("get latest: %v", err)
+	}
+	if latest.StateSnapshotURI != "ipfs://single-ms-snapshot" {
+		t.Fatalf("expected URI 'ipfs://single-ms-snapshot', got %q", latest.StateSnapshotURI)
+	}
+}

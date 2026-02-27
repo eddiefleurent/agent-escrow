@@ -1976,3 +1976,156 @@ func (d *DB) GetAttestationLinksByChain(ctx context.Context, chainID int64) ([]*
 func (d *DB) ListChildEscrows(ctx context.Context, parentEscrowID int64) ([]*Escrow, error) {
 	return d.queryEscrows(ctx, `SELECT `+escrowColumns+` FROM escrows WHERE parent_escrow_id = ? ORDER BY id`, parentEscrowID)
 }
+
+// Checkpoint queries (paper §6.1: checkpoint artifacts for mid-task agent swaps)
+
+func scanCheckpoint(row interface{ Scan(...any) error }) (*Checkpoint, error) {
+	cp := &Checkpoint{}
+	var createdAt string
+	var milestoneIdx sql.NullInt64
+	var completionPct sql.NullInt64
+	err := row.Scan(
+		&cp.ID, &cp.EscrowID, &milestoneIdx,
+		&cp.StateSnapshotURI, &cp.SnapshotHash, &cp.SchemaVersion,
+		&cp.CommittedBy, &completionPct, &cp.MetadataJSON, &createdAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if milestoneIdx.Valid {
+		v := int(milestoneIdx.Int64)
+		cp.MilestoneIndex = &v
+	}
+	if completionPct.Valid {
+		v := int(completionPct.Int64)
+		cp.CompletionPct = &v
+	}
+	cp.CreatedAt, err = parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse created_at: %w", err)
+	}
+	return cp, nil
+}
+
+const checkpointColumns = `id, escrow_id, milestone_index, state_snapshot_uri, snapshot_hash, schema_version, committed_by, completion_pct, metadata_json, created_at`
+
+func createCheckpointOn(ctx context.Context, q dbExecer, cp *Checkpoint) (*Checkpoint, error) {
+	if cp.EscrowID <= 0 {
+		return nil, errors.New("escrow_id must be > 0")
+	}
+	if cp.StateSnapshotURI == "" {
+		return nil, errors.New("state_snapshot_uri is required")
+	}
+	if cp.CommittedBy == "" {
+		return nil, errors.New("committed_by is required")
+	}
+	if cp.SchemaVersion == "" {
+		cp.SchemaVersion = "checkpoint-v1"
+	}
+	metadataJSON := cp.MetadataJSON
+	if metadataJSON == "" {
+		metadataJSON = "{}"
+	}
+	if !json.Valid([]byte(metadataJSON)) {
+		return nil, errors.New("invalid metadata_json")
+	}
+
+	var milestoneIdx any
+	if cp.MilestoneIndex != nil {
+		if *cp.MilestoneIndex < 0 {
+			return nil, errors.New("milestone_index must be >= 0")
+		}
+		milestoneIdx = *cp.MilestoneIndex
+	}
+	var completionPct any
+	if cp.CompletionPct != nil {
+		v := *cp.CompletionPct
+		if v < 0 || v > 100 {
+			return nil, errors.New("completion_pct must be 0-100")
+		}
+		completionPct = v
+	}
+
+	res, err := q.ExecContext(ctx,
+		`INSERT INTO checkpoints (escrow_id, milestone_index, state_snapshot_uri, snapshot_hash, schema_version, committed_by, completion_pct, metadata_json)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		cp.EscrowID, milestoneIdx, cp.StateSnapshotURI, cp.SnapshotHash, cp.SchemaVersion, cp.CommittedBy, completionPct, metadataJSON,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert checkpoint: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("last insert id: %w", err)
+	}
+
+	out, err := scanCheckpoint(q.QueryRowContext(ctx,
+		`SELECT `+checkpointColumns+` FROM checkpoints WHERE id = ?`, id,
+	))
+	if err != nil {
+		return nil, fmt.Errorf("get checkpoint: %w", err)
+	}
+	return out, nil
+}
+
+func (d *DB) CreateCheckpoint(ctx context.Context, cp *Checkpoint) (*Checkpoint, error) {
+	return createCheckpointOn(ctx, d.db, cp)
+}
+
+func (d *DB) CreateCheckpointTx(ctx context.Context, tx *sql.Tx, cp *Checkpoint) (*Checkpoint, error) {
+	return createCheckpointOn(ctx, tx, cp)
+}
+
+// ListCheckpointsByEscrow returns all checkpoints for an escrow, newest first.
+// If milestoneIndex is non-nil, results are filtered to that milestone.
+func (d *DB) ListCheckpointsByEscrow(ctx context.Context, escrowID int64, milestoneIndex *int) ([]*Checkpoint, error) {
+	var rows *sql.Rows
+	var err error
+	if milestoneIndex != nil {
+		rows, err = d.db.QueryContext(ctx,
+			`SELECT `+checkpointColumns+` FROM checkpoints WHERE escrow_id = ? AND milestone_index = ? ORDER BY id DESC`,
+			escrowID, *milestoneIndex,
+		)
+	} else {
+		rows, err = d.db.QueryContext(ctx,
+			`SELECT `+checkpointColumns+` FROM checkpoints WHERE escrow_id = ? ORDER BY id DESC`,
+			escrowID,
+		)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list checkpoints: %w", err)
+	}
+	defer rows.Close()
+
+	var checkpoints []*Checkpoint
+	for rows.Next() {
+		cp, scanErr := scanCheckpoint(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan checkpoint: %w", scanErr)
+		}
+		checkpoints = append(checkpoints, cp)
+	}
+	return checkpoints, rows.Err()
+}
+
+// GetLatestCheckpoint returns the most recent checkpoint for an escrow.
+// If milestoneIndex is non-nil, returns the latest for that specific milestone.
+func (d *DB) GetLatestCheckpoint(ctx context.Context, escrowID int64, milestoneIndex *int) (*Checkpoint, error) {
+	var row *sql.Row
+	if milestoneIndex != nil {
+		row = d.db.QueryRowContext(ctx,
+			`SELECT `+checkpointColumns+` FROM checkpoints WHERE escrow_id = ? AND milestone_index = ? ORDER BY id DESC LIMIT 1`,
+			escrowID, *milestoneIndex,
+		)
+	} else {
+		row = d.db.QueryRowContext(ctx,
+			`SELECT `+checkpointColumns+` FROM checkpoints WHERE escrow_id = ? ORDER BY id DESC LIMIT 1`,
+			escrowID,
+		)
+	}
+	cp, err := scanCheckpoint(row)
+	if err != nil {
+		return nil, fmt.Errorf("get latest checkpoint: %w", err)
+	}
+	return cp, nil
+}

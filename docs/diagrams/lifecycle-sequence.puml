@@ -372,3 +372,87 @@ else #F5F5F5 No data
 end
 
 @enduml
+
+@startuml checkpoint-resume-sequence
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam sequenceArrowThickness 1.5
+skinparam sequenceLifeLineBorderColor #CCCCCC
+skinparam sequenceDividerBackgroundColor #F5F5F5
+skinparam sequenceDividerFontStyle bold
+skinparam sequenceGroupBackgroundColor #FAFAFA
+skinparam sequenceGroupBorderColor #CCCCCC
+
+skinparam participant {
+  BorderColor #42A5F5
+  BackgroundColor #E3F2FD
+  FontStyle bold
+}
+
+skinparam actor {
+  BorderColor #7E57C2
+  BackgroundColor #EDE7F6
+}
+
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #E0D68A
+  FontSize 11
+}
+
+title Checkpoint/Resume — Mid-Task Agent Swap (§6.1)
+
+actor "Active Worker" as worker1
+actor "Replacement Worker" as worker2
+actor "Buyer" as buyer
+participant "Go Server\n(MCP/API/CLI)" as server
+database "SQLite" as db
+participant "Event Bus" as bus
+
+== Periodic Checkpoint Commits ==
+
+loop during task execution
+  worker1 -> server : commit_checkpoint\n(escrow_id, state_snapshot_uri,\nsnapshot_hash, completion_pct)
+  server -> server : validate: active worker only
+  server -> db : INSERT checkpoint
+  db --> server : checkpoint record
+  server -> bus : publish checkpoint.committed
+  server --> worker1 : checkpoint ID + next_steps
+  note over db #E3F2FD : State snapshot persisted\n(milestone-scoped if applicable)
+end
+
+== Worker Swap Trigger ==
+
+alt #FFF3E0 Backup activation
+  buyer -> server : activate_backup
+  note over server #FFF3E0 : Active worker replaced
+else #FFF3E0 Re-delegation
+  buyer -> server : new RFQ + accept bid
+  note over server #FFF3E0 : New worker assigned
+end
+
+== Resume Handoff ==
+
+worker2 -> server : get_latest_checkpoint(escrow_id)
+server -> db : SELECT latest checkpoint
+db --> server : checkpoint record
+server --> worker2 : state_snapshot_uri +\nsnapshot_hash + completion_pct
+
+worker2 -> worker2 : fetch artifact at\nstate_snapshot_uri
+worker2 -> worker2 : verify snapshot_hash
+worker2 -> worker2 : resume from checkpoint state
+
+note over worker2 #C8E6C9
+  Replacement worker continues
+  from last checkpoint state.
+  Milestone partial compensation
+  covers work already done.
+end note
+
+== Continue Lifecycle ==
+
+worker2 -> server : submit_work (or next milestone)
+
+@enduml
