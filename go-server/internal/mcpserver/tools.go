@@ -1160,7 +1160,16 @@ func (s *Server) handleEmergencyOverrideDCT(ctx context.Context, _ *mcp.CallTool
 		Reason:        args.Reason,
 		OwnerAddress:  args.Owner,
 	}); err != nil {
-		return textResult(err.Error()), nil, nil
+		switch {
+		case errors.Is(err, dct.ErrUnauthorized),
+			errors.Is(err, sql.ErrNoRows),
+			strings.Contains(err.Error(), "owner address is required"),
+			strings.Contains(err.Error(), "override reason is required"),
+			strings.Contains(err.Error(), "unsupported override operation"):
+			return textResult(err.Error()), nil, nil
+		default:
+			return textResult("internal error"), nil, nil
+		}
 	}
 	return jsonResult(map[string]any{"status": "override_applied", "escrow_id": escrowID, "operation": args.Operation})
 }

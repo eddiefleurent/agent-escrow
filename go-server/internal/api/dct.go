@@ -230,8 +230,7 @@ func (h *Handlers) ListDCTAudit(w http.ResponseWriter, r *http.Request) {
 			offset = n
 		}
 	}
-	audit := &authz.SQLiteAuditStore{DB: h.db.SQLDB()}
-	records, err := audit.ListAuthzAudit(r.Context(), escrowID, limit, offset)
+	records, err := h.dctService().Audit.ListAuthzAudit(r.Context(), escrowID, limit, offset)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
