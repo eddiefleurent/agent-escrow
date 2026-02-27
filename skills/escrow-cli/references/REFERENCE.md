@@ -194,9 +194,9 @@ Submits a sealed-bid commitment during the commit phase (before `commit_deadline
 POST /api/v1/rfqs/{id}/bids/reveal
 ```
 
-Required fields: `bidder`, `nonce`, `salt`, `amount`, `expires_at`
+Required fields: `bidder`, `nonce`, `salt`, `amount`
 
-Optional fields: `estimated_duration` (int, seconds), `reputation_bond`, `milestones_json`, `message`, `stake_mandate_id`, `credentials_json` (JSON array of attestation-v1 payloads for verifiable credentials)
+Optional fields: `expires_at` (Unix timestamp; when omitted defaults to the RFQ deadline), `estimated_duration` (int, seconds), `reputation_bond`, `milestones_json`, `message`, `stake_mandate_id`, `credentials_json` (JSON array of attestation-v1 payloads for verifiable credentials)
 
 Reveals a sealed bid during the reveal phase. The reveal must match the prior commitment hash. When `credentials_json` is provided, the server validates attestation signatures, subject binding, and expiry, then matches against the RFQ's `required_credentials_json`.
 

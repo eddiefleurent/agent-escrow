@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -764,6 +765,13 @@ func (d *DB) UpdateBidStatus(ctx context.Context, id int64, status string) error
 }
 
 func updateBidCredentialVerificationOn(ctx context.Context, q dbExecer, bidID int64, verified bool, matchSummary string) error {
+	// Normalize empty input to a valid JSON object and validate before writing.
+	if matchSummary == "" {
+		matchSummary = "{}"
+	}
+	if !json.Valid([]byte(matchSummary)) {
+		return fmt.Errorf("UpdateBidCredentialVerification bid=%d: matchSummary is not valid JSON", bidID)
+	}
 	res, err := q.ExecContext(ctx,
 		`UPDATE bids SET credential_verified = ?, credential_match_summary = ?, updated_at = datetime('now') WHERE id = ?`,
 		boolToInt(verified), matchSummary, bidID,

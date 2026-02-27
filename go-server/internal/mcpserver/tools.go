@@ -1349,12 +1349,15 @@ func (s *Server) handleRevealBid(ctx context.Context, req *mcp.CallToolRequest, 
 	}
 
 	resp := map[string]any{
-		"bid_id":     bid.ID,
-		"status":     bid.Status,
-		"next_steps": "Buyer can accept this bid after reveal phase ends using accept_bid.",
+		"bid_id":              bid.ID,
+		"status":              bid.Status,
+		"credential_verified": bid.CredentialVerified,
+		"next_steps":          "Buyer can accept this bid after reveal phase ends using accept_bid.",
 	}
-	if bid.CredentialMatchSummary != "" && bid.CredentialMatchSummary != "{}" {
-		resp["credential_match"] = json.RawMessage(bid.CredentialMatchSummary)
+	if summary := bid.CredentialMatchSummary; summary != "" && summary != "{}" {
+		if json.Valid([]byte(summary)) {
+			resp["credential_match"] = json.RawMessage(summary)
+		}
 	}
 	return jsonResult(resp)
 }

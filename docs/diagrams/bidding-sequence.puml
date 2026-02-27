@@ -76,9 +76,9 @@ Server --> WorkerB : bid_id, status=pending
 
 Buyer -> Server : list_bids / GET /api/v1/rfqs/{id}/bids
 Server -> DB : SELECT bids WHERE rfq_id=?
-Server --> Buyer : [bid_A(200, credential_verified), bid_B(300)]
+Server --> Buyer : [bid_A(200, credential_verified=true), bid_B(300, credential_verified=false)]
 
-note over Buyer : Evaluate bids:\ncost, reputation, capability, credential_verified\n(Paper §4.3: multi-objective optimization)
+note over Buyer : Evaluate bids:\ncost, reputation, capability, credential_verified\n(Paper §4.3: multi-objective optimization)\nAll bids carry credential_verified (false when no credentials or match failed)
 
 == Bid Acceptance → Escrow Formalization ==
 

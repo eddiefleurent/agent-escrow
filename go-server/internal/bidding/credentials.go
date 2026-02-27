@@ -88,7 +88,9 @@ func VerifyAttestationSignature(a *Attestation) error {
 		return fmt.Errorf("invalid signature length: expected 65 bytes, got %d", len(sigBytes))
 	}
 
-	// Ethereum personal sign: v is 27/28, convert to 0/1 for crypto.Ecrecover
+	// The message is hashed with raw Keccak256 (not EIP-191 personal_sign prefix).
+	// Signers that use eth_sign or personal_sign encode v as 27/28; subtract 27
+	// to convert to the 0/1 form expected by crypto.Ecrecover (raw ECDSA recovery).
 	if sigBytes[64] >= 27 {
 		sigBytes[64] -= 27
 	}
@@ -117,13 +119,20 @@ func ValidateAttestation(a *Attestation, bidder string, now time.Time) error {
 	if a.Profile != attestationV1Profile {
 		return fmt.Errorf("unsupported profile: %q", a.Profile)
 	}
-	if a.Domain == "" {
+	if strings.TrimSpace(a.Domain) == "" {
 		return errors.New("attestation domain is required")
 	}
-	if len(a.Capabilities) == 0 {
+	hasCapability := false
+	for _, c := range a.Capabilities {
+		if strings.TrimSpace(c) != "" {
+			hasCapability = true
+			break
+		}
+	}
+	if !hasCapability {
 		return errors.New("attestation must include at least one capability")
 	}
-	if a.Nonce == "" {
+	if strings.TrimSpace(a.Nonce) == "" {
 		return errors.New("attestation nonce is required")
 	}
 
@@ -204,7 +213,9 @@ func issuerTrusted(issuer string, trusted []string) bool {
 	return false
 }
 
-// ParseCredentialRequirements parses the JSON array of credential requirements from an RFQ.
+// ParseCredentialRequirements parses and validates the JSON array of credential requirements from an RFQ.
+// Each requirement must have a non-empty domain, at least one capability, and well-formed trusted_issuers
+// (each entry must be a valid hex Ethereum address when present).
 func ParseCredentialRequirements(raw string) ([]CredentialRequirement, error) {
 	if raw == "" || raw == "[]" {
 		return nil, nil
@@ -212,6 +223,26 @@ func ParseCredentialRequirements(raw string) ([]CredentialRequirement, error) {
 	var reqs []CredentialRequirement
 	if err := json.Unmarshal([]byte(raw), &reqs); err != nil {
 		return nil, fmt.Errorf("parse credential requirements: %w", err)
+	}
+	for i, req := range reqs {
+		if strings.TrimSpace(req.Domain) == "" {
+			return nil, fmt.Errorf("credential requirement %d: selector.Domain must not be empty", i)
+		}
+		hasCapability := false
+		for _, c := range req.Capabilities {
+			if strings.TrimSpace(c) != "" {
+				hasCapability = true
+				break
+			}
+		}
+		if !hasCapability {
+			return nil, fmt.Errorf("credential requirement %d: selector.Capabilities must include at least one non-empty entry", i)
+		}
+		for j, issuer := range req.TrustedIssuers {
+			if !common.IsHexAddress(issuer) {
+				return nil, fmt.Errorf("credential requirement %d: trusted_issuers[%d] %q is not a valid hex Ethereum address", i, j, issuer)
+			}
+		}
 	}
 	return reqs, nil
 }

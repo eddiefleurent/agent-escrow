@@ -213,7 +213,7 @@ func TestParseCredentialRequirements_Empty(t *testing.T) {
 }
 
 func TestParseCredentialRequirements_Valid(t *testing.T) {
-	raw := `[{"domain":"code-review","capabilities":["go"],"trusted_issuers":["0xABC"]}]`
+	raw := `[{"domain":"code-review","capabilities":["go"],"trusted_issuers":["0xAb5801a7D398351b8bE11C439e05C5b3259aec9B"]}]`
 	reqs, err := ParseCredentialRequirements(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -226,6 +226,65 @@ func TestParseCredentialRequirements_Valid(t *testing.T) {
 	}
 }
 
+func TestParseCredentialRequirements_EmptyDomain(t *testing.T) {
+	raw := `[{"domain":"","capabilities":["go"]}]`
+	_, err := ParseCredentialRequirements(raw)
+	if err == nil {
+		t.Fatal("expected error for empty domain")
+	}
+}
+
+func TestParseCredentialRequirements_EmptyCapabilities(t *testing.T) {
+	raw := `[{"domain":"code-review","capabilities":[]}]`
+	_, err := ParseCredentialRequirements(raw)
+	if err == nil {
+		t.Fatal("expected error for empty capabilities")
+	}
+}
+
+func TestParseCredentialRequirements_WhitespaceCapabilities(t *testing.T) {
+	raw := `[{"domain":"code-review","capabilities":["  "]}]`
+	_, err := ParseCredentialRequirements(raw)
+	if err == nil {
+		t.Fatal("expected error for whitespace-only capabilities")
+	}
+}
+
+func TestParseCredentialRequirements_InvalidTrustedIssuer(t *testing.T) {
+	raw := `[{"domain":"code-review","capabilities":["go"],"trusted_issuers":["not-an-address"]}]`
+	_, err := ParseCredentialRequirements(raw)
+	if err == nil {
+		t.Fatal("expected error for invalid trusted issuer address")
+	}
+}
+
+func TestValidateAttestation_WhitespaceOnlyDomain(t *testing.T) {
+	att, bidder := makeTestAttestation(t)
+	att.Domain = "   "
+	err := ValidateAttestation(att, bidder, time.Now())
+	if err == nil {
+		t.Fatal("expected error for whitespace-only domain")
+	}
+}
+
+func TestValidateAttestation_WhitespaceOnlyNonce(t *testing.T) {
+	att, bidder := makeTestAttestation(t)
+	att.Nonce = "  "
+	err := ValidateAttestation(att, bidder, time.Now())
+	if err == nil {
+		t.Fatal("expected error for whitespace-only nonce")
+	}
+}
+
+func TestValidateAttestation_WhitespaceOnlyCapabilities(t *testing.T) {
+	att, bidder := makeTestAttestation(t)
+	att.Capabilities = []string{"  ", ""}
+	err := ValidateAttestation(att, bidder, time.Now())
+	if err == nil {
+		t.Fatal("expected error for whitespace-only capabilities")
+	}
+}
+
 func TestParseAttestations_Empty(t *testing.T) {
 	atts, err := ParseAttestations("")
 	if err != nil {
@@ -233,5 +292,25 @@ func TestParseAttestations_Empty(t *testing.T) {
 	}
 	if atts != nil {
 		t.Fatal("expected nil for empty input")
+	}
+}
+
+func TestParseAttestations_Valid(t *testing.T) {
+	raw := `[{"profile":"attestation-v1","issuer_address":"0xAb5801a7D398351b8bE11C439e05C5b3259aec9B","subject_address":"0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045","domain":"code-review","capabilities":["go","solidity"],"issued_at":1700000000,"expires_at":1700100000,"nonce":"nonce-abc","signature":"0x00"}]`
+	atts, err := ParseAttestations(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(atts) != 1 {
+		t.Fatalf("expected 1 attestation, got %d", len(atts))
+	}
+	if atts[0].Domain != "code-review" {
+		t.Fatalf("expected domain code-review, got %s", atts[0].Domain)
+	}
+	if atts[0].Profile != attestationV1Profile {
+		t.Fatalf("expected profile %s, got %s", attestationV1Profile, atts[0].Profile)
+	}
+	if len(atts[0].Capabilities) != 2 {
+		t.Fatalf("expected 2 capabilities, got %d", len(atts[0].Capabilities))
 	}
 }
