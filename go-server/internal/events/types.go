@@ -116,6 +116,7 @@ const (
 	EventWorkerStakeDeposited      = "escrow.stake_deposited"
 	EventAttestationChainSubmitted = "attestation.chain_submitted"
 	EventAttestationChainVerified  = "attestation.chain_verified"
+	EventCheckpointCommitted       = "checkpoint.committed"
 	EventAddressFrozen             = "emergency.address_frozen"
 	EventAddressUnfrozen           = "emergency.address_unfrozen"
 	EventEscrowEmergFrozen         = "emergency.escrow_frozen"

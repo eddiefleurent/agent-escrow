@@ -457,6 +457,7 @@ SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 | `dct_authorization_audit` | Authorization decision audit log for DCT operations: every permit/deny is recorded with caller, escrow, token, reason, and request correlation ID (paper §4.7, §4.9) |
 | `attestation_chains` | Submission-scoped metadata for signed completion attestation chains: root hash, verification status, verification summary JSON (paper §4.8: transitive liability) |
 | `attestation_links` | Individual signed links in an attestation chain: from/to addresses, child escrow reference, task spec/outcome hashes, signature, time bounds (paper §4.8: chain of custody) |
+| `checkpoints` | Checkpoint artifacts for mid-task agent swaps: state snapshot URI, content hash, schema version, committed-by worker, optional milestone scoping, completion percentage, metadata JSON (paper §6.1: checkpoint artifacts + partial compensation clauses) |
 
 ![Reputation Seed Sequence](diagrams/reputation-seed-sequence.png)
 
@@ -600,6 +601,35 @@ The validated chain produces a `root_hash` (Keccak256 of sorted canonical messag
 
 **Design choice: off-chain only.** Attestation chains are stored and verified entirely off-chain. On-chain settlement contracts remain unchanged -- the chain provides verifiable evidence for dispute resolution and audit, not consensus-level enforcement. This keeps gas costs low and avoids contract size bloat while preserving the paper's accountability guarantees.
 
+### Checkpoint/Resume (Paper §6.1)
+
+Checkpoint/resume implements standardized state snapshots for mid-task agent swaps. When a worker is replaced (via backup activation, re-delegation, or manual swap), the replacement worker needs the outgoing worker's progress state to resume rather than restart. The paper calls for "a standard schema for checkpoint artifacts" that can be "mapped onto the capabilities available on the agentic market" to "enable the task to be resumed or restarted" (§6.1).
+
+**Checkpoint artifact schema.** Each checkpoint stores:
+- `state_snapshot_uri` — URI pointing to the serialized state artifact (IPFS, S3, etc.)
+- `snapshot_hash` — optional content hash for integrity verification
+- `schema_version` — artifact schema version (default: `checkpoint-v1`)
+- `milestone_index` — optional scoping to a specific milestone in multi-milestone escrows
+- `completion_pct` — optional estimated progress (0-100)
+- `metadata_json` — freeform metadata (tool versions, environment info, etc.)
+
+**Authorization.** Only the escrow's active worker can commit checkpoints. This matches the paper's trust boundary: the worker producing work is the only party with meaningful state to checkpoint. Reads are broadly accessible, matching existing escrow read surfaces.
+
+**Milestone coupling.** Checkpoints optionally scope to a milestone index, coupling with the existing V2 milestone settlement logic for partial compensation. When a worker is swapped mid-milestone, the checkpoint provides resume state while the milestone's partial payout provides compensation for work completed.
+
+**Resume handoff flow:**
+1. Active worker periodically commits checkpoints during task execution
+2. Worker swap occurs (backup activation, re-delegation, or manual replacement)
+3. Replacement worker calls `get_latest_checkpoint` to retrieve the most recent state
+4. Replacement worker fetches the artifact at `state_snapshot_uri` and resumes from that state
+5. Replacement worker continues the escrow lifecycle (submit, etc.)
+
+**Integration surfaces.** Checkpoints are committed via `commit_checkpoint` MCP tool, `POST /api/v1/escrows/{id}/checkpoints` HTTP endpoint, and `escrow-cli checkpoint-commit` command. Retrieval via `list_checkpoints` / `get_latest_checkpoint` MCP tools, `GET /api/v1/escrows/{id}/checkpoints` and `GET .../checkpoints/latest` HTTP endpoints, and `escrow-cli checkpoints` / `checkpoint-latest` commands. A `checkpoint.committed` event is published to the event bus on each commit.
+
+![Checkpoint/Resume Sequence](diagrams/checkpoint-resume-sequence.png)
+
+**Design choice: off-chain only.** Like attestation chains, checkpoints are stored entirely off-chain. No Solidity changes are required. The checkpoint URI and hash provide a commitment that can be referenced in disputes, but on-chain enforcement (e.g., ZK checkpoint verification) is deferred to item 18.
+
 ### MCP Tools (Primary Interface)
 
 | Tool | Inputs | Chain Method |
@@ -638,6 +668,9 @@ The validated chain produces a `root_hash` (Keccak256 of sorted canonical messag
 | `list_frozen_addresses` | (none) | DB read |
 | `list_emergency_actions` | limit, offset (optional) | DB read |
 | `get_attestation_chain` | escrow_id | DB read (attestation chains + links) |
+| `commit_checkpoint` | escrow_id, state_snapshot_uri, committed_by, snapshot_hash, milestone_index, completion_pct, metadata_json (optional) | DB write (off-chain, active worker only) |
+| `list_checkpoints` | escrow_id, milestone_index (optional) | DB read |
+| `get_latest_checkpoint` | escrow_id, milestone_index (optional) | DB read |
 
 ### HTTP API (Secondary Interface)
 
@@ -690,6 +723,9 @@ The validated chain produces a `root_hash` (Keccak256 of sorted canonical messag
 | GET | `/api/v1/emergency/actions` | List emergency action audit log (query: limit, offset) |
 | GET | `/api/v1/escrows/{id}/attestation-chain` | Get attestation chain(s) for escrow (links + verification status) |
 | GET | `/api/v1/escrows/{id}/children` | List child escrows for a parent escrow |
+| POST | `/api/v1/escrows/{id}/checkpoints` | Commit checkpoint artifact (active worker only; body: state_snapshot_uri, committed_by, optional milestone_index/snapshot_hash/completion_pct/metadata_json) |
+| GET | `/api/v1/escrows/{id}/checkpoints` | List checkpoints for escrow (query: milestone_index) |
+| GET | `/api/v1/escrows/{id}/checkpoints/latest` | Get latest checkpoint for escrow (query: milestone_index) |
 
 ### Configuration
 

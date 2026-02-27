@@ -253,6 +253,20 @@ type AttestationLink struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+// Checkpoint is a standardized state snapshot committed by the active worker for mid-task agent swaps (paper §6.1).
+type Checkpoint struct {
+	ID               int64     `json:"id"`
+	EscrowID         int64     `json:"escrow_id"`
+	MilestoneIndex   *int      `json:"milestone_index,omitempty"`
+	StateSnapshotURI string    `json:"state_snapshot_uri"`
+	SnapshotHash     string    `json:"snapshot_hash,omitempty"`
+	SchemaVersion    string    `json:"schema_version"`
+	CommittedBy      string    `json:"committed_by"`
+	CompletionPct    *int      `json:"completion_pct,omitempty"`
+	MetadataJSON     string    `json:"metadata_json"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
 // DCTToken is an off-chain Delegation Capability Token record (paper §4.7, §6.1).
 type DCTToken struct {
 	ID               int64      `json:"id"`

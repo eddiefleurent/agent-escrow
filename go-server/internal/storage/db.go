@@ -61,6 +61,9 @@ var migration016SQL string
 //go:embed migrations/017_add_attestation_chains.sql
 var migration017SQL string
 
+//go:embed migrations/018_add_checkpoints.sql
+var migration018SQL string
+
 type DB struct {
 	db *sql.DB
 }
@@ -108,6 +111,7 @@ func Open(dsn string) (*DB, error) {
 		{"015", migration015SQL},
 		{"016", migration016SQL},
 		{"017", migration017SQL},
+		{"018", migration018SQL},
 	}
 
 	for _, m := range migrations {

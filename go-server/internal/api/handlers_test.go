@@ -2029,3 +2029,193 @@ func TestEmergencyEndpoints_FreezeAddress_Disabled(t *testing.T) {
 		t.Fatalf("expected 404 when emergency disabled, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
+
+// Checkpoint tests (paper §6.1)
+
+func createCheckpointTestEscrow(t *testing.T, env *testEnv) *storage.Escrow {
+	t.Helper()
+	ctx := context.Background()
+	task, err := env.db.CreateTask(ctx, "CP Task", "desc", "0xspec")
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
+		TaskID:                   task.ID,
+		ChainID:                  84532,
+		FactoryAddress:           "0xFactory",
+		EscrowAddress:            "0xEscrowCP",
+		Buyer:                    "0xBuyer",
+		Worker:                   "0xWorker",
+		Verifier:                 "0xVerifier",
+		Arbitrator:               "0xArbitrator",
+		Amount:                   "1000",
+		Status:                   "funded",
+		SubmissionDeadline:       1700000000,
+		ReviewPeriodSeconds:      86400,
+		DisputePeriodSeconds:     172800,
+		ArbitratorTimeoutSeconds: 604800,
+		MilestoneCount:           2,
+	})
+	if err != nil {
+		t.Fatalf("create escrow: %v", err)
+	}
+	return escrow
+}
+
+func TestCheckpointCommit(t *testing.T) {
+	env := setup(t)
+	escrow := createCheckpointTestEscrow(t, env)
+	id := strconv.FormatInt(escrow.ID, 10)
+
+	body := `{"state_snapshot_uri":"ipfs://snap1","snapshot_hash":"0xabc","committed_by":"0xWorker","milestone_index":0,"completion_pct":25}`
+	rr := env.request(t, "POST", "/api/v1/escrows/"+id+"/checkpoints", body)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeJSON(t, rr)
+	if resp["state_snapshot_uri"] != "ipfs://snap1" {
+		t.Fatalf("expected state_snapshot_uri 'ipfs://snap1', got %v", resp["state_snapshot_uri"])
+	}
+	if resp["schema_version"] != "checkpoint-v1" {
+		t.Fatalf("expected schema_version 'checkpoint-v1', got %v", resp["schema_version"])
+	}
+}
+
+func TestCheckpointCommit_NonWorkerForbidden(t *testing.T) {
+	env := setup(t)
+	escrow := createCheckpointTestEscrow(t, env)
+	id := strconv.FormatInt(escrow.ID, 10)
+
+	body := `{"state_snapshot_uri":"ipfs://snap","committed_by":"0xNotWorker"}`
+	rr := env.request(t, "POST", "/api/v1/escrows/"+id+"/checkpoints", body)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCheckpointCommit_MissingURI(t *testing.T) {
+	env := setup(t)
+	escrow := createCheckpointTestEscrow(t, env)
+	id := strconv.FormatInt(escrow.ID, 10)
+
+	body := `{"committed_by":"0xWorker"}`
+	rr := env.request(t, "POST", "/api/v1/escrows/"+id+"/checkpoints", body)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCheckpointCommit_InvalidMilestoneIndex(t *testing.T) {
+	env := setup(t)
+	escrow := createCheckpointTestEscrow(t, env)
+	id := strconv.FormatInt(escrow.ID, 10)
+
+	body := `{"state_snapshot_uri":"ipfs://snap","committed_by":"0xWorker","milestone_index":99}`
+	rr := env.request(t, "POST", "/api/v1/escrows/"+id+"/checkpoints", body)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCheckpointCommit_InvalidCompletionPct(t *testing.T) {
+	env := setup(t)
+	escrow := createCheckpointTestEscrow(t, env)
+	id := strconv.FormatInt(escrow.ID, 10)
+
+	body := `{"state_snapshot_uri":"ipfs://snap","committed_by":"0xWorker","completion_pct":150}`
+	rr := env.request(t, "POST", "/api/v1/escrows/"+id+"/checkpoints", body)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCheckpointList(t *testing.T) {
+	env := setup(t)
+	escrow := createCheckpointTestEscrow(t, env)
+	id := strconv.FormatInt(escrow.ID, 10)
+
+	env.request(t, "POST", "/api/v1/escrows/"+id+"/checkpoints",
+		`{"state_snapshot_uri":"ipfs://snap1","committed_by":"0xWorker","milestone_index":0}`)
+	env.request(t, "POST", "/api/v1/escrows/"+id+"/checkpoints",
+		`{"state_snapshot_uri":"ipfs://snap2","committed_by":"0xWorker","milestone_index":1}`)
+
+	rr := env.request(t, "GET", "/api/v1/escrows/"+id+"/checkpoints", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var checkpoints []map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&checkpoints); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(checkpoints) != 2 {
+		t.Fatalf("expected 2 checkpoints, got %d", len(checkpoints))
+	}
+
+	rr2 := env.request(t, "GET", "/api/v1/escrows/"+id+"/checkpoints?milestone_index=0", "")
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+	var filtered []map[string]any
+	if err := json.NewDecoder(rr2.Body).Decode(&filtered); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 checkpoint for milestone 0, got %d", len(filtered))
+	}
+}
+
+func TestCheckpointList_EscrowNotFound(t *testing.T) {
+	env := setup(t)
+	rr := env.request(t, "GET", "/api/v1/escrows/99999/checkpoints", "")
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCheckpointLatest(t *testing.T) {
+	env := setup(t)
+	escrow := createCheckpointTestEscrow(t, env)
+	id := strconv.FormatInt(escrow.ID, 10)
+
+	env.request(t, "POST", "/api/v1/escrows/"+id+"/checkpoints",
+		`{"state_snapshot_uri":"ipfs://old","committed_by":"0xWorker"}`)
+	env.request(t, "POST", "/api/v1/escrows/"+id+"/checkpoints",
+		`{"state_snapshot_uri":"ipfs://latest","committed_by":"0xWorker"}`)
+
+	rr := env.request(t, "GET", "/api/v1/escrows/"+id+"/checkpoints/latest", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeJSON(t, rr)
+	if resp["state_snapshot_uri"] != "ipfs://latest" {
+		t.Fatalf("expected latest URI, got %v", resp["state_snapshot_uri"])
+	}
+}
+
+func TestCheckpointLatest_NoCheckpoints(t *testing.T) {
+	env := setup(t)
+	escrow := createCheckpointTestEscrow(t, env)
+	id := strconv.FormatInt(escrow.ID, 10)
+
+	rr := env.request(t, "GET", "/api/v1/escrows/"+id+"/checkpoints/latest", "")
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCheckpointList_EmptyReturnsArray(t *testing.T) {
+	env := setup(t)
+	escrow := createCheckpointTestEscrow(t, env)
+	id := strconv.FormatInt(escrow.ID, 10)
+
+	rr := env.request(t, "GET", "/api/v1/escrows/"+id+"/checkpoints", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if body := strings.TrimSpace(rr.Body.String()); body != "[]" {
+		t.Fatalf("expected empty array '[]', got %q", body)
+	}
+}

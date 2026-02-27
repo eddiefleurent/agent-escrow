@@ -221,6 +221,27 @@ type subscribeEventsArgs struct {
 	Limit         FlexibleString `json:"limit,omitempty" jsonschema:"Max events to return (default 50, max 200)"`
 }
 
+type commitCheckpointArgs struct {
+	EscrowID         FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID or on-chain escrow address (0x...)"`
+	StateSnapshotURI string         `json:"state_snapshot_uri" jsonschema:"URI pointing to the checkpoint state snapshot artifact"`
+	SnapshotHash     string         `json:"snapshot_hash,omitempty" jsonschema:"Optional content hash of the snapshot for integrity verification"`
+	SchemaVersion    string         `json:"schema_version,omitempty" jsonschema:"Checkpoint schema version (default: checkpoint-v1)"`
+	CommittedBy      string         `json:"committed_by" jsonschema:"Address of the active worker committing the checkpoint (must match escrow's active_worker)"`
+	MilestoneIndex   FlexibleString `json:"milestone_index,omitempty" jsonschema:"Milestone index (0-based) for multi-milestone escrows"`
+	CompletionPct    FlexibleString `json:"completion_pct,omitempty" jsonschema:"Estimated completion percentage 0-100"`
+	MetadataJSON     string         `json:"metadata_json,omitempty" jsonschema:"Optional JSON metadata (tool versions, environment info, etc.)"`
+}
+
+type listCheckpointsArgs struct {
+	EscrowID       FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID or on-chain escrow address (0x...)"`
+	MilestoneIndex FlexibleString `json:"milestone_index,omitempty" jsonschema:"Optional milestone index filter (0-based)"`
+}
+
+type getLatestCheckpointArgs struct {
+	EscrowID       FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID or on-chain escrow address (0x...)"`
+	MilestoneIndex FlexibleString `json:"milestone_index,omitempty" jsonschema:"Optional milestone index filter (0-based)"`
+}
+
 type emptyArgs struct{}
 
 type addressArgs struct {
@@ -348,6 +369,21 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Name:        "get_attestation_chain",
 		Description: "Get attestation chain(s) for an escrow, including signed completion-attestation-v1 links and verification status. Paper §4.8: recursive delegation verification and chain of custody.",
 	}, s.handleGetAttestationChain)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "commit_checkpoint",
+		Description: "Commit a checkpoint artifact as the active worker. Stores a state snapshot URI for mid-task resume by a replacement worker. Paper §6.1: checkpoint artifacts + partial compensation clauses.",
+	}, s.handleCommitCheckpoint)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "list_checkpoints",
+		Description: "List checkpoint artifacts for an escrow, newest first. Optionally filter by milestone_index. Used by replacement workers to discover resume state.",
+	}, s.handleListCheckpoints)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "get_latest_checkpoint",
+		Description: "Get the most recent checkpoint artifact for an escrow. Optionally scoped to a specific milestone. The primary entry point for a replacement worker to resume work.",
+	}, s.handleGetLatestCheckpoint)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "fund_via_mandate",
@@ -1593,6 +1629,152 @@ func (s *Server) handleGetAttestationChain(ctx context.Context, req *mcp.CallToo
 	return jsonResult(map[string]any{
 		"escrow_id": escrow.ID,
 		"chains":    result,
+	})
+}
+
+func (s *Server) handleCommitCheckpoint(ctx context.Context, req *mcp.CallToolRequest, args commitCheckpointArgs) (*mcp.CallToolResult, any, error) {
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return textResult(fmt.Sprintf("escrow not found: %v", err)), nil, nil
+		}
+		return textResult(fmt.Sprintf("failed to look up escrow: %v", err)), nil, nil
+	}
+
+	if args.StateSnapshotURI == "" {
+		return textResult("state_snapshot_uri is required"), nil, nil
+	}
+	if args.CommittedBy == "" {
+		return textResult("committed_by is required"), nil, nil
+	}
+	if !strings.EqualFold(args.CommittedBy, escrow.ActiveWorker) {
+		return textResult("only the active worker can commit checkpoints"), nil, nil
+	}
+
+	var milestoneIndex *int
+	if ms := args.MilestoneIndex.String(); ms != "" {
+		v, parseErr := strconv.Atoi(ms)
+		if parseErr != nil {
+			return textResult(fmt.Sprintf("invalid milestone_index: %v", parseErr)), nil, nil
+		}
+		if v < 0 || v >= escrow.MilestoneCount {
+			return textResult(fmt.Sprintf("milestone_index %d out of range [0, %d)", v, escrow.MilestoneCount)), nil, nil
+		}
+		milestoneIndex = &v
+	}
+
+	var completionPct *int
+	if cp := args.CompletionPct.String(); cp != "" {
+		v, parseErr := strconv.Atoi(cp)
+		if parseErr != nil {
+			return textResult(fmt.Sprintf("invalid completion_pct: %v", parseErr)), nil, nil
+		}
+		if v < 0 || v > 100 {
+			return textResult("completion_pct must be 0-100"), nil, nil
+		}
+		completionPct = &v
+	}
+
+	schemaVersion := args.SchemaVersion
+	if schemaVersion == "" {
+		schemaVersion = "checkpoint-v1"
+	}
+
+	cp, err := s.db.CreateCheckpoint(ctx, &storage.Checkpoint{
+		EscrowID:         escrow.ID,
+		MilestoneIndex:   milestoneIndex,
+		StateSnapshotURI: args.StateSnapshotURI,
+		SnapshotHash:     args.SnapshotHash,
+		SchemaVersion:    schemaVersion,
+		CommittedBy:      args.CommittedBy,
+		CompletionPct:    completionPct,
+		MetadataJSON:     args.MetadataJSON,
+	})
+	if err != nil {
+		return textResult(fmt.Sprintf("failed to create checkpoint: %v", err)), nil, nil
+	}
+
+	if s.bus != nil {
+		s.bus.Publish(events.Event{
+			Name:      events.EventCheckpointCommitted,
+			Escrow:    escrow.EscrowAddress,
+			Level:     events.L1,
+			Timestamp: time.Now(),
+			ID:        fmt.Sprintf("checkpoint-%d", cp.ID),
+			Payload: map[string]any{
+				"checkpoint_id":      cp.ID,
+				"escrow_id":          escrow.ID,
+				"state_snapshot_uri": cp.StateSnapshotURI,
+				"committed_by":       cp.CommittedBy,
+			},
+		})
+	}
+
+	return jsonResult(map[string]any{
+		"checkpoint": cp,
+		"next_steps": "Checkpoint committed. A replacement worker can retrieve it via get_latest_checkpoint to resume work.",
+	})
+}
+
+func (s *Server) handleListCheckpoints(ctx context.Context, req *mcp.CallToolRequest, args listCheckpointsArgs) (*mcp.CallToolResult, any, error) {
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return textResult(fmt.Sprintf("escrow not found: %v", err)), nil, nil
+		}
+		return textResult(fmt.Sprintf("failed to look up escrow: %v", err)), nil, nil
+	}
+
+	var milestoneIndex *int
+	if ms := args.MilestoneIndex.String(); ms != "" {
+		v, parseErr := strconv.Atoi(ms)
+		if parseErr != nil {
+			return textResult(fmt.Sprintf("invalid milestone_index: %v", parseErr)), nil, nil
+		}
+		milestoneIndex = &v
+	}
+
+	checkpoints, err := s.db.ListCheckpointsByEscrow(ctx, escrow.ID, milestoneIndex)
+	if err != nil {
+		return textResult(fmt.Sprintf("failed to list checkpoints: %v", err)), nil, nil
+	}
+
+	return jsonResult(map[string]any{
+		"escrow_id":   escrow.ID,
+		"checkpoints": checkpoints,
+		"count":       len(checkpoints),
+	})
+}
+
+func (s *Server) handleGetLatestCheckpoint(ctx context.Context, req *mcp.CallToolRequest, args getLatestCheckpointArgs) (*mcp.CallToolResult, any, error) {
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return textResult(fmt.Sprintf("escrow not found: %v", err)), nil, nil
+		}
+		return textResult(fmt.Sprintf("failed to look up escrow: %v", err)), nil, nil
+	}
+
+	var milestoneIndex *int
+	if ms := args.MilestoneIndex.String(); ms != "" {
+		v, parseErr := strconv.Atoi(ms)
+		if parseErr != nil {
+			return textResult(fmt.Sprintf("invalid milestone_index: %v", parseErr)), nil, nil
+		}
+		milestoneIndex = &v
+	}
+
+	cp, err := s.db.GetLatestCheckpoint(ctx, escrow.ID, milestoneIndex)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return textResult("no checkpoints found for this escrow"), nil, nil
+		}
+		return textResult(fmt.Sprintf("failed to get latest checkpoint: %v", err)), nil, nil
+	}
+
+	return jsonResult(map[string]any{
+		"checkpoint": cp,
+		"next_steps": "Use the state_snapshot_uri to retrieve the checkpoint artifact and resume work from this state.",
 	})
 }
 

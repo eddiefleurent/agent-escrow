@@ -244,3 +244,101 @@ func TestCLIEmergencyFrozenAddresses(t *testing.T) {
 		t.Fatalf("expected frozen_addresses in response: %v", resp)
 	}
 }
+
+// Checkpoint CLI tests (paper §6.1)
+
+func createCLICheckpointEscrow(t *testing.T, env *cliTestEnv) *storage.Escrow {
+	t.Helper()
+	ctx := context.Background()
+	task, err := env.db.CreateTask(ctx, "CP Task", "desc", "0xspec")
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
+		TaskID:                   task.ID,
+		ChainID:                  84532,
+		FactoryAddress:           "0xF",
+		EscrowAddress:            "0xECP",
+		Buyer:                    "0xB",
+		Worker:                   "0xW",
+		Verifier:                 "0xV",
+		Arbitrator:               "0xA",
+		Amount:                   "1000",
+		Status:                   "funded",
+		SubmissionDeadline:       1700000000,
+		ReviewPeriodSeconds:      60,
+		DisputePeriodSeconds:     60,
+		ArbitratorTimeoutSeconds: 60,
+		MilestoneCount:           2,
+	})
+	if err != nil {
+		t.Fatalf("create escrow: %v", err)
+	}
+	return escrow
+}
+
+func TestCLICheckpointCommit(t *testing.T) {
+	env := setupCLITestEnv(t)
+	escrow := createCLICheckpointEscrow(t, env)
+	id := strconv.FormatInt(escrow.ID, 10)
+
+	payload := `{"state_snapshot_uri":"ipfs://snap1","committed_by":"0xW","milestone_index":0}`
+	stdout, stderr, err := runCLI(t, env.server.URL, "escrow", "checkpoint-commit", id, "--data", payload)
+	if err != nil {
+		t.Fatalf("execute checkpoint-commit: %v stderr=%s", err, stderr)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(stdout), &resp); err != nil {
+		t.Fatalf("unmarshal checkpoint-commit output: %v\n%s", err, stdout)
+	}
+	if resp["state_snapshot_uri"] != "ipfs://snap1" {
+		t.Fatalf("expected state_snapshot_uri 'ipfs://snap1', got %v", resp["state_snapshot_uri"])
+	}
+}
+
+func TestCLICheckpointList(t *testing.T) {
+	env := setupCLITestEnv(t)
+	escrow := createCLICheckpointEscrow(t, env)
+	id := strconv.FormatInt(escrow.ID, 10)
+
+	runCLI(t, env.server.URL, "escrow", "checkpoint-commit", id,
+		"--data", `{"state_snapshot_uri":"ipfs://snap1","committed_by":"0xW"}`)
+
+	stdout, stderr, err := runCLI(t, env.server.URL, "escrow", "checkpoints", id)
+	if err != nil {
+		t.Fatalf("execute checkpoints: %v stderr=%s", err, stderr)
+	}
+
+	var checkpoints []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &checkpoints); err != nil {
+		t.Fatalf("unmarshal checkpoints output: %v\n%s", err, stdout)
+	}
+	if len(checkpoints) != 1 {
+		t.Fatalf("expected 1 checkpoint, got %d", len(checkpoints))
+	}
+}
+
+func TestCLICheckpointLatest(t *testing.T) {
+	env := setupCLITestEnv(t)
+	escrow := createCLICheckpointEscrow(t, env)
+	id := strconv.FormatInt(escrow.ID, 10)
+
+	runCLI(t, env.server.URL, "escrow", "checkpoint-commit", id,
+		"--data", `{"state_snapshot_uri":"ipfs://old","committed_by":"0xW"}`)
+	runCLI(t, env.server.URL, "escrow", "checkpoint-commit", id,
+		"--data", `{"state_snapshot_uri":"ipfs://latest","committed_by":"0xW"}`)
+
+	stdout, stderr, err := runCLI(t, env.server.URL, "escrow", "checkpoint-latest", id)
+	if err != nil {
+		t.Fatalf("execute checkpoint-latest: %v stderr=%s", err, stderr)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(stdout), &resp); err != nil {
+		t.Fatalf("unmarshal checkpoint-latest output: %v\n%s", err, stdout)
+	}
+	if resp["state_snapshot_uri"] != "ipfs://latest" {
+		t.Fatalf("expected latest URI, got %v", resp["state_snapshot_uri"])
+	}
+}
