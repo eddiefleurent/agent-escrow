@@ -312,6 +312,10 @@ func (c *Config) Validate() ValidationResult {
 		}
 	}
 
+	if c.EmergencyEnabled && strings.TrimSpace(c.OwnerAddress) == "" {
+		r.Warnings = append(r.Warnings, "EMERGENCY_ENABLED is true but OWNER_ADDRESS is not set: emergency override authorization will always fail")
+	}
+
 	return r
 }
 

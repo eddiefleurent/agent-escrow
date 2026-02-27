@@ -250,6 +250,24 @@ func TestRevoke_DeniedForUnauthorized(t *testing.T) {
 	}
 }
 
+func TestEmergencyOverride_UnsupportedOperation(t *testing.T) {
+	svc, escrowID := testService(t)
+	ownerCtx := callerCtx("0xowner")
+	err := svc.EmergencyOverride(ownerCtx, EmergencyOverrideParams{
+		EscrowID:      escrowID,
+		Operation:     "unknown_op",
+		CallerAddress: "0xsomeone",
+		Reason:        "test",
+		OwnerAddress:  "0xowner",
+	})
+	if err == nil {
+		t.Fatal("expected error for unsupported operation, got nil")
+	}
+	if !strings.Contains(err.Error(), "unsupported override operation") {
+		t.Fatalf("expected 'unsupported override operation' error, got: %v", err)
+	}
+}
+
 func TestRevoke_AllowedForIssuer(t *testing.T) {
 	svc, escrowID := testService(t)
 	ctx := buyerCtx()

@@ -96,8 +96,9 @@ func mapEmergencyOverrideError(err error) (int, string) {
 	switch {
 	case errors.Is(err, dct.ErrInternal):
 		return http.StatusInternalServerError, "internal error"
-	case errors.Is(err, dct.ErrUnauthorized),
-		errors.Is(err, sql.ErrNoRows),
+	case errors.Is(err, dct.ErrUnauthorized):
+		return http.StatusForbidden, err.Error()
+	case errors.Is(err, sql.ErrNoRows),
 		strings.Contains(err.Error(), "owner address is required"),
 		strings.Contains(err.Error(), "override reason is required"),
 		strings.Contains(err.Error(), "unsupported override operation"):

@@ -1186,8 +1186,7 @@ func (s *Server) handleListDCTAudit(ctx context.Context, _ *mcp.CallToolRequest,
 			offset = v
 		}
 	}
-	audit := &authz.SQLiteAuditStore{DB: s.db.SQLDB()}
-	records, err := audit.ListAuthzAudit(ctx, escrowID, limit, offset)
+	records, err := s.dctService().Audit.ListAuthzAudit(ctx, escrowID, limit, offset)
 	if err != nil {
 		return textResult(fmt.Sprintf("audit query error: %v", err)), nil, nil
 	}
