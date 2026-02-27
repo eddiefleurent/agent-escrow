@@ -1651,16 +1651,9 @@ func (s *Server) handleCommitCheckpoint(ctx context.Context, req *mcp.CallToolRe
 		return textResult("only the active worker can commit checkpoints"), nil, nil
 	}
 
-	var milestoneIndex *int
-	if ms := args.MilestoneIndex.String(); ms != "" {
-		v, parseErr := strconv.Atoi(ms)
-		if parseErr != nil {
-			return textResult(fmt.Sprintf("invalid milestone_index: %v", parseErr)), nil, nil
-		}
-		if v < 0 || v >= escrow.MilestoneCount {
-			return textResult(fmt.Sprintf("milestone_index %d out of range [0, %d)", v, escrow.MilestoneCount)), nil, nil
-		}
-		milestoneIndex = &v
+	milestoneIndex, milestoneErr := parseOptionalMilestoneIndex(args.MilestoneIndex.String(), escrow.MilestoneCount)
+	if milestoneErr != nil {
+		return textResult(milestoneErr.Error()), nil, nil
 	}
 
 	var completionPct *int
@@ -1728,16 +1721,9 @@ func (s *Server) handleListCheckpoints(ctx context.Context, req *mcp.CallToolReq
 		return textResult(fmt.Sprintf("failed to look up escrow: %v", err)), nil, nil
 	}
 
-	var milestoneIndex *int
-	if ms := args.MilestoneIndex.String(); ms != "" {
-		v, parseErr := strconv.Atoi(ms)
-		if parseErr != nil {
-			return textResult(fmt.Sprintf("invalid milestone_index: %v", parseErr)), nil, nil
-		}
-		if v < 0 || v >= escrow.MilestoneCount {
-			return textResult(fmt.Sprintf("milestone_index %d out of range [0, %d)", v, escrow.MilestoneCount)), nil, nil
-		}
-		milestoneIndex = &v
+	milestoneIndex, milestoneErr := parseOptionalMilestoneIndex(args.MilestoneIndex.String(), escrow.MilestoneCount)
+	if milestoneErr != nil {
+		return textResult(milestoneErr.Error()), nil, nil
 	}
 
 	checkpoints, err := s.db.ListCheckpointsByEscrow(ctx, escrow.ID, milestoneIndex)
@@ -1761,16 +1747,9 @@ func (s *Server) handleGetLatestCheckpoint(ctx context.Context, req *mcp.CallToo
 		return textResult(fmt.Sprintf("failed to look up escrow: %v", err)), nil, nil
 	}
 
-	var milestoneIndex *int
-	if ms := args.MilestoneIndex.String(); ms != "" {
-		v, parseErr := strconv.Atoi(ms)
-		if parseErr != nil {
-			return textResult(fmt.Sprintf("invalid milestone_index: %v", parseErr)), nil, nil
-		}
-		if v < 0 || v >= escrow.MilestoneCount {
-			return textResult(fmt.Sprintf("milestone_index %d out of range [0, %d)", v, escrow.MilestoneCount)), nil, nil
-		}
-		milestoneIndex = &v
+	milestoneIndex, milestoneErr := parseOptionalMilestoneIndex(args.MilestoneIndex.String(), escrow.MilestoneCount)
+	if milestoneErr != nil {
+		return textResult(milestoneErr.Error()), nil, nil
 	}
 
 	cp, err := s.db.GetLatestCheckpoint(ctx, escrow.ID, milestoneIndex)
@@ -2131,6 +2110,22 @@ func normalizeToken(token string) string {
 func hasStake(escrow *storage.Escrow) bool {
 	amt, ok := new(big.Int).SetString(escrow.WorkerStake, 10)
 	return ok && amt.Sign() > 0
+}
+
+// parseOptionalMilestoneIndex converts a raw string arg into a *int milestone
+// index, validating it is within [0, maxCount). Returns nil, nil for empty input.
+func parseOptionalMilestoneIndex(raw string, maxCount int) (*int, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid milestone_index: %w", err)
+	}
+	if v < 0 || v >= maxCount {
+		return nil, fmt.Errorf("milestone_index %d out of range [0, %d)", v, maxCount)
+	}
+	return &v, nil
 }
 
 func textResult(text string) *mcp.CallToolResult {
