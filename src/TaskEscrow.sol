@@ -469,7 +469,7 @@ contract TaskEscrow {
         _castSingleVote(msg.sender, approve, reasonURI, true);
     }
 
-    function dispute(string calldata reasonURI) external whenNotFrozen {
+    function dispute(string calldata reasonURI) external nonReentrant whenNotFrozen {
         _requireBuyer();
         _requireState(Status.Submitted);
         if (block.timestamp > _disputeWindowEnds()) revert WindowExpired();
@@ -478,7 +478,7 @@ contract TaskEscrow {
         _setSingleDisputed(msg.sender, reasonURI, false);
     }
 
-    function escalateSilence(string calldata reasonURI) external whenNotFrozen {
+    function escalateSilence(string calldata reasonURI) external nonReentrant whenNotFrozen {
         if (msg.sender != activeWorker) revert Unauthorized();
         _requireState(Status.Submitted);
         if (block.timestamp <= _reviewWindowEnds()) revert WindowNotOpen();
@@ -489,7 +489,7 @@ contract TaskEscrow {
     }
 
     /// @notice Advances an expired single-shot review cycle into dispute when quorum did not finalize in time.
-    function expireNoQuorum(string calldata reasonURI) external whenNotFrozen {
+    function expireNoQuorum(string calldata reasonURI) external nonReentrant whenNotFrozen {
         _requireState(Status.Submitted);
         if (!_isLifecycleParticipant(msg.sender)) revert Unauthorized();
         if (block.timestamp <= _disputeWindowEnds()) revert WindowNotOpen();
@@ -626,7 +626,7 @@ contract TaskEscrow {
         _approveMilestone(milestoneIndex, msg.sender);
     }
 
-    function disputeMilestone(uint8 milestoneIndex, string calldata reasonURI) external whenNotFrozen {
+    function disputeMilestone(uint8 milestoneIndex, string calldata reasonURI) external nonReentrant whenNotFrozen {
         _requireMultiMsFunded();
         _requireBuyer();
         if (milestoneIndex != currentMilestone) revert InvalidMilestoneIndex();
@@ -648,7 +648,11 @@ contract TaskEscrow {
         _castMilestoneVote(msg.sender, milestoneIndex, approve, reasonURI, true);
     }
 
-    function escalateMilestoneSilence(uint8 milestoneIndex, string calldata reasonURI) external whenNotFrozen {
+    function escalateMilestoneSilence(uint8 milestoneIndex, string calldata reasonURI)
+        external
+        nonReentrant
+        whenNotFrozen
+    {
         _requireMultiMsFunded();
         if (msg.sender != activeWorker) revert Unauthorized();
         if (milestoneIndex != currentMilestone) revert InvalidMilestoneIndex();
@@ -663,7 +667,11 @@ contract TaskEscrow {
     }
 
     /// @notice Advances an expired milestone review cycle into dispute when quorum did not finalize in time.
-    function expireMilestoneNoQuorum(uint8 milestoneIndex, string calldata reasonURI) external whenNotFrozen {
+    function expireMilestoneNoQuorum(uint8 milestoneIndex, string calldata reasonURI)
+        external
+        nonReentrant
+        whenNotFrozen
+    {
         _requireMultiMsFunded();
         if (!_isLifecycleParticipant(msg.sender)) revert Unauthorized();
         if (milestoneIndex != currentMilestone) revert InvalidMilestoneIndex();

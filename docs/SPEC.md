@@ -256,7 +256,7 @@ These must hold for every escrow at all times:
    - For single-shot escrows, this is `amount` (or `amount + workerStake` when staked).
    - For milestone escrows, each approved/resolved partial payout, each milestone timeout refund, and each `abortRemainingMilestones` refund reduces the remaining undistributed escrow principal before terminal completion.
 2. **Terminal exclusivity**: Settled, Refunded, and Cancelled are mutually exclusive. No function can transition from a terminal state to a non-terminal state.
-3. **Fund conservation**: total funds distributed never exceeds `amount + workerStake`.
+3. **Fund conservation**: total funds distributed from the escrow principal and worker stake never exceeds `amount + workerStake`. Verifier stake flows are governed separately by invariant 9.
 4. **Fee bound**: protocol fee never exceeds worker gross award.
 5. **Stake lifecycle**: returned fully on approval, split proportionally on dispute, forfeited on timeout or backup activation.
 6. **Backup exclusivity**: backup activation can occur at most once per escrow; `activeWorker` replaces the original worker for all subsequent operations.

@@ -594,6 +594,9 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		if !ok {
 			return textResult("invalid worker_stake"), nil, nil
 		}
+		if ws.Sign() < 0 {
+			return textResult("invalid worker_stake: must not be negative"), nil, nil
+		}
 		workerStakeVal = ws
 	}
 	verifierStakePerVerifierVal := big.NewInt(0)
