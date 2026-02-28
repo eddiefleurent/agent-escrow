@@ -253,7 +253,7 @@ loop for each milestone i = 0..N-1
   == Milestone [i]: Submission ==
 
   worker -> chain : SubmitMilestone(i, hash, URI, proofHash)
-  chain -> escrow : submitMilestone(i)
+  chain -> escrow : submitMilestone(i, hash, URI, proofHash)
   note over escrow #E3F2FD : Milestone[i] **Submitted**
   escrow --> indexer : MilestoneSubmitted event
   indexer -> db : update milestone state

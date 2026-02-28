@@ -2204,7 +2204,10 @@ func parseProofHashHex(raw string) ([32]byte, error) {
 	if raw == "" {
 		return out, nil
 	}
-	normalized := strings.TrimPrefix(raw, "0x")
+	if !strings.HasPrefix(raw, "0x") {
+		return out, errors.New("expected 0x-prefixed hex")
+	}
+	normalized := raw[2:]
 	if len(normalized) != 64 {
 		return out, fmt.Errorf("expected 32-byte hex (64 chars), got %d", len(normalized))
 	}
@@ -2220,7 +2223,10 @@ func parseProofHexBytes(raw string) ([]byte, error) {
 	if raw == "" {
 		return nil, errors.New("proof is required")
 	}
-	normalized := strings.TrimPrefix(raw, "0x")
+	if !strings.HasPrefix(raw, "0x") {
+		return nil, errors.New("expected 0x-prefixed hex")
+	}
+	normalized := raw[2:]
 	if len(normalized)%2 != 0 {
 		return nil, errors.New("hex length must be even")
 	}

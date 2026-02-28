@@ -405,24 +405,22 @@ func (idx *Indexer) handleEscrowCreated(ctx context.Context, lg types.Log) error
 		return fmt.Errorf("unexpected type for taskSpecHash: %T", values[3])
 	}
 
-	tokenAddr := common.Address{}
-	if ta, ok := values[4].(common.Address); ok {
-		tokenAddr = ta
+	tokenAddr, ok := values[4].(common.Address)
+	if !ok {
+		return fmt.Errorf("unexpected type for token: %T", values[4])
 	}
-
-	serviceTier := 0
-	if st, ok := values[5].(uint8); ok {
-		serviceTier = int(st)
+	serviceTierRaw, ok := values[5].(uint8)
+	if !ok {
+		return fmt.Errorf("unexpected type for serviceTier: %T", values[5])
 	}
-
-	zkVerifierAddr := common.Address{}
-	if zv, ok := values[6].(common.Address); ok {
-		zkVerifierAddr = zv
+	serviceTier := int(serviceTierRaw)
+	zkVerifierAddr, ok := values[6].(common.Address)
+	if !ok {
+		return fmt.Errorf("unexpected type for zkVerifier: %T", values[6])
 	}
-
-	circuitID := [32]byte{}
-	if cid, ok := values[7].([32]byte); ok {
-		circuitID = cid
+	circuitID, ok := values[7].([32]byte)
+	if !ok {
+		return fmt.Errorf("unexpected type for circuitId: %T", values[7])
 	}
 
 	buyer := common.BytesToAddress(lg.Topics[3].Bytes())

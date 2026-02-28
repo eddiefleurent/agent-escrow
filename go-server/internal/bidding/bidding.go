@@ -203,24 +203,46 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 	if p.RequirementsJSON == "" {
 		p.RequirementsJSON = "{}"
 	}
+
+	var requirements map[string]any
+	if err := json.Unmarshal([]byte(p.RequirementsJSON), &requirements); err != nil {
+		return nil, fmt.Errorf("invalid requirements_json: %w", err)
+	}
+	if requirements == nil {
+		requirements = map[string]any{}
+	}
+
+	var jsonProofProtocol string
+	hasJSONProofProtocol := false
+	if raw, ok := requirements["required_proof_protocol"]; ok {
+		protocol, ok := raw.(string)
+		if !ok {
+			return nil, errors.New("requirements_json.required_proof_protocol must be a string")
+		}
+		if protocol != "groth16" {
+			return nil, errors.New("required_proof_protocol must be 'groth16' when set")
+		}
+		jsonProofProtocol = protocol
+		hasJSONProofProtocol = true
+	}
+
 	if p.RequiredProofProtocol != "" {
 		if p.RequiredProofProtocol != "groth16" {
 			return nil, errors.New("required_proof_protocol must be 'groth16' when set")
 		}
-		var requirements map[string]any
-		if err := json.Unmarshal([]byte(p.RequirementsJSON), &requirements); err != nil {
-			return nil, fmt.Errorf("invalid requirements_json: %w", err)
-		}
-		if requirements == nil {
-			requirements = map[string]any{}
+		if hasJSONProofProtocol && jsonProofProtocol != p.RequiredProofProtocol {
+			return nil, errors.New("required_proof_protocol mismatch between field and requirements_json")
 		}
 		requirements["required_proof_protocol"] = p.RequiredProofProtocol
-		normalizedReq, err := json.Marshal(requirements)
-		if err != nil {
-			return nil, fmt.Errorf("marshal requirements_json: %w", err)
-		}
-		p.RequirementsJSON = string(normalizedReq)
+	} else if hasJSONProofProtocol {
+		p.RequiredProofProtocol = jsonProofProtocol
 	}
+
+	normalizedReq, err := json.Marshal(requirements)
+	if err != nil {
+		return nil, fmt.Errorf("marshal requirements_json: %w", err)
+	}
+	p.RequirementsJSON = string(normalizedReq)
 	if p.RequiredCredentialsJSON == "" {
 		p.RequiredCredentialsJSON = "[]"
 	}

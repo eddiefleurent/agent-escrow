@@ -188,6 +188,8 @@ func TestCLIEscrowVerifyApprove(t *testing.T) {
 		ReviewPeriodSeconds:      60,
 		DisputePeriodSeconds:     60,
 		ArbitratorTimeoutSeconds: 60,
+		ZKVerifier:               "0x1111111111111111111111111111111111111111",
+		CircuitID:                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	})
 	if err != nil {
 		t.Fatalf("create escrow: %v", err)

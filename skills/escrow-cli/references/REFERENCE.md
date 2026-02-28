@@ -91,7 +91,9 @@ No body. Deposits the worker stake configured at escrow creation.
 POST /api/v1/escrows/{id}/submit
 ```
 
-Fields: `submission_uri` (required), `proof_hash` (optional, 32-byte hex), `milestone_index` (optional, int)
+Fields: `submission_uri` (required URI string), `proof_hash` (optional, 0x-prefixed hex (32-byte hex)), `milestone_index` (optional, int)
+
+Hex encoding note: for this payload, only `proof_hash` is hex and it must be 0x-prefixed; `submission_uri` is a URI string and `milestone_index` is a decimal integer.
 
 #### `escrow approve <id>` (body required)
 
@@ -107,7 +109,7 @@ Fields: `role` (required: `"buyer"` or `"verifier"`), `milestone_index` (optiona
 POST /api/v1/escrows/{id}/verify-approve
 ```
 
-Fields: `proof` (required, hex-encoded bytes), `milestone_index` (optional, int)
+Fields: `proof` (required, 0x-prefixed hex-encoded bytes), `milestone_index` (optional, int)
 
 #### `escrow dispute <id>` (body required)
 

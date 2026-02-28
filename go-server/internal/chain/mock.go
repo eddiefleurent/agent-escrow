@@ -523,7 +523,7 @@ func MakeEscrowCreatedReceipt(escrowID int64, escrowAddr, buyer common.Address) 
 	buyerBytes := common.BytesToHash(buyer.Bytes())
 
 	// Non-indexed: worker, verifier, arbitrator, taskSpecHash, token, serviceTier, zkVerifier, circuitId
-	nonIndexed, _ := FactoryABI.Events["EscrowCreated"].Inputs.NonIndexed().Pack(
+	nonIndexed, err := FactoryABI.Events["EscrowCreated"].Inputs.NonIndexed().Pack(
 		common.HexToAddress("0x2222222222222222222222222222222222222222"),
 		common.HexToAddress("0x3333333333333333333333333333333333333333"),
 		common.HexToAddress("0x4444444444444444444444444444444444444444"),
@@ -533,6 +533,9 @@ func MakeEscrowCreatedReceipt(escrowID int64, escrowAddr, buyer common.Address) 
 		common.Address{},
 		[32]byte{},
 	)
+	if err != nil {
+		panic("failed to pack EscrowCreated non-indexed args: " + err.Error())
+	}
 
 	return &types.Receipt{
 		Status: types.ReceiptStatusSuccessful,

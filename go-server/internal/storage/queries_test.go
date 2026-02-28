@@ -227,15 +227,17 @@ func TestSubmissions(t *testing.T) {
 		t.Fatalf("setup escrow: %v", err)
 	}
 
-	sub, err := db.CreateSubmission(ctx, escrow.ID, "0xhash123", "ipfs://result", "0xproof123")
+	const submissionHash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const proofHash = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	sub, err := db.CreateSubmission(ctx, escrow.ID, submissionHash, "ipfs://result", proofHash)
 	if err != nil {
 		t.Fatalf("create submission: %v", err)
 	}
-	if sub.SubmissionHash != "0xhash123" {
-		t.Fatalf("expected hash '0xhash123', got %q", sub.SubmissionHash)
+	if sub.SubmissionHash != submissionHash {
+		t.Fatalf("expected hash %q, got %q", submissionHash, sub.SubmissionHash)
 	}
-	if sub.ProofHash != "0xproof123" {
-		t.Fatalf("expected proof hash '0xproof123', got %q", sub.ProofHash)
+	if sub.ProofHash != proofHash {
+		t.Fatalf("expected proof hash %q, got %q", proofHash, sub.ProofHash)
 	}
 
 	subs, err := db.GetSubmissionsByEscrow(ctx, escrow.ID)
@@ -244,6 +246,12 @@ func TestSubmissions(t *testing.T) {
 	}
 	if len(subs) != 1 {
 		t.Fatalf("expected 1 submission, got %d", len(subs))
+	}
+	if subs[0].SubmissionHash != sub.SubmissionHash {
+		t.Fatalf("expected persisted submission hash %q, got %q", sub.SubmissionHash, subs[0].SubmissionHash)
+	}
+	if subs[0].ProofHash != sub.ProofHash {
+		t.Fatalf("expected persisted proof hash %q, got %q", sub.ProofHash, subs[0].ProofHash)
 	}
 }
 

@@ -75,6 +75,7 @@ contract TaskEscrow {
     error NoProofSubmitted();
     error ProofHashMismatch();
     error ProofVerificationFailed();
+    error InvalidVerifierConfiguration();
 
     event EscrowFunded(address indexed buyer, uint256 amount);
     event WorkerStakeDeposited(address indexed worker, uint256 amount);
@@ -126,6 +127,7 @@ contract TaskEscrow {
     uint8 public immutable serviceTier;
     address public immutable backupWorker;
     uint64 public immutable backupDeadlineExtension;
+    // Trusted verifier contract configured at creation. If unset, ZK verification is disabled.
     address public immutable zkVerifier;
     bytes32 public immutable circuitId;
 
@@ -198,6 +200,10 @@ contract TaskEscrow {
         if (p.amount == 0) revert InvalidAmount();
         if (p.submissionDeadline <= block.timestamp) revert InvalidDeadline();
         if (p.protocolFeeBpsSnapshot > 10_000) revert InvalidAwardBps();
+        bool hasZKVerifier = p.zkVerifier != address(0);
+        bool hasCircuitID = p.circuitId != bytes32(0);
+        if (hasZKVerifier != hasCircuitID) revert InvalidVerifierConfiguration();
+        if (hasZKVerifier && p.zkVerifier.code.length == 0) revert InvalidAddress();
 
         factory = p.factory;
         buyer = p.buyer;
@@ -386,6 +392,7 @@ contract TaskEscrow {
         if (zkVerifier == address(0)) revert NoVerifierConfigured();
         if (proofHash == bytes32(0)) revert NoProofSubmitted();
         if (keccak256(proof) != proofHash) revert ProofHashMismatch();
+        // Trust model: zkVerifier is immutable and validated as a deployed contract in the constructor.
         bool ok = IZKVerifier(zkVerifier).verifyProof(circuitId, proof);
         if (!ok) revert ProofVerificationFailed();
         _approve(msg.sender);
@@ -551,6 +558,7 @@ contract TaskEscrow {
         if (ms.status != MilestoneStatus.Submitted) revert InvalidState();
         if (ms.proofHash == bytes32(0)) revert NoProofSubmitted();
         if (keccak256(proof) != ms.proofHash) revert ProofHashMismatch();
+        // Trust model: zkVerifier is immutable and validated as a deployed contract in the constructor.
         bool ok = IZKVerifier(zkVerifier).verifyProof(circuitId, proof);
         if (!ok) revert ProofVerificationFailed();
         _approveMilestone(milestoneIndex, msg.sender);
