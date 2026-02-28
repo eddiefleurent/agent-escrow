@@ -4,6 +4,7 @@ pragma solidity ^0.8.34;
 import {MilestoneLib} from "./MilestoneLib.sol";
 import {TransferLib} from "./TransferLib.sol";
 import {FactoryLib} from "./FactoryLib.sol";
+import {IZKVerifier} from "./IZKVerifier.sol";
 
 interface ITaskEscrowFactory {
     function recordOutcome(uint8 outcome) external;
@@ -36,6 +37,7 @@ contract TaskEscrow {
         uint64 submissionDeadline;
         bytes32 submissionHash;
         string submissionURI;
+        bytes32 proofHash;
         uint64 submittedAt;
         uint64 approvedAt;
         uint64 disputedAt;
@@ -69,10 +71,15 @@ contract TaskEscrow {
     error FactoryCallbackFailed();
     error Frozen();
     error HighAssuranceRequiresVerifier();
+    error NoVerifierConfigured();
+    error NoProofSubmitted();
+    error ProofHashMismatch();
+    error ProofVerificationFailed();
+    error InvalidVerifierConfiguration();
 
     event EscrowFunded(address indexed buyer, uint256 amount);
     event WorkerStakeDeposited(address indexed worker, uint256 amount);
-    event SubmissionMade(address indexed worker, bytes32 submissionHash, string submissionURI);
+    event SubmissionMade(address indexed worker, bytes32 submissionHash, string submissionURI, bytes32 proofHash);
     event Approved(address indexed approver, uint64 approvedAt);
     event Rejected(address indexed verifier, string reasonURI, uint64 rejectedAt);
     event Disputed(address indexed raisedBy, string reasonURI, uint64 disputedAt);
@@ -83,7 +90,9 @@ contract TaskEscrow {
     event Refunded(uint256 amount, uint256 workerStakeForfeited);
     event Cancelled();
 
-    event MilestoneSubmitted(uint8 indexed milestoneIndex, bytes32 submissionHash, string submissionURI);
+    event MilestoneSubmitted(
+        uint8 indexed milestoneIndex, bytes32 submissionHash, string submissionURI, bytes32 proofHash
+    );
     event MilestoneApproved(uint8 indexed milestoneIndex, address indexed approver, uint64 approvedAt);
     event MilestoneRejected(uint8 indexed milestoneIndex, address indexed verifier, string reasonURI);
     event MilestoneDisputed(uint8 indexed milestoneIndex, address indexed raisedBy, string reasonURI);
@@ -118,6 +127,9 @@ contract TaskEscrow {
     uint8 public immutable serviceTier;
     address public immutable backupWorker;
     uint64 public immutable backupDeadlineExtension;
+    // Trusted verifier contract configured at creation. If unset, ZK verification is disabled.
+    address public immutable zkVerifier;
+    bytes32 public immutable circuitId;
 
     address public activeWorker;
     bool public backupActivated;
@@ -130,6 +142,7 @@ contract TaskEscrow {
     Status public status;
     bool public workerStaked;
     bytes32 public submissionHash;
+    bytes32 public proofHash;
     string public submissionURI;
     string public disputeReasonURI;
 
@@ -163,6 +176,8 @@ contract TaskEscrow {
         uint8 serviceTier;
         address backupWorker;
         uint64 backupDeadlineExtension;
+        address zkVerifier;
+        bytes32 circuitId;
         CreateMilestoneParams[] milestones;
     }
 
@@ -185,6 +200,10 @@ contract TaskEscrow {
         if (p.amount == 0) revert InvalidAmount();
         if (p.submissionDeadline <= block.timestamp) revert InvalidDeadline();
         if (p.protocolFeeBpsSnapshot > 10_000) revert InvalidAwardBps();
+        bool hasZKVerifier = p.zkVerifier != address(0);
+        bool hasCircuitID = p.circuitId != bytes32(0);
+        if (hasZKVerifier != hasCircuitID) revert InvalidVerifierConfiguration();
+        if (hasZKVerifier && p.zkVerifier.code.length == 0) revert InvalidAddress();
 
         factory = p.factory;
         buyer = p.buyer;
@@ -204,6 +223,8 @@ contract TaskEscrow {
         serviceTier = p.serviceTier;
         backupWorker = p.backupWorker;
         backupDeadlineExtension = p.backupDeadlineExtension;
+        zkVerifier = p.zkVerifier;
+        circuitId = p.circuitId;
         activeWorker = p.worker;
         status = Status.Created;
 
@@ -235,7 +256,7 @@ contract TaskEscrow {
     }
 
     function _emptyMs(uint256 amt, uint64 dl) internal pure returns (Milestone memory) {
-        return Milestone(amt, dl, bytes32(0), "", 0, 0, 0, "", MilestoneStatus.Pending, 0);
+        return Milestone(amt, dl, bytes32(0), "", bytes32(0), 0, 0, 0, "", MilestoneStatus.Pending, 0);
     }
 
     modifier nonReentrant() {
@@ -348,18 +369,36 @@ contract TaskEscrow {
         emit WorkerStakeDeposited(msg.sender, workerStake);
     }
 
-    function submit(bytes32 _submissionHash, string calldata _submissionURI) external whenNotFrozen {
+    function submit(bytes32 _submissionHash, string calldata _submissionURI, bytes32 _proofHash)
+        external
+        whenNotFrozen
+    {
         if (msg.sender != activeWorker) revert Unauthorized();
         _requireState(Status.Funded);
+        if (milestoneCount > 1) revert InvalidState();
         if (block.timestamp > uint256(submissionDeadline) + uint256(deadlineExtensionApplied)) revert WindowExpired();
         if (_submissionHash == bytes32(0)) revert InvalidHash();
         if (workerStake > 0 && !workerStaked) revert StakeNotDeposited();
         submissionHash = _submissionHash;
+        proofHash = _proofHash;
         submissionURI = _submissionURI;
         submittedAt = uint64(block.timestamp);
         status = Status.Submitted;
-        emit SubmissionMade(msg.sender, _submissionHash, _submissionURI);
-        if (milestoneCount == 1) _syncMs0Submit(_submissionHash, _submissionURI);
+        emit SubmissionMade(msg.sender, _submissionHash, _submissionURI, _proofHash);
+        _syncMs0Submit(_submissionHash, _submissionURI, _proofHash);
+    }
+
+    function verifyAndApprove(bytes calldata proof) external nonReentrant whenNotFrozen {
+        if (msg.sender != verifier) revert Unauthorized();
+        if (zkVerifier == address(0)) revert NoVerifierConfigured();
+        _requireState(Status.Submitted);
+        if (block.timestamp > _reviewWindowEnds()) revert WindowExpired();
+        if (proofHash == bytes32(0)) revert NoProofSubmitted();
+        if (keccak256(proof) != proofHash) revert ProofHashMismatch();
+        // Trust model: zkVerifier is immutable and validated as a deployed contract in the constructor.
+        bool ok = IZKVerifier(zkVerifier).verifyProof(circuitId, proof);
+        if (!ok) revert ProofVerificationFailed();
+        _approve(msg.sender);
     }
 
     function approveByBuyer() external nonReentrant whenNotFrozen {
@@ -490,10 +529,12 @@ contract TaskEscrow {
 
     // ── Milestone functions (multi-milestone mode, milestoneCount > 1) ──
 
-    function submitMilestone(uint8 milestoneIndex, bytes32 _submissionHash, string calldata _submissionURI)
-        external
-        whenNotFrozen
-    {
+    function submitMilestone(
+        uint8 milestoneIndex,
+        bytes32 _submissionHash,
+        string calldata _submissionURI,
+        bytes32 _proofHash
+    ) external whenNotFrozen {
         if (msg.sender != activeWorker) revert Unauthorized();
         _requireState(Status.Funded);
         if (milestoneCount <= 1) revert InvalidState();
@@ -505,9 +546,26 @@ contract TaskEscrow {
         if (block.timestamp > ms.submissionDeadline) revert WindowExpired();
         ms.submissionHash = _submissionHash;
         ms.submissionURI = _submissionURI;
+        ms.proofHash = _proofHash;
         ms.submittedAt = uint64(block.timestamp);
         ms.status = MilestoneStatus.Submitted;
-        emit MilestoneSubmitted(milestoneIndex, _submissionHash, _submissionURI);
+        emit MilestoneSubmitted(milestoneIndex, _submissionHash, _submissionURI, _proofHash);
+    }
+
+    function verifyAndApproveMilestone(uint8 milestoneIndex, bytes calldata proof) external nonReentrant whenNotFrozen {
+        _requireMultiMsFunded();
+        if (msg.sender != verifier) revert Unauthorized();
+        if (zkVerifier == address(0)) revert NoVerifierConfigured();
+        if (milestoneIndex != currentMilestone) revert InvalidMilestoneIndex();
+        Milestone storage ms = milestones[milestoneIndex];
+        if (ms.status != MilestoneStatus.Submitted) revert InvalidState();
+        if (block.timestamp > uint256(ms.submittedAt) + uint256(reviewPeriodSeconds)) revert WindowExpired();
+        if (ms.proofHash == bytes32(0)) revert NoProofSubmitted();
+        if (keccak256(proof) != ms.proofHash) revert ProofHashMismatch();
+        // Trust model: zkVerifier is immutable and validated as a deployed contract in the constructor.
+        bool ok = IZKVerifier(zkVerifier).verifyProof(circuitId, proof);
+        if (!ok) revert ProofVerificationFailed();
+        _approveMilestone(milestoneIndex, msg.sender);
     }
 
     function approveMilestoneByBuyer(uint8 milestoneIndex) external nonReentrant whenNotFrozen {
@@ -677,9 +735,10 @@ contract TaskEscrow {
         if (milestoneCount <= 1) revert InvalidState();
     }
 
-    function _syncMs0Submit(bytes32 h, string calldata uri) internal {
+    function _syncMs0Submit(bytes32 h, string calldata uri, bytes32 pHash) internal {
         milestones[0].submissionHash = h;
         milestones[0].submissionURI = uri;
+        milestones[0].proofHash = pHash;
         milestones[0].submittedAt = uint64(block.timestamp);
         milestones[0].status = MilestoneStatus.Submitted;
     }

@@ -165,6 +165,59 @@ func TestCLIEscrowListAndGet(t *testing.T) {
 	}
 }
 
+func TestCLIEscrowVerifyApprove(t *testing.T) {
+	env := setupCLITestEnv(t)
+	ctx := context.Background()
+
+	task, err := env.db.CreateTask(ctx, "Task", "desc", "0xabc")
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
+		TaskID:                   task.ID,
+		ChainID:                  84532,
+		FactoryAddress:           "0xF",
+		EscrowAddress:            "0xE3",
+		Buyer:                    "0xB",
+		Worker:                   "0xW",
+		Verifier:                 "0xV",
+		Arbitrator:               "0xA",
+		Amount:                   "100",
+		Status:                   "submitted",
+		SubmissionDeadline:       1700000000,
+		ReviewPeriodSeconds:      60,
+		DisputePeriodSeconds:     60,
+		ArbitratorTimeoutSeconds: 60,
+		ZKVerifier:               "0x1111111111111111111111111111111111111111",
+		CircuitID:                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	})
+	if err != nil {
+		t.Fatalf("create escrow: %v", err)
+	}
+
+	idStr := strconv.FormatInt(escrow.ID, 10)
+	stdout, stderr, err := runCLI(
+		t,
+		env.server.URL,
+		"escrow",
+		"verify-approve",
+		idStr,
+		"--data",
+		`{"proof":"0x1234","caller":"0xV"}`,
+	)
+	if err != nil {
+		t.Fatalf("execute escrow verify-approve: %v stderr=%s", err, stderr)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(stdout), &resp); err != nil {
+		t.Fatalf("unmarshal verify-approve output: %v\n%s", err, stdout)
+	}
+	txHash, ok := resp["tx_hash"].(string)
+	if !ok || strings.TrimSpace(txHash) == "" {
+		t.Fatalf("expected non-empty string tx_hash in response: %v", resp)
+	}
+}
+
 func TestCLIClientErrorExitCode(t *testing.T) {
 	env := setupCLITestEnv(t)
 	_, _, err := runCLI(t, env.server.URL, "escrow", "get", "abc")

@@ -44,6 +44,8 @@ contract TaskEscrowTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -71,6 +73,8 @@ contract TaskEscrowTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -85,7 +89,7 @@ contract TaskEscrowTest is Test {
         escrow.fund{value: AMOUNT}();
 
         vm.prank(worker);
-        escrow.submit(keccak256("submission"), "ipfs://result");
+        escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
 
         vm.prank(buyer);
         escrow.approveByBuyer();
@@ -102,7 +106,7 @@ contract TaskEscrowTest is Test {
         escrow.fund{value: AMOUNT}();
 
         vm.prank(worker);
-        escrow.submit(keccak256("submission"), "ipfs://result");
+        escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
 
         vm.prank(buyer);
         escrow.dispute("ipfs://reason");
@@ -146,7 +150,7 @@ contract TaskEscrowTest is Test {
         escrow.fund{value: AMOUNT}();
 
         vm.prank(worker);
-        escrow.submit(keccak256("submission"), "ipfs://result");
+        escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
 
         vm.prank(verifier);
         escrow.rejectByVerifier("ipfs://reject");
@@ -159,7 +163,7 @@ contract TaskEscrowTest is Test {
         escrow.fund{value: AMOUNT}();
 
         vm.prank(worker);
-        escrow.submit(keccak256("submission"), "ipfs://result");
+        escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
 
         vm.warp(block.timestamp + REVIEW + 1);
         vm.prank(worker);
@@ -173,7 +177,7 @@ contract TaskEscrowTest is Test {
         escrow.fund{value: AMOUNT}();
 
         vm.prank(worker);
-        escrow.submit(keccak256("submission"), "ipfs://result");
+        escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
 
         vm.prank(buyer);
         escrow.dispute("ipfs://reason");
@@ -194,7 +198,7 @@ contract TaskEscrowTest is Test {
         escrow.fund{value: AMOUNT}();
 
         vm.prank(worker);
-        escrow.submit(keccak256("submission"), "ipfs://result");
+        escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
 
         vm.prank(buyer);
         escrow.dispute("ipfs://reason");
@@ -211,7 +215,7 @@ contract TaskEscrowTest is Test {
         escrow.fund{value: AMOUNT}();
 
         vm.prank(worker);
-        escrow.submit(keccak256("submission"), "ipfs://result");
+        escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
 
         vm.prank(buyer);
         escrow.dispute("ipfs://reason");
@@ -244,7 +248,7 @@ contract TaskEscrowTest is Test {
         assertTrue(e.workerStaked());
 
         vm.prank(worker);
-        e.submit(keccak256("submission"), "ipfs://result");
+        e.submit(keccak256("submission"), "ipfs://result", bytes32(0));
 
         vm.prank(buyer);
         e.approveByBuyer();
@@ -264,7 +268,7 @@ contract TaskEscrowTest is Test {
 
         vm.expectRevert(TaskEscrow.StakeNotDeposited.selector);
         vm.prank(worker);
-        e.submit(keccak256("submission"), "ipfs://result");
+        e.submit(keccak256("submission"), "ipfs://result", bytes32(0));
     }
 
     function testWorkerStakeDepositWrongAmountReverts() public {
@@ -355,7 +359,7 @@ contract TaskEscrowTest is Test {
         vm.prank(worker);
         e.depositStake{value: STAKE}();
         vm.prank(worker);
-        e.submit(keccak256("submission"), "ipfs://result");
+        e.submit(keccak256("submission"), "ipfs://result", bytes32(0));
         vm.prank(buyer);
         e.dispute("ipfs://reason");
 
@@ -378,7 +382,7 @@ contract TaskEscrowTest is Test {
         vm.prank(worker);
         e.depositStake{value: STAKE}();
         vm.prank(worker);
-        e.submit(keccak256("submission"), "ipfs://result");
+        e.submit(keccak256("submission"), "ipfs://result", bytes32(0));
         vm.prank(buyer);
         e.dispute("ipfs://reason");
 
@@ -402,7 +406,7 @@ contract TaskEscrowTest is Test {
         vm.prank(worker);
         e.depositStake{value: STAKE}();
         vm.prank(worker);
-        e.submit(keccak256("submission"), "ipfs://result");
+        e.submit(keccak256("submission"), "ipfs://result", bytes32(0));
         vm.prank(buyer);
         e.dispute("ipfs://reason");
 
@@ -434,7 +438,7 @@ contract TaskEscrowTest is Test {
         vm.prank(worker);
         e.depositStake{value: STAKE}();
         vm.prank(worker);
-        e.submit(keccak256("submission"), "ipfs://result");
+        e.submit(keccak256("submission"), "ipfs://result", bytes32(0));
         vm.prank(buyer);
         e.dispute("ipfs://reason");
 
@@ -453,7 +457,7 @@ contract TaskEscrowTest is Test {
         escrow.fund{value: AMOUNT}();
 
         vm.prank(worker);
-        escrow.submit(keccak256("submission"), "ipfs://result");
+        escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
 
         assertEq(uint256(escrow.status()), uint256(TaskEscrow.Status.Submitted));
     }
@@ -476,7 +480,7 @@ contract TaskEscrowTest is Test {
         vm.prank(worker);
         e.depositStake{value: STAKE}();
         vm.prank(worker);
-        e.submit(keccak256("submission"), "ipfs://result");
+        e.submit(keccak256("submission"), "ipfs://result", bytes32(0));
         vm.prank(buyer);
         e.dispute("ipfs://reason");
 

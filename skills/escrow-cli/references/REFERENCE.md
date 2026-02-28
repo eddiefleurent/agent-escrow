@@ -45,7 +45,7 @@ POST /api/v1/escrows
 
 Required fields: `title`, `description`, `buyer`, `worker`, `verifier`, `arbitrator`, `amount`, `submission_deadline`, `review_period_seconds`, `dispute_period_seconds`, `arbitrator_timeout_seconds`
 
-Optional fields: `worker_stake`, `token`, `milestones` (array of `{amount, submission_deadline}`), `backup_worker`, `backup_deadline_extension`
+Optional fields: `worker_stake`, `token`, `milestones` (array of `{amount, submission_deadline}`), `backup_worker`, `backup_deadline_extension`, `zk_verifier`, `circuit_id`
 
 All numeric values are strings. Amounts in wei. Deadlines as Unix timestamps. Periods in seconds.
 
@@ -91,7 +91,9 @@ No body. Deposits the worker stake configured at escrow creation.
 POST /api/v1/escrows/{id}/submit
 ```
 
-Fields: `submission_uri` (required), `milestone_index` (optional, int)
+Fields: `submission_uri` (required URI string), `proof_hash` (optional, 0x-prefixed 32-byte hex), `milestone_index` (optional, int)
+
+Hex encoding note: for this payload, only `proof_hash` is hex and it must be 0x-prefixed; `submission_uri` is a URI string and `milestone_index` is a decimal integer.
 
 #### `escrow approve <id>` (body required)
 
@@ -100,6 +102,16 @@ POST /api/v1/escrows/{id}/approve
 ```
 
 Fields: `role` (required: `"buyer"` or `"verifier"`), `milestone_index` (optional, int)
+
+#### `escrow verify-approve <id>` (body required)
+
+```http
+POST /api/v1/escrows/{id}/verify-approve
+```
+
+Use `verify-approve` instead of `approve` when on-chain or protocol-level ZK verification is required: this command submits the raw proof bytes to the escrow's configured `zkVerifier` contract for cryptographic validation before releasing funds. Use `approve` for standard approvals where no proof is needed.
+
+Fields: `proof` (required, 0x-prefixed hex-encoded bytes), `milestone_index` (optional, int)
 
 #### `escrow dispute <id>` (body required)
 

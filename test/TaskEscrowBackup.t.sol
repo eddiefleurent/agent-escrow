@@ -53,6 +53,8 @@ contract TaskEscrowBackupTest is Test {
                 serviceTier: 0,
                 backupWorker: backup,
                 backupDeadlineExtension: BACKUP_EXTENSION,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -88,6 +90,8 @@ contract TaskEscrowBackupTest is Test {
                 serviceTier: 0,
                 backupWorker: backup,
                 backupDeadlineExtension: BACKUP_EXTENSION,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: ms
             })
         );
@@ -115,7 +119,7 @@ contract TaskEscrowBackupTest is Test {
 
         // Backup submits within extended deadline
         vm.prank(backup);
-        e.submit(keccak256("backup-submission"), "ipfs://backup-result");
+        e.submit(keccak256("backup-submission"), "ipfs://backup-result", bytes32(0));
 
         uint256 backupBefore = backup.balance;
         uint256 treasuryBefore = treasury.balance;
@@ -162,7 +166,7 @@ contract TaskEscrowBackupTest is Test {
 
         // Backup submits
         vm.prank(backup);
-        e.submit(keccak256("backup-submission"), "ipfs://backup-result");
+        e.submit(keccak256("backup-submission"), "ipfs://backup-result", bytes32(0));
 
         uint256 backupBefore = backup.balance;
 
@@ -184,7 +188,7 @@ contract TaskEscrowBackupTest is Test {
 
         // Worker submits and gets approved for milestone 0
         vm.prank(worker);
-        e.submitMilestone(0, keccak256("ms0"), "ipfs://ms0");
+        e.submitMilestone(0, keccak256("ms0"), "ipfs://ms0", bytes32(0));
         vm.prank(buyer);
         e.approveMilestoneByBuyer(0);
 
@@ -198,13 +202,13 @@ contract TaskEscrowBackupTest is Test {
 
         // Backup submits milestone 1 within extended deadline
         vm.prank(backup);
-        e.submitMilestone(1, keccak256("ms1-backup"), "ipfs://ms1-backup");
+        e.submitMilestone(1, keccak256("ms1-backup"), "ipfs://ms1-backup", bytes32(0));
         vm.prank(buyer);
         e.approveMilestoneByBuyer(1);
 
         // Backup submits milestone 2
         vm.prank(backup);
-        e.submitMilestone(2, keccak256("ms2-backup"), "ipfs://ms2-backup");
+        e.submitMilestone(2, keccak256("ms2-backup"), "ipfs://ms2-backup", bytes32(0));
         vm.prank(buyer);
         e.approveMilestoneByBuyer(2);
 
@@ -251,6 +255,8 @@ contract TaskEscrowBackupTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -288,7 +294,7 @@ contract TaskEscrowBackupTest is Test {
         e.fund{value: AMOUNT}();
 
         vm.prank(worker);
-        e.submit(keccak256("submission"), "ipfs://result");
+        e.submit(keccak256("submission"), "ipfs://result", bytes32(0));
 
         // Escrow is now in Submitted state, not Funded
         vm.expectRevert(TaskEscrow.InvalidState.selector);
@@ -316,6 +322,8 @@ contract TaskEscrowBackupTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -329,7 +337,7 @@ contract TaskEscrowBackupTest is Test {
         e.fund{value: AMOUNT}();
 
         vm.prank(worker);
-        e.submit(keccak256("submission"), "ipfs://result");
+        e.submit(keccak256("submission"), "ipfs://result", bytes32(0));
 
         uint256 workerBefore = worker.balance;
         uint256 treasuryBefore = treasury.balance;
@@ -365,6 +373,8 @@ contract TaskEscrowBackupTest is Test {
                 serviceTier: 0,
                 backupWorker: buyer,
                 backupDeadlineExtension: BACKUP_EXTENSION,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -388,6 +398,8 @@ contract TaskEscrowBackupTest is Test {
                 serviceTier: 0,
                 backupWorker: worker,
                 backupDeadlineExtension: BACKUP_EXTENSION,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -411,6 +423,8 @@ contract TaskEscrowBackupTest is Test {
                 serviceTier: 0,
                 backupWorker: verifier,
                 backupDeadlineExtension: BACKUP_EXTENSION,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -434,6 +448,8 @@ contract TaskEscrowBackupTest is Test {
                 serviceTier: 0,
                 backupWorker: arbitrator,
                 backupDeadlineExtension: BACKUP_EXTENSION,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -480,7 +496,7 @@ contract TaskEscrowBackupTest is Test {
         e.activateBackup();
 
         vm.prank(backup);
-        e.submit(keccak256("backup-work"), "ipfs://backup-work");
+        e.submit(keccak256("backup-work"), "ipfs://backup-work", bytes32(0));
 
         vm.prank(buyer);
         e.dispute("ipfs://reason");
@@ -537,7 +553,7 @@ contract TaskEscrowBackupTest is Test {
         e.depositStake{value: STAKE}();
 
         vm.prank(backup);
-        e.submit(keccak256("backup-work"), "ipfs://backup-work");
+        e.submit(keccak256("backup-work"), "ipfs://backup-work", bytes32(0));
 
         vm.prank(buyer);
         e.dispute("ipfs://reason");

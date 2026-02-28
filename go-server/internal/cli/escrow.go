@@ -19,6 +19,7 @@ func newEscrowCmd(opts *Options) *cobra.Command {
 	escrowCmd.AddCommand(newEscrowFundCmd(opts))
 	escrowCmd.AddCommand(newEscrowStakeCmd(opts))
 	escrowCmd.AddCommand(newEscrowSubmitCmd(opts))
+	escrowCmd.AddCommand(newEscrowVerifyApproveCmd(opts))
 	escrowCmd.AddCommand(newEscrowApproveCmd(opts))
 	escrowCmd.AddCommand(newEscrowDisputeCmd(opts))
 	escrowCmd.AddCommand(newEscrowResolveCmd(opts))
@@ -96,6 +97,10 @@ func newEscrowSubmitCmd(opts *Options) *cobra.Command {
 
 func newEscrowApproveCmd(opts *Options) *cobra.Command {
 	return postByEscrowIDCmd(opts, "approve", "Approve work for escrow", "/approve", true)
+}
+
+func newEscrowVerifyApproveCmd(opts *Options) *cobra.Command {
+	return postByEscrowIDCmd(opts, "verify-approve", "Verify proof and approve escrow", "/verify-approve", true)
 }
 
 func newEscrowDisputeCmd(opts *Options) *cobra.Command {

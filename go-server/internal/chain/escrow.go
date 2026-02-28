@@ -48,10 +48,18 @@ func (c *Client) ApproveERC20(ctx context.Context, token common.Address, spender
 	return c.SendTx(ctx, token, data, nil)
 }
 
-func (c *Client) Submit(ctx context.Context, escrow common.Address, submissionHash [32]byte, submissionURI string) (*types.Transaction, error) {
-	data, err := EscrowABI.Pack("submit", submissionHash, submissionURI)
+func (c *Client) Submit(ctx context.Context, escrow common.Address, submissionHash [32]byte, submissionURI string, proofHash [32]byte) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("submit", submissionHash, submissionURI, proofHash)
 	if err != nil {
 		return nil, fmt.Errorf("pack submit: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, nil)
+}
+
+func (c *Client) VerifyAndApprove(ctx context.Context, escrow common.Address, proof []byte) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("verifyAndApprove", proof)
+	if err != nil {
+		return nil, fmt.Errorf("pack verifyAndApprove: %w", err)
 	}
 	return c.SendTx(ctx, escrow, data, nil)
 }
@@ -142,10 +150,18 @@ func (c *Client) Status(ctx context.Context, escrow common.Address) (uint8, erro
 
 // Milestone-specific operations (V2 multi-milestone)
 
-func (c *Client) SubmitMilestone(ctx context.Context, escrow common.Address, milestoneIndex uint8, submissionHash [32]byte, submissionURI string) (*types.Transaction, error) {
-	data, err := EscrowABI.Pack("submitMilestone", milestoneIndex, submissionHash, submissionURI)
+func (c *Client) SubmitMilestone(ctx context.Context, escrow common.Address, milestoneIndex uint8, submissionHash [32]byte, submissionURI string, proofHash [32]byte) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("submitMilestone", milestoneIndex, submissionHash, submissionURI, proofHash)
 	if err != nil {
 		return nil, fmt.Errorf("pack submitMilestone: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, nil)
+}
+
+func (c *Client) VerifyAndApproveMilestone(ctx context.Context, escrow common.Address, milestoneIndex uint8, proof []byte) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("verifyAndApproveMilestone", milestoneIndex, proof)
+	if err != nil {
+		return nil, fmt.Errorf("pack verifyAndApproveMilestone: %w", err)
 	}
 	return c.SendTx(ctx, escrow, data, nil)
 }

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -77,6 +78,8 @@ type createEscrowRequest struct {
 	Milestones               []milestoneRequest `json:"milestones,omitempty"`
 	BackupWorker             string             `json:"backup_worker,omitempty"`
 	BackupDeadlineExtension  string             `json:"backup_deadline_extension,omitempty"`
+	ZKVerifier               string             `json:"zk_verifier,omitempty"`
+	CircuitID                string             `json:"circuit_id,omitempty"`
 }
 
 func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
@@ -191,6 +194,24 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		backupDeadlineExt = bde
 	}
 
+	var zkVerifier common.Address
+	if req.ZKVerifier != "" {
+		if !common.IsHexAddress(req.ZKVerifier) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid zk_verifier address"})
+			return
+		}
+		zkVerifier = common.HexToAddress(req.ZKVerifier)
+	}
+	circuitID, err := parseProofHashHex(req.CircuitID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid circuit_id: %v", err)})
+		return
+	}
+	if (zkVerifier == common.Address{}) != (req.CircuitID == "") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "zk_verifier and circuit_id must either both be set or both omitted"})
+		return
+	}
+
 	if req.ServiceTier < 0 || req.ServiceTier > 1 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid service_tier: must be 0 or 1"})
 		return
@@ -254,6 +275,8 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		Milestones:               milestones,
 		BackupWorker:             backupWorkerAddr,
 		BackupDeadlineExtension:  backupDeadlineExt,
+		ZKVerifier:               zkVerifier,
+		CircuitID:                circuitID,
 	}
 
 	tx, err := h.chain.CreateEscrow(r.Context(), factory, params)
@@ -303,6 +326,8 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		BackupDeadlineExtension:  backupDeadline,
 		ActiveWorker:             req.Worker,
 		ServiceTier:              req.ServiceTier,
+		ZKVerifier:               zkVerifier.Hex(),
+		CircuitID:                fmt.Sprintf("0x%x", circuitID),
 	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("db: %v", err)})
@@ -581,6 +606,7 @@ func (h *Handlers) DepositStake(w http.ResponseWriter, r *http.Request) {
 
 type submitRequest struct {
 	SubmissionURI        string `json:"submission_uri"`
+	ProofHash            string `json:"proof_hash,omitempty"`
 	MilestoneIndex       *int   `json:"milestone_index,omitempty"`
 	AttestationChainJSON string `json:"attestation_chain_json,omitempty"`
 }
@@ -726,6 +752,11 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 	hash := crypto.Keccak256Hash([]byte(req.SubmissionURI))
 	var hashBytes [32]byte
 	copy(hashBytes[:], hash.Bytes())
+	proofHash, err := parseProofHashHex(req.ProofHash)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid proof_hash: %v", err)})
+		return
+	}
 
 	addr := common.HexToAddress(escrow.EscrowAddress)
 
@@ -736,7 +767,7 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": convErr.Error()})
 			return
 		}
-		tx, err := h.chain.SubmitMilestone(r.Context(), addr, msIdxU8, hashBytes, req.SubmissionURI)
+		tx, err := h.chain.SubmitMilestone(r.Context(), addr, msIdxU8, hashBytes, req.SubmissionURI, proofHash)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 			return
@@ -746,7 +777,7 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.chain.Submit(r.Context(), addr, hashBytes, req.SubmissionURI)
+	tx, err := h.chain.Submit(r.Context(), addr, hashBytes, req.SubmissionURI, proofHash)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 		return
@@ -845,6 +876,70 @@ func (h *Handlers) ApproveWork(w http.ResponseWriter, r *http.Request) {
 
 	_ = h.idx.RunOnce(r.Context())
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
+}
+
+type verifyApproveRequest struct {
+	Proof          string `json:"proof"`
+	MilestoneIndex *int   `json:"milestone_index,omitempty"`
+}
+
+func (h *Handlers) VerifyAndApprove(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+
+	var req verifyApproveRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	proofBytes, err := parseProofHexBytes(req.Proof)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid proof: %v", err)})
+		return
+	}
+
+	escrow, err := h.db.GetEscrow(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	addr := common.HexToAddress(escrow.EscrowAddress)
+
+	if escrow.MilestoneCount > 1 {
+		if req.MilestoneIndex == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "milestone_index required for multi-milestone escrow"})
+			return
+		}
+		msIdxVal := *req.MilestoneIndex
+		if msIdxVal < 0 || msIdxVal >= escrow.MilestoneCount {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdxVal, escrow.MilestoneCount)})
+			return
+		}
+		msIdx, convErr := numconv.IntToUint8(msIdxVal, "milestone_index")
+		if convErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": convErr.Error()})
+			return
+		}
+		tx, err := h.chain.VerifyAndApproveMilestone(r.Context(), addr, msIdx, proofBytes)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
+			return
+		}
+		_ = h.idx.RunOnce(r.Context())
+		writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+		return
+	}
+
+	tx, err := h.chain.VerifyAndApprove(r.Context(), addr, proofBytes)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
+		return
+	}
+	_ = h.idx.RunOnce(r.Context())
+	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
 }
 
 type disputeRequest struct {
@@ -1157,6 +1252,7 @@ type createRFQRequest struct {
 	WorkerStake              string `json:"worker_stake,omitempty"`
 	MilestonesJSON           string `json:"milestones_json,omitempty"`
 	RequirementsJSON         string `json:"requirements_json,omitempty"`
+	RequiredProofProtocol    string `json:"required_proof_protocol,omitempty"`
 	RequiredCredentialsJSON  string `json:"required_credentials_json,omitempty"`
 	CommitDeadline           string `json:"commit_deadline,omitempty"`
 	RevealDeadline           string `json:"reveal_deadline,omitempty"`
@@ -1236,6 +1332,7 @@ func (h *Handlers) CreateRFQ(w http.ResponseWriter, r *http.Request) {
 		WorkerStake:              req.WorkerStake,
 		MilestonesJSON:           req.MilestonesJSON,
 		RequirementsJSON:         req.RequirementsJSON,
+		RequiredProofProtocol:    req.RequiredProofProtocol,
 		RequiredCredentialsJSON:  req.RequiredCredentialsJSON,
 		ServiceTier:              req.ServiceTier,
 		CommitDeadline:           commitDeadline,
@@ -1813,6 +1910,47 @@ func (h *Handlers) BazaarDiscovery(w http.ResponseWriter, _ *http.Request) {
 
 func isValidAddress(s string) bool {
 	return common.IsHexAddress(s) && s != "0x0000000000000000000000000000000000000000"
+}
+
+func parseProofHashHex(raw string) ([32]byte, error) {
+	var out [32]byte
+	if raw == "" {
+		return out, nil
+	}
+	if !strings.HasPrefix(raw, "0x") {
+		return out, errors.New("expected 0x-prefixed hex")
+	}
+	normalized := raw[2:]
+	if len(normalized) != 64 {
+		return out, fmt.Errorf("expected 32-byte hex (64 chars), got %d", len(normalized))
+	}
+	b, err := hex.DecodeString(normalized)
+	if err != nil {
+		return out, err
+	}
+	copy(out[:], b)
+	return out, nil
+}
+
+func parseProofHexBytes(raw string) ([]byte, error) {
+	if raw == "" {
+		return nil, errors.New("proof is required")
+	}
+	if !strings.HasPrefix(raw, "0x") {
+		return nil, errors.New("expected 0x-prefixed hex")
+	}
+	normalized := raw[2:]
+	if len(normalized)%2 != 0 {
+		return nil, errors.New("hex length must be even")
+	}
+	b, err := hex.DecodeString(normalized)
+	if err != nil {
+		return nil, err
+	}
+	if len(b) == 0 {
+		return nil, errors.New("proof is empty")
+	}
+	return b, nil
 }
 
 // Checkpoint handlers (paper §6.1: checkpoint artifacts for mid-task agent swaps)

@@ -78,7 +78,8 @@ Exception: if a change is strictly documentation-only (for example `*.md` files,
 - No ORM -- `database/sql` with hand-written queries.
 - ABI files embedded via `//go:embed` from `go-server/abi/`.
 - Run `make go-abi` after any contract changes before building Go.
-- MCP tool handlers and HTTP handlers are thin wrappers around shared logic.
+- MCP tool handlers, HTTP handlers, and CLI commands are thin wrappers around shared logic.
+- **Interface parity**: Every feature must be exposed through all three interfaces (MCP tools, HTTP API, and CLI commands). When adding or modifying a feature, update all three. Do not ship a feature that is only accessible via one or two interfaces.
 - Return errors, don't panic (except in `init()` for ABI parsing).
 - `context.Context` for all chain and DB operations.
 - Logging: use `log/slog` (stdlib structured logger). Never use `log.Printf` or `fmt.Printf` for operational logging. Use JSON handler with leveled output (`slog.Info`, `slog.Warn`, `slog.Error`). Include relevant context as key-value pairs.

@@ -137,7 +137,7 @@ For internal component wiring (which handler talks to which shared component, ev
 **On-chain** (source of financial truth):
 - Escrow creation, funding, role assignment
 - Deadlines, review/dispute windows
-- Submission hash recording
+- Submission hash + proof-hash recording
 - Approval/rejection/dispute actions
 - Final payout/refund decisions
 - Protocol fee collection
@@ -182,7 +182,7 @@ The current architecture -- single Go binary, SQLite, one factory contract -- is
 
 **Components that scale without changes:**
 
-- **On-chain contracts.** Each escrow is an independent contract instance with no shared state bottleneck. The factory is a thin deployer. ETH/ERC20 support and worker-stake anti-Sybil bonding were originally planned for V2 and are now implemented in the current contract baseline. Milestone escrow (V2) extends the escrow contract with per-milestone state tracking and partial payouts; ZK verification slots (V3) add optional proof hashes per submission. Neither changes the factory pattern.
+- **On-chain contracts.** Each escrow is an independent contract instance with no shared state bottleneck. The factory is a thin deployer. ETH/ERC20 support and worker-stake anti-Sybil bonding were originally planned for V2 and are now implemented in the current contract baseline. Milestone escrow (V2) extends the escrow contract with per-milestone state tracking and partial payouts; ZK verification slots (V3) add optional proof hashes per submission plus optional `verifyAndApprove` calls against a configured verifier contract. Neither changes the factory pattern.
 - **On-chain/off-chain boundary.** The design principle -- settle on-chain, everything else off-chain -- is the correct long-term split. Bidding, matching, reputation scoring, task decomposition, and agent orchestration all remain off-chain where they can iterate independently.
 - **Go as the server language.** Go's concurrency model, low memory footprint, and single-binary deployment are well-suited through V4+. The go-ethereum client, the MCP SDK, and the HTTP server all scale to high concurrency without architectural changes.
 - **Skills + CLI + MCP + HTTP interfaces.** Skills + CLI is the default for shell-capable agents, MCP remains first-class for MCP-native integrations, and HTTP serves dashboards/external tooling. This multi-surface pattern holds through V4 and beyond.
@@ -198,7 +198,7 @@ The current architecture -- single Go binary, SQLite, one factory contract -- is
 | **Nonce management** | Sequential nonce tracking | Concurrent transaction submission causes nonce collisions | Nonce manager with mutex or pending-pool awareness; or separate signing service | V2 |
 | **Authentication** | None (server holds a single private key) | Multi-tenant marketplace where different participants sign their own transactions | Agents manage their own wallets via [AgentKit](https://docs.cdp.coinbase.com/agent-kit/welcome) or equivalent and sign escrow transactions directly; server shifts to indexing-only. Alternatively: relayer/meta-transaction model, or ERC-4337 account abstraction. The paper's §4.7 requires each agent to hold scoped credentials and sign its own messages (§4.9). | V2-V3 |
 | **Reputation storage** | On-chain seed implemented; off-chain SQLite table | On-chain reputation seed (V2) generates read-heavy query load; behavioral metrics (V3) produce high-write analytical workload | Reputation reads from a materialized view or dedicated read replica. Behavioral metrics use a time-series store or append-only analytics table. | V2-V3 |
-| **ZK verification** | Not yet implemented | ZK proof verification on-chain is expensive even on L2 (~300k-500k gas for groth16) | Verify proofs off-chain by default; post only the proof hash on-chain. Optional on-chain verification for high-assurance tasks via a dedicated verifier contract. Consider recursive proofs to amortize cost. | V3 |
+| **ZK verification** | Implemented as verification slots (`proofHash` commitments + optional `verifyAndApprove` on-chain checks) | ZK proof verification on-chain is expensive even on L2 (~300k-500k gas for groth16) | Keep off-chain verification as default (proof hash commitment only). Use on-chain verifier path selectively for high-assurance escrows via dedicated verifier contracts. Consider recursive proofs to amortize cost. | V3 |
 | **Cross-chain** | Single-chain (Base) | Agents and liquidity on different L2s | Bridge adapter contracts or cross-chain messaging (LayerZero, Hyperlane). The Go server already parameterizes `CHAIN_ID` and `RPC_URL`, so multi-chain indexing is configuration, not architecture. Settlement contracts deploy per-chain. | V4+ |
 
 **Projected architecture at V4 scale:**
@@ -441,9 +441,9 @@ SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 | Table | Purpose |
 |---|---|
 | `tasks` | Task metadata (title, description, spec hash) |
-| `escrows` | Escrow records mirroring on-chain state (includes `milestone_count`, `current_milestone`) |
+| `escrows` | Escrow records mirroring on-chain state (includes `milestone_count`, `current_milestone`, `zk_verifier`, `circuit_id`) |
 | `milestones` | Per-milestone records: amount, deadline, status, submission/dispute data (V2) |
-| `submissions` | Worker submission records |
+| `submissions` | Worker submission records (`submission_hash`, `proof_hash`) |
 | `disputes` | Dispute and resolution records |
 | `reputation` | Per-address, per-role outcome counters (completed, disputed, failed) indexed from on-chain events |
 | `rfqs` | Task Request for Quote broadcasts (paper §6.1: Task_RFQ); optional `required_credentials_json` for credential-gated bidding |
@@ -635,10 +635,11 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 
 | Tool | Inputs | Chain Method |
 |---|---|---|
-| `create_escrow` | title, roles, amount, worker_stake, token, deadlines, milestones, backup_worker, backup_deadline_extension (optional) | `Factory.createEscrow` |
+| `create_escrow` | title, roles, amount, worker_stake, token, deadlines, milestones, backup_worker, backup_deadline_extension, zk_verifier, circuit_id (optional) | `Factory.createEscrow` |
 | `fund_escrow` | escrow_id | `Escrow.fund` |
 | `deposit_stake` | escrow_id | `Escrow.depositStake` |
-| `submit_work` | escrow_id, submission_uri, milestone_index (optional) | `Escrow.submit` / `Escrow.submitMilestone` |
+| `submit_work` | escrow_id, submission_uri, proof_hash (optional), milestone_index (optional) | `Escrow.submit` / `Escrow.submitMilestone` |
+| `verify_and_approve` | escrow_id, proof, milestone_index (optional) | `Escrow.verifyAndApprove` / `Escrow.verifyAndApproveMilestone` |
 | `approve_work` | escrow_id, role, milestone_index (optional) | `Escrow.approveByBuyer/Verifier` / milestone variants |
 | `dispute_work` | escrow_id, role, reason_uri, milestone_index (optional) | `Escrow.dispute/rejectByVerifier/escalateSilence` / milestone variants |
 | `resolve_dispute` | escrow_id, worker_award_bps, resolution_uri, milestone_index (optional) | `Escrow.resolveDispute` / milestone variant |
@@ -678,7 +679,7 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/v1/health` | Health check |
-| POST | `/api/v1/escrows` | Create escrow (optional `milestones` array in body) |
+| POST | `/api/v1/escrows` | Create escrow (optional `milestones`, `zk_verifier`, `circuit_id` in body) |
 | GET | `/api/v1/escrows` | List (query: role, address, status) |
 | GET | `/api/v1/escrows/{id}` | Get escrow (includes milestone details if applicable) |
 | POST | `/api/v1/escrows/{id}/fund` | Fund |
@@ -686,7 +687,8 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 | POST | `/api/v1/ap2/validate` | Validate AP2 mandate against x402 facilitator |
 | GET | `/api/v1/ap2/mandates/{id}` | Get mandate details |
 | POST | `/api/v1/escrows/{id}/deposit-stake` | Deposit worker stake |
-| POST | `/api/v1/escrows/{id}/submit` | Submit work (optional `milestone_index` in body) |
+| POST | `/api/v1/escrows/{id}/submit` | Submit work (optional `proof_hash`, `milestone_index` in body) |
+| POST | `/api/v1/escrows/{id}/verify-approve` | Verify provided proof bytes and approve in one on-chain call (optional `milestone_index` in body) |
 | POST | `/api/v1/escrows/{id}/approve` | Approve (body: role, optional milestone_index) |
 | POST | `/api/v1/escrows/{id}/dispute` | Dispute (body: role, reason_uri, optional milestone_index) |
 | POST | `/api/v1/escrows/{id}/resolve` | Resolve (body: worker_award_bps, resolution_uri, optional milestone_index) |

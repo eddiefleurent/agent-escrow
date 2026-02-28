@@ -66,8 +66,8 @@ B -> Server: fund_escrow(E2)
 
 == Phase 3: Sub-task Completion ==
 
-C -> Server: submit_work(E2, uri)
-Server -> Chain: Escrow.submit()
+C -> Server: submit_work(E2, submission_uri,\n  proof_hash optional)
+Server -> Chain: Escrow.submit(submission_hash,\n  submission_uri, proof_hash optional)
 B -> Server: approve_work(E2)
 Server -> Chain: Escrow.approve()
 
@@ -91,7 +91,7 @@ Server -> Server: ValidateChain:\n  ✓ Signature verification\n  ✓ DAG struct
 alt Chain Valid
   Server -> DB: store attestation_chain\n  (root_hash, verified=true)
   Server -> DB: store attestation_links
-  Server -> Chain: Escrow.submit(E1)
+  Server -> Chain: Escrow.submit(submission_hash,\n    submission_uri, proof_hash optional)
   Server --> B: tx_hash
 else Chain Invalid
   Server --> B: error: validation failed

@@ -363,7 +363,11 @@ func (idx *Indexer) ProcessFactoryLog(ctx context.Context, lg types.Log) error {
 }
 
 func (idx *Indexer) handleEscrowCreated(ctx context.Context, lg types.Log) error {
-	// EscrowCreated(uint256 indexed escrowId, address indexed escrow, address indexed buyer, address worker, address verifier, address arbitrator, bytes32 taskSpecHash, address token, uint8 serviceTier)
+	// EscrowCreated(
+	//   uint256 indexed escrowId, address indexed escrow, address indexed buyer,
+	//   address worker, address verifier, address arbitrator, bytes32 taskSpecHash,
+	//   address token, uint8 serviceTier, address zkVerifier, bytes32 circuitId
+	// )
 	if len(lg.Topics) < 4 {
 		return errors.New("insufficient topics")
 	}
@@ -379,6 +383,9 @@ func (idx *Indexer) handleEscrowCreated(ctx context.Context, lg types.Log) error
 	values, err := chain.FactoryABI.Events["EscrowCreated"].Inputs.NonIndexed().Unpack(lg.Data)
 	if err != nil {
 		return fmt.Errorf("unpack EscrowCreated: %w", err)
+	}
+	if len(values) < 8 {
+		return fmt.Errorf("EscrowCreated: expected 8 non-indexed values, got %d", len(values))
 	}
 
 	worker, ok := values[0].(common.Address)
@@ -398,18 +405,22 @@ func (idx *Indexer) handleEscrowCreated(ctx context.Context, lg types.Log) error
 		return fmt.Errorf("unexpected type for taskSpecHash: %T", values[3])
 	}
 
-	tokenAddr := common.Address{}
-	if len(values) > 4 {
-		if ta, ok := values[4].(common.Address); ok {
-			tokenAddr = ta
-		}
+	tokenAddr, ok := values[4].(common.Address)
+	if !ok {
+		return fmt.Errorf("unexpected type for token: %T", values[4])
 	}
-
-	var serviceTier int
-	if len(values) > 5 {
-		if st, ok := values[5].(uint8); ok {
-			serviceTier = int(st)
-		}
+	serviceTierRaw, ok := values[5].(uint8)
+	if !ok {
+		return fmt.Errorf("unexpected type for serviceTier: %T", values[5])
+	}
+	serviceTier := int(serviceTierRaw)
+	zkVerifierAddr, ok := values[6].(common.Address)
+	if !ok {
+		return fmt.Errorf("unexpected type for zkVerifier: %T", values[6])
+	}
+	circuitID, ok := values[7].([32]byte)
+	if !ok {
+		return fmt.Errorf("unexpected type for circuitId: %T", values[7])
 	}
 
 	buyer := common.BytesToAddress(lg.Topics[3].Bytes())
@@ -443,6 +454,8 @@ func (idx *Indexer) handleEscrowCreated(ctx context.Context, lg types.Log) error
 		Status:             "created",
 		SubmissionDeadline: 0,
 		ServiceTier:        serviceTier,
+		ZKVerifier:         zkVerifierAddr.Hex(),
+		CircuitID:          fmt.Sprintf("0x%x", circuitID),
 	})
 	return err
 }
@@ -608,8 +621,8 @@ func (idx *Indexer) handleSubmission(ctx context.Context, lg types.Log, dbEscrow
 		return fmt.Errorf("unpack SubmissionMade: %w", err)
 	}
 
-	if len(values) < 2 {
-		return fmt.Errorf("SubmissionMade: expected 2 values, got %d", len(values))
+	if len(values) < 3 {
+		return fmt.Errorf("SubmissionMade: expected 3 values, got %d", len(values))
 	}
 	hashBytes, ok := values[0].([32]byte)
 	if !ok {
@@ -619,9 +632,14 @@ func (idx *Indexer) handleSubmission(ctx context.Context, lg types.Log, dbEscrow
 	if !ok {
 		return fmt.Errorf("SubmissionMade: unexpected type for submissionURI: %T", values[1])
 	}
+	proofHashBytes, ok := values[2].([32]byte)
+	if !ok {
+		return fmt.Errorf("SubmissionMade: unexpected type for proofHash: %T", values[2])
+	}
 
 	submissionHash := fmt.Sprintf("0x%x", hashBytes)
-	_, err = idx.db.CreateSubmission(ctx, dbEscrowID, submissionHash, submissionURI)
+	proofHash := fmt.Sprintf("0x%x", proofHashBytes)
+	_, err = idx.db.CreateSubmission(ctx, dbEscrowID, submissionHash, submissionURI, proofHash)
 	return err
 }
 
@@ -741,8 +759,8 @@ func (idx *Indexer) handleMilestoneSubmission(ctx context.Context, lg types.Log,
 	if err != nil {
 		return fmt.Errorf("unpack MilestoneSubmitted: %w", err)
 	}
-	if len(values) < 2 {
-		return fmt.Errorf("MilestoneSubmitted: expected 2 values, got %d", len(values))
+	if len(values) < 3 {
+		return fmt.Errorf("MilestoneSubmitted: expected 3 values, got %d", len(values))
 	}
 
 	hashBytes, ok := values[0].([32]byte)
@@ -753,9 +771,14 @@ func (idx *Indexer) handleMilestoneSubmission(ctx context.Context, lg types.Log,
 	if !ok {
 		return fmt.Errorf("MilestoneSubmitted: unexpected type for submissionURI: %T", values[1])
 	}
+	proofHashBytes, ok := values[2].([32]byte)
+	if !ok {
+		return fmt.Errorf("MilestoneSubmitted: unexpected type for proofHash: %T", values[2])
+	}
 
 	submissionHash := fmt.Sprintf("0x%x", hashBytes)
-	return idx.db.UpdateMilestoneSubmission(ctx, dbEscrowID, msIdx, submissionHash, submissionURI)
+	proofHash := fmt.Sprintf("0x%x", proofHashBytes)
+	return idx.db.UpdateMilestoneSubmission(ctx, dbEscrowID, msIdx, submissionHash, submissionURI, proofHash)
 }
 
 func (idx *Indexer) handleMilestoneDispute(ctx context.Context, lg types.Log, dbEscrowID int64, eventName string) error {

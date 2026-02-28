@@ -249,7 +249,7 @@ func validateVerificationPolicy(vp VerificationPolicy) error {
 
 	for i, a := range vp.Artifacts {
 		switch a.Type {
-		case "unit_test_log", "zk_snark_trace", "manual_review":
+		case VerificationArtifactUnitTestLog, VerificationArtifactZKSnarkTrace, VerificationArtifactManualReview:
 		default:
 			return fmt.Errorf("artifact[%d]: invalid type %q (must be unit_test_log, zk_snark_trace, or manual_review)", i, a.Type)
 		}

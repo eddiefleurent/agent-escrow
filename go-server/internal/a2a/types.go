@@ -48,13 +48,24 @@ type VerificationPolicy struct {
 	EscrowTrigger bool                   `json:"escrow_trigger"`
 }
 
+type VerificationArtifactType string
+
 type VerificationArtifact struct {
-	Type              string `json:"type"`
-	Validator         string `json:"validator,omitempty"`
-	SignatureRequired bool   `json:"signature_required,omitempty"`
-	CircuitHash       string `json:"circuit_hash,omitempty"`
-	ProofProtocol     string `json:"proof_protocol,omitempty"`
+	Type              VerificationArtifactType `json:"type"`
+	Validator         string                   `json:"validator,omitempty"`
+	SignatureRequired bool                     `json:"signature_required,omitempty"`
+	CircuitHash       string                   `json:"circuit_hash,omitempty"`
+	ProofProtocol     string                   `json:"proof_protocol,omitempty"`
 }
+
+const (
+	// VerificationArtifactUnitTestLog is a unit-test log artifact used for strict verification flows.
+	VerificationArtifactUnitTestLog VerificationArtifactType = "unit_test_log"
+	// VerificationArtifactManualReview is a manual-review artifact used for human-in-the-loop verification.
+	VerificationArtifactManualReview VerificationArtifactType = "manual_review"
+	// VerificationArtifactZKSnarkTrace is a zk proof trace artifact for high-assurance verification flows.
+	VerificationArtifactZKSnarkTrace VerificationArtifactType = "zk_snark_trace"
+)
 
 // JSON-RPC 2.0 envelope types for the POST /a2a endpoint.
 

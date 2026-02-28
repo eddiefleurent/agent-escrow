@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,6 +50,8 @@ type createEscrowArgs struct {
 	Milestones               []milestoneArg `json:"milestones,omitempty" jsonschema:"Optional array of milestones; omit for single-milestone (V1) escrow"`
 	BackupWorker             string         `json:"backup_worker,omitempty" jsonschema:"Optional backup worker address; omit for no backup agent"`
 	BackupDeadlineExtension  FlexibleString `json:"backup_deadline_extension,omitempty" jsonschema:"Seconds to extend deadline when backup activates; omit or 0 for no extension"`
+	ZKVerifier               string         `json:"zk_verifier,omitempty" jsonschema:"Optional on-chain ZK verifier contract address; required with circuit_id"`
+	CircuitID                string         `json:"circuit_id,omitempty" jsonschema:"Optional 0x-prefixed bytes32 circuit identifier; required with zk_verifier"`
 }
 
 type escrowIDArgs struct {
@@ -58,8 +61,15 @@ type escrowIDArgs struct {
 type submitArgs struct {
 	EscrowID             FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID or on-chain escrow address (0x...)"`
 	SubmissionURI        string         `json:"submission_uri" jsonschema:"URI of submission"`
+	ProofHash            string         `json:"proof_hash,omitempty" jsonschema:"Optional 0x-prefixed bytes32 commitment hash of the external ZK proof"`
 	MilestoneIndex       FlexibleString `json:"milestone_index,omitempty" jsonschema:"Milestone index (required for multi-milestone escrows)"`
 	AttestationChainJSON string         `json:"attestation_chain_json,omitempty" jsonschema:"JSON array of completion-attestation-v1 payloads for delegation chain verification (paper §4.8). Required when escrow has sub-delegated child escrows."`
+}
+
+type verifyAndApproveArgs struct {
+	EscrowID       FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID or on-chain escrow address (0x...)"`
+	Proof          string         `json:"proof" jsonschema:"0x-prefixed ABI payload for the zk proof bytes"`
+	MilestoneIndex FlexibleString `json:"milestone_index,omitempty" jsonschema:"Milestone index (required for multi-milestone escrows)"`
 }
 
 type getAttestationChainArgs struct {
@@ -108,6 +118,7 @@ type createRFQArgs struct {
 	WorkerStake              FlexibleString `json:"worker_stake,omitempty" jsonschema:"Required worker stake; omit or 0 for none"`
 	MilestonesJSON           string         `json:"milestones_json,omitempty" jsonschema:"JSON array of milestone specs"`
 	RequirementsJSON         string         `json:"requirements_json,omitempty" jsonschema:"JSON: capability requirements, tags, constraints"`
+	RequiredProofProtocol    string         `json:"required_proof_protocol,omitempty" jsonschema:"Optional required ZK proof protocol for this RFQ (currently: 'groth16')"`
 	RequiredCredentialsJSON  string         `json:"required_credentials_json,omitempty" jsonschema:"JSON array of credential requirement selectors [{domain, capabilities, trusted_issuers}]. Bidders must present matching attestations."`
 	CommitDeadline           FlexibleString `json:"commit_deadline,omitempty" jsonschema:"Unix timestamp: end of commit phase (sealed bids)"`
 	RevealDeadline           FlexibleString `json:"reveal_deadline,omitempty" jsonschema:"Unix timestamp: end of reveal phase (must be >= commit_deadline and <= deadline)"`
@@ -280,6 +291,11 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Name:        "submit_work",
 		Description: "Submit work as the worker. Provide a URI pointing to the deliverable. For multi-milestone escrows, milestone_index is required (0-based). NOTE: The server must be running with the worker's private key (PRIVATE_KEY must match the escrow's worker address).",
 	}, s.handleSubmitWork)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "verify_and_approve",
+		Description: "Verify a submitted ZK proof on-chain and approve in a single transaction (verifier role). For multi-milestone escrows, milestone_index is required (0-based).",
+	}, s.handleVerifyAndApprove)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "approve_work",
@@ -576,6 +592,21 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		return textResult("backup_deadline_extension set but no backup_worker provided"), nil, nil
 	}
 
+	var zkVerifier common.Address
+	if args.ZKVerifier != "" {
+		if !common.IsHexAddress(args.ZKVerifier) {
+			return textResult("invalid zk_verifier address"), nil, nil
+		}
+		zkVerifier = common.HexToAddress(args.ZKVerifier)
+	}
+	circuitID, err := parseProofHashHex(args.CircuitID)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid circuit_id: %v", err)), nil, nil
+	}
+	if (zkVerifier == common.Address{}) != (args.CircuitID == "") {
+		return textResult("zk_verifier and circuit_id must either both be set or both omitted"), nil, nil
+	}
+
 	var serviceTier uint8
 	if s := args.ServiceTier.String(); s != "" {
 		if s != "0" && s != "1" {
@@ -634,6 +665,8 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		Milestones:               milestones,
 		BackupWorker:             backupWorkerAddr,
 		BackupDeadlineExtension:  backupDeadlineExt,
+		ZKVerifier:               zkVerifier,
+		CircuitID:                circuitID,
 	}
 
 	tx, err := s.chain.CreateEscrow(ctx, factory, params)
@@ -680,6 +713,8 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		BackupDeadlineExtension:  backupDeadline,
 		ActiveWorker:             args.Worker,
 		ServiceTier:              int(serviceTier),
+		ZKVerifier:               zkVerifier.Hex(),
+		CircuitID:                fmt.Sprintf("0x%x", circuitID),
 	})
 	if err != nil {
 		return textResult(fmt.Sprintf("db error: %v", err)), nil, nil
@@ -909,6 +944,10 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 	hash := crypto.Keccak256Hash([]byte(args.SubmissionURI))
 	var hashBytes [32]byte
 	copy(hashBytes[:], hash.Bytes())
+	proofHash, err := parseProofHashHex(args.ProofHash)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid proof_hash: %v", err)), nil, nil
+	}
 
 	addr := common.HexToAddress(escrow.EscrowAddress)
 
@@ -917,7 +956,7 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 		if msConvErr != nil {
 			return textResult(msConvErr.Error()), nil, nil
 		}
-		tx, err := s.chain.SubmitMilestone(ctx, addr, msIdx, hashBytes, args.SubmissionURI)
+		tx, err := s.chain.SubmitMilestone(ctx, addr, msIdx, hashBytes, args.SubmissionURI, proofHash)
 		if err != nil {
 			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 		}
@@ -925,7 +964,7 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Buyer/verifier should call approve_work to approve the submission."})
 	}
 
-	tx, err := s.chain.Submit(ctx, addr, hashBytes, args.SubmissionURI)
+	tx, err := s.chain.Submit(ctx, addr, hashBytes, args.SubmissionURI, proofHash)
 	if err != nil {
 		return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 	}
@@ -988,6 +1027,47 @@ func (s *Server) handleApproveWork(ctx context.Context, req *mcp.CallToolRequest
 	default:
 		return textResult("role must be 'buyer' or 'verifier'"), nil, nil
 	}
+}
+
+func (s *Server) handleVerifyAndApprove(ctx context.Context, req *mcp.CallToolRequest, args verifyAndApproveArgs) (*mcp.CallToolResult, any, error) {
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
+	if err != nil {
+		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
+	}
+	proofBytes, err := parseProofHexBytes(args.Proof)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid proof: %v", err)), nil, nil
+	}
+
+	addr := common.HexToAddress(escrow.EscrowAddress)
+	if escrow.MilestoneCount > 1 {
+		if args.MilestoneIndex.String() == "" {
+			return textResult("milestone_index required for multi-milestone escrow"), nil, nil
+		}
+		msIdx, err := parseMilestoneIndex(args.MilestoneIndex.String())
+		if err != nil {
+			return textResult(err.Error()), nil, nil
+		}
+		tx, err := s.chain.VerifyAndApproveMilestone(ctx, addr, msIdx, proofBytes)
+		if err != nil {
+			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
+		}
+		_ = s.idx.RunOnce(ctx)
+		return jsonResult(map[string]any{
+			"tx_hash":    tx.Hash().Hex(),
+			"next_steps": "Verification and approval submitted. Poll get_escrow for status updates (~15s indexer lag).",
+		})
+	}
+
+	tx, err := s.chain.VerifyAndApprove(ctx, addr, proofBytes)
+	if err != nil {
+		return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
+	}
+	_ = s.idx.RunOnce(ctx)
+	return jsonResult(map[string]any{
+		"tx_hash":    tx.Hash().Hex(),
+		"next_steps": "Verification and approval submitted. Poll get_escrow for status updates (~15s indexer lag).",
+	})
 }
 
 func (s *Server) handleDisputeWork(ctx context.Context, req *mcp.CallToolRequest, args disputeArgs) (*mcp.CallToolResult, any, error) {
@@ -1455,6 +1535,7 @@ func (s *Server) handleCreateRFQ(ctx context.Context, req *mcp.CallToolRequest, 
 		WorkerStake:              args.WorkerStake.String(),
 		MilestonesJSON:           args.MilestonesJSON,
 		RequirementsJSON:         args.RequirementsJSON,
+		RequiredProofProtocol:    args.RequiredProofProtocol,
 		RequiredCredentialsJSON:  args.RequiredCredentialsJSON,
 		CommitDeadline:           commitDeadline,
 		RevealDeadline:           revealDeadline,
@@ -2116,6 +2197,47 @@ func parseMilestoneIndex(s string) (uint8, error) {
 		return 0, fmt.Errorf("invalid milestone_index: %w", err)
 	}
 	return uint8(v), nil
+}
+
+func parseProofHashHex(raw string) ([32]byte, error) {
+	var out [32]byte
+	if raw == "" {
+		return out, nil
+	}
+	if !strings.HasPrefix(raw, "0x") {
+		return out, errors.New("expected 0x-prefixed hex")
+	}
+	normalized := raw[2:]
+	if len(normalized) != 64 {
+		return out, fmt.Errorf("expected 32-byte hex (64 chars), got %d", len(normalized))
+	}
+	b, err := hex.DecodeString(normalized)
+	if err != nil {
+		return out, err
+	}
+	copy(out[:], b)
+	return out, nil
+}
+
+func parseProofHexBytes(raw string) ([]byte, error) {
+	if raw == "" {
+		return nil, errors.New("proof is required")
+	}
+	if !strings.HasPrefix(raw, "0x") {
+		return nil, errors.New("expected 0x-prefixed hex")
+	}
+	normalized := raw[2:]
+	if len(normalized)%2 != 0 {
+		return nil, errors.New("hex length must be even")
+	}
+	b, err := hex.DecodeString(normalized)
+	if err != nil {
+		return nil, err
+	}
+	if len(b) == 0 {
+		return nil, errors.New("proof is empty")
+	}
+	return b, nil
 }
 
 // isERC20Token returns true if the token field represents an ERC20 token (not ETH).

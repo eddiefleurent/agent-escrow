@@ -38,7 +38,7 @@ contract TaskEscrowEdgeCasesTest is Test {
         vm.warp(block.timestamp + 8 days);
         vm.expectRevert(TaskEscrow.WindowExpired.selector);
         vm.prank(worker);
-        escrow.submit(keccak256("submission"), "ipfs://late");
+        escrow.submit(keccak256("submission"), "ipfs://late", bytes32(0));
     }
 
     function testCannotApproveAfterReviewWindow() public {
@@ -124,6 +124,8 @@ contract TaskEscrowEdgeCasesTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -195,6 +197,8 @@ contract TaskEscrowEdgeCasesTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -220,6 +224,8 @@ contract TaskEscrowEdgeCasesTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -245,6 +251,8 @@ contract TaskEscrowEdgeCasesTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -270,6 +278,8 @@ contract TaskEscrowEdgeCasesTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -295,6 +305,8 @@ contract TaskEscrowEdgeCasesTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -320,6 +332,8 @@ contract TaskEscrowEdgeCasesTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -414,7 +428,7 @@ contract TaskEscrowEdgeCasesTest is Test {
         escrow.fund{value: AMOUNT}();
 
         vm.prank(worker);
-        escrow.submit(keccak256("submission"), "ipfs://result");
+        escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
     }
 
     function _createEscrow(uint64 submissionDeadline) internal returns (TaskEscrow created) {
@@ -443,6 +457,8 @@ contract TaskEscrowEdgeCasesTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );

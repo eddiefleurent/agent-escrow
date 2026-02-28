@@ -217,6 +217,8 @@ contract TaskEscrowEIP3009Test is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -241,6 +243,8 @@ contract TaskEscrowEIP3009Test is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -377,6 +381,8 @@ contract TaskEscrowEIP3009Test is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -401,7 +407,7 @@ contract TaskEscrowEIP3009Test is Test {
         assertEq(uint8(escrow.status()), uint8(TaskEscrow.Status.Funded));
 
         vm.prank(worker);
-        escrow.submit(keccak256("result"), "ipfs://result");
+        escrow.submit(keccak256("result"), "ipfs://result", bytes32(0));
         assertEq(uint8(escrow.status()), uint8(TaskEscrow.Status.Submitted));
 
         vm.prank(buyer);
@@ -441,6 +447,8 @@ contract TaskEscrowEIP3009Test is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: ms
             })
         );
@@ -457,7 +465,7 @@ contract TaskEscrowEIP3009Test is Test {
         assertEq(usdc.balanceOf(address(escrow)), AMOUNT);
 
         vm.prank(worker);
-        escrow.submitMilestone(0, keccak256("ms0"), "ipfs://ms0");
+        escrow.submitMilestone(0, keccak256("ms0"), "ipfs://ms0", bytes32(0));
 
         vm.prank(buyer);
         escrow.approveMilestoneByBuyer(0);

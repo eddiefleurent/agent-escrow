@@ -32,7 +32,9 @@ contract TaskEscrowFactory {
         address arbitrator,
         bytes32 taskSpecHash,
         address token,
-        uint8 serviceTier
+        uint8 serviceTier,
+        address zkVerifier,
+        bytes32 circuitId
     );
     event ProtocolFeeUpdated(uint16 oldFeeBps, uint16 newFeeBps);
     event HighAssuranceFeeUpdated(uint16 oldFeeBps, uint16 newFeeBps);
@@ -122,6 +124,8 @@ contract TaskEscrowFactory {
         uint8 serviceTier;
         address backupWorker;
         uint64 backupDeadlineExtension;
+        address zkVerifier;
+        bytes32 circuitId;
         CreateMilestoneParams[] milestones;
     }
 
@@ -165,6 +169,8 @@ contract TaskEscrowFactory {
                 serviceTier: p.serviceTier,
                 backupWorker: p.backupWorker,
                 backupDeadlineExtension: p.backupDeadlineExtension,
+                zkVerifier: p.zkVerifier,
+                circuitId: p.circuitId,
                 milestones: escrowMilestones
             })
         );
@@ -176,7 +182,17 @@ contract TaskEscrowFactory {
         escrowWorker[escrowId] = p.worker;
 
         emit EscrowCreated(
-            escrowId, escrow, p.buyer, p.worker, p.verifier, p.arbitrator, p.taskSpecHash, p.token, p.serviceTier
+            escrowId,
+            escrow,
+            p.buyer,
+            p.worker,
+            p.verifier,
+            p.arbitrator,
+            p.taskSpecHash,
+            p.token,
+            p.serviceTier,
+            p.zkVerifier,
+            p.circuitId
         );
 
         if (p.backupWorker != address(0)) {

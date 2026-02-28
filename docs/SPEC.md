@@ -22,7 +22,7 @@ Implements ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) (Toma
 |---|---|---|
 | Transfer of authority, responsibility, accountability | §2.1 | Immutable per-escrow roles (`buyer`, `worker`, `verifier`, `arbitrator`) with signed on-chain transitions |
 | Task constraints and boundaries | §2.2 | Deadlines, review/dispute windows, strict state-machine transitions |
-| Verifiability axis | §2.2(h) | On-chain submission hash commitments; explicit verifier approval path |
+| Verifiability axis | §2.2(h) | On-chain submission + proof-hash commitments; explicit verifier approval path including optional on-chain proof verification |
 | Reversibility axis | §2.2(i) | Refund and split-settlement outcomes for failed/disputed tasks |
 | Dynamic cognitive friction | §2.3 | `rejectByVerifier` and `escalateSilence` force explicit decisions rather than passive acceptance |
 | Principal-agent alignment | §2.3 | Escrow links payment to verified outcomes, making misalignment financially costly |
@@ -31,7 +31,7 @@ Implements ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) (Toma
 | Trust calibration | §4.6 | Designated verifier/arbitrator identities; financial outcomes auditable on-chain |
 | Adaptive coordination | §4.4 | Milestone-based escrow with intermediate checkpoints, partial payouts, and abort-on-failure; arbitrator timeout prevents permanent fund lock |
 | Smart contract as settlement | §4.2 | Escrow holds funds; verification clause gates release |
-| Verifiable task completion | §4.8 | Hash commitments transform provisional output into settled fact; verification gates payout |
+| Verifiable task completion | §4.8 | Submission/proof hash commitments transform provisional output into settled fact; optional on-chain proof verification gates payout |
 | Delegatee stake / Sybil resistance | §4.8 | Worker deposits anti-Sybil bond before submission; stake returned on success, forfeited proportionally on failure |
 | Partial compensation | §6.1 | Per-milestone payouts enable compensation proportional to verified completion |
 | Backup agent re-allocation | §4.4 | Pre-designated fallback worker activated by buyer on primary default; deadline extension and stake forfeiture |
@@ -43,7 +43,6 @@ Implements ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) (Toma
 - Dynamic capability lookup/matching (§4.1-4.2)
 - Adaptive multi-agent delegation policies (§4.4 advanced)
 - Distributed reputation markets as primary trust substrate (§4.6)
-- ZK verification slots (§4.8)
 - Hybrid human/AI oversight optimization at scale (§5)
 
 ## 3) Roles
@@ -98,6 +97,7 @@ Terminal states (Settled, Refunded, Cancelled) are mutually exclusive and irreve
 | `submit` | worker | Funded | Before deadline; stake deposited if required |
 | `approveByBuyer` | buyer | Submitted | Within review window |
 | `approveByVerifier` | verifier | Submitted | Within review window |
+| `verifyAndApprove` | verifier | Submitted | `zkVerifier != 0`, `proofHash != 0`, `keccak256(proof) == proofHash`, verifier contract returns `true` |
 | `rejectByVerifier` | verifier | Submitted | Within review window |
 | `dispute` | buyer | Submitted | Within review + dispute window |
 | `escalateSilence` | worker | Submitted | After review window lapse without action |
@@ -135,10 +135,25 @@ Key properties:
 - Milestones are defined at creation and are immutable. Maximum 16.
 - Processed in strict order (`milestoneIndex == currentMilestone`).
 - Each has its own amount, submission deadline, and review cycle.
+- Each submission can include an optional `proofHash` commitment for external ZK artifacts.
 - Approved milestones pay out immediately (partial settlement).
 - Disputed milestones follow the same arbitrator resolution flow as single-shot.
 - Worker stake is held for the full escrow duration and settled once at the end.
 - Single-milestone escrows behave identically to V1 (backward compatibility).
+
+### ZK Verification Slot
+
+For formally verifiable tasks (paper §4.8), each submission path supports a `proofHash` commitment:
+
+- Single-shot: `submit(submissionHash, submissionURI, proofHash)`
+- Milestone: `submitMilestone(milestoneIndex, submissionHash, submissionURI, proofHash)`
+
+Optional escrow-level verifier wiring at creation (`zkVerifier`, `circuitId`) enables strict on-chain verification:
+
+- `verifyAndApprove(proof)` checks `keccak256(proof) == proofHash` then calls `zkVerifier.verifyProof(circuitId, proof)`.
+- `verifyAndApproveMilestone(milestoneIndex, proof)` performs the same checks against milestone-local `proofHash`.
+
+If no verifier is configured, approval remains available through the existing verifier approval path (`approveByVerifier`), with `proofHash` serving as an immutable on-chain commitment for off-chain proof validation and dispute evidence.
 
 ## 5) Settlement Math
 

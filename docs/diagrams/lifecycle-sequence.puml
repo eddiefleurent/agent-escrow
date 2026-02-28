@@ -59,7 +59,7 @@ end
 
 == Work Submission ==
 
-worker -> escrow : submit (hash + URI)
+worker -> escrow : submit (hash + URI + proofHash)
 note over escrow #E3F2FD : **Submitted** — review window opens
 
 == Path A: Approval ==
@@ -68,6 +68,8 @@ alt #E8F5E9 Buyer approves
   buyer -> escrow : approve
 else #E8F5E9 Verifier approves
   "Verifier" as verifier -> escrow : approve
+else #E8F5E9 Verifier verifies + approves (high assurance)
+  "Verifier" as verifier -> escrow : verifyAndApprove(proof)
 end
 
 escrow -[#388E3C]> worker : payout (amount - fee) + stake returned
@@ -153,11 +155,17 @@ loop for each milestone i = 0..N-1
 
   == Milestone [i]: Submission ==
 
-  worker -> escrow : submitMilestone(i, hash, URI)
+  worker -> escrow : submitMilestone(i, hash, URI, proofHash)
   note over escrow #E3F2FD : Milestone[i] **Submitted**
 
   alt #E8F5E9 Milestone approved
     buyer -> escrow : approveMilestoneByBuyer(i)
+    escrow -[#388E3C]> worker : milestone payout (amount - fee)
+    escrow -[#388E3C]> "Treasury" as treasury ** #E8F5E9 : protocol fee
+    note over escrow #C8E6C9 : Milestone[i] **Approved** — advance to i+1
+
+  else #E8F5E9 Milestone verifier verifies + approves (high assurance)
+    "Verifier" as verifier -> escrow : verifyAndApproveMilestone(i, proof)
     escrow -[#388E3C]> worker : milestone payout (amount - fee)
     escrow -[#388E3C]> "Treasury" as treasury ** #E8F5E9 : protocol fee
     note over escrow #C8E6C9 : Milestone[i] **Approved** — advance to i+1
@@ -244,8 +252,8 @@ loop for each milestone i = 0..N-1
 
   == Milestone [i]: Submission ==
 
-  worker -> chain : SubmitMilestone(i, hash, URI)
-  chain -> escrow : submitMilestone(i)
+  worker -> chain : SubmitMilestone(i, hash, URI, proofHash)
+  chain -> escrow : submitMilestone(i, hash, URI, proofHash)
   note over escrow #E3F2FD : Milestone[i] **Submitted**
   escrow --> indexer : MilestoneSubmitted event
   indexer -> db : update milestone state
@@ -253,6 +261,14 @@ loop for each milestone i = 0..N-1
   alt #E8F5E9 Approval path
     buyer -> chain : ApproveMilestoneByBuyer(i)
     chain -> escrow : approveMilestoneByBuyer(i)
+    escrow -[#388E3C]> worker : milestone payout (amount - fee)
+    note over escrow #C8E6C9 : Milestone[i] **Approved**
+    escrow --> indexer : MilestoneApproved event
+    indexer -> db : update milestone state, record payout
+
+  else #E8F5E9 Verifier proof-check approval path
+    "Verifier" as verifier -> chain : VerifyAndApproveMilestone(i, proof)
+    chain -> escrow : verifyAndApproveMilestone(i, proof)
     escrow -[#388E3C]> worker : milestone payout (amount - fee)
     note over escrow #C8E6C9 : Milestone[i] **Approved**
     escrow --> indexer : MilestoneApproved event

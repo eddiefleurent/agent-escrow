@@ -39,10 +39,11 @@ Created --> Cancelled : cancel()
 
 Funded --> Funded : depositStake()
 Funded --> Funded : activateBackup()
-Funded --> Submitted : submit()
+Funded --> Submitted : submit(submissionHash, submissionURI, proofHash)
 Funded --> Refunded : timeout refund
 
 Submitted --> Approved : buyer or verifier approves\n(tier 0: either; tier 1: verifier only)
+Submitted --> Approved : verifier verifyAndApprove(proof)\n(when zkVerifier configured)
 Submitted --> Disputed : buyer disputes
 Submitted -[#FF8F00]-> Disputed : verifier rejects
 Submitted -[#FF8F00]-> Disputed : worker escalates silence
@@ -77,7 +78,8 @@ note right of Submitted
   buyer, verifier, or worker.
   **Tier 1 (high-assurance)**:
   buyer approval blocked;
-  verifier must approve.
+  verifier must approve
+  (optionally via verifyAndApprove()).
 end note
 
 note right of Resolved
@@ -131,10 +133,11 @@ state "Escrow: Funded" as EscrowFunded #E3F2FD ##42A5F5 {
 
     [*] --> Pending
 
-    Pending --> MsSubmitted : submitMilestone()
+    Pending --> MsSubmitted : submitMilestone(i, hash, URI, proofHash)
     Pending --> MsCancelled : timeout / abort
 
     MsSubmitted --> MsApproved : buyer/verifier approves\n(tier 0: either; tier 1: verifier only)
+    MsSubmitted --> MsApproved : verifier verifyAndApproveMilestone(i, proof)\n(when zkVerifier configured)
     MsSubmitted --> MsDisputed : buyer disputes
     MsSubmitted --> MsDisputed : verifier rejects
     MsSubmitted --> MsDisputed : worker escalates
