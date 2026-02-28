@@ -183,7 +183,10 @@ contract TaskEscrowZKVerificationTest is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: AMOUNT,
                 workerStake: 0,

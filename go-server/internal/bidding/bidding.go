@@ -709,6 +709,11 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 	if rfq.Token != "" && rfq.Token != "0x0000000000000000000000000000000000000000" {
 		tokenAddr = common.HexToAddress(rfq.Token)
 	}
+	if rfq.Verifier == "" || !common.IsHexAddress(rfq.Verifier) {
+		return nil, errors.New("rfq verifier is required to create escrow")
+	}
+	var verifierPanel [7]common.Address
+	verifierPanel[0] = common.HexToAddress(rfq.Verifier)
 
 	// Use bid milestones if provided, fall back to RFQ milestones.
 	milestonesRaw := bid.MilestonesJSON
@@ -740,7 +745,10 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 	params := chain.CreateEscrowParams{
 		Buyer:                    common.HexToAddress(rfq.Buyer),
 		Worker:                   common.HexToAddress(bid.Bidder),
-		Verifier:                 common.HexToAddress(rfq.Verifier),
+		VerifierPanel:            verifierPanel,
+		QuorumThreshold:          1,
+		QuorumVerifierCount:      1,
+		VerifierStakePerVerifier: big.NewInt(0),
 		Arbitrator:               common.HexToAddress(rfq.Arbitrator),
 		Amount:                   amount,
 		WorkerStake:              workerStakeVal,
@@ -789,6 +797,10 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 		Buyer:                    rfq.Buyer,
 		Worker:                   bid.Bidder,
 		Verifier:                 rfq.Verifier,
+		VerifierPanelJSON:        fmt.Sprintf("[%q]", strings.ToLower(rfq.Verifier)),
+		QuorumThreshold:          1,
+		QuorumVerifierCount:      1,
+		VerifierStakePerVerifier: "0",
 		Arbitrator:               rfq.Arbitrator,
 		Amount:                   bid.Amount,
 		WorkerStake:              workerStakeVal.String(),

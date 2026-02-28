@@ -34,7 +34,10 @@ contract TaskEscrowTieredServiceTest is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: AMOUNT,
                 workerStake: 0,
@@ -112,7 +115,10 @@ contract TaskEscrowTieredServiceTest is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: AMOUNT,
                 workerStake: 0,
@@ -149,7 +155,7 @@ contract TaskEscrowTieredServiceTest is Test {
         _fundAndSubmit(e);
 
         vm.prank(verifier);
-        e.approveByVerifier();
+        e.castVerifierVote(true, "");
 
         assertEq(uint8(e.status()), uint8(TaskEscrow.Status.Settled));
     }
@@ -170,7 +176,7 @@ contract TaskEscrowTieredServiceTest is Test {
         _fundAndSubmit(e);
 
         vm.prank(verifier);
-        e.approveByVerifier();
+        e.castVerifierVote(true, "");
 
         assertEq(uint8(e.status()), uint8(TaskEscrow.Status.Settled));
     }
@@ -190,7 +196,10 @@ contract TaskEscrowTieredServiceTest is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: AMOUNT,
                 workerStake: 0,
@@ -234,7 +243,10 @@ contract TaskEscrowTieredServiceTest is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: AMOUNT,
                 workerStake: 0,
@@ -261,7 +273,7 @@ contract TaskEscrowTieredServiceTest is Test {
         e.submitMilestone(0, keccak256("ms0"), "ipfs://ms0", bytes32(0));
 
         vm.prank(verifier);
-        e.approveMilestoneByVerifier(0);
+        e.castMilestoneVerifierVote(0, true, "");
 
         (,,,,,,,,, TaskEscrow.MilestoneStatus msStatus,) = e.milestones(0);
         assertEq(uint8(msStatus), uint8(TaskEscrow.MilestoneStatus.Approved));
@@ -276,7 +288,7 @@ contract TaskEscrowTieredServiceTest is Test {
         uint256 treasuryBefore = treasury.balance;
 
         vm.prank(verifier);
-        e.approveByVerifier();
+        e.castVerifierVote(true, "");
 
         uint256 expectedFee = AMOUNT * HIGH_FEE_BPS / 10_000;
         assertEq(uint8(e.status()), uint8(TaskEscrow.Status.Settled));
@@ -306,7 +318,8 @@ contract TaskEscrowTieredServiceTest is Test {
             address(0),
             buyer,
             worker,
-            verifier,
+            1,
+            1,
             arbitrator,
             keccak256("spec-event"),
             address(0),

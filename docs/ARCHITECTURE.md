@@ -29,7 +29,7 @@ The paper grounds intelligent delegation in concepts from organizational theory 
 
 **Authority Gradient** (paper §2.3). Significant capability disparities between delegator and delegatee impede communication and produce under-specified requests. In AI systems, sycophancy and instruction-following bias compound this. Response: explicit task spec hashes, structured role boundaries, and verifier/arbitrator review gates create checkpoints that interrupt blind compliance.
 
-**Zone of Indifference** (paper §2.3). Delegatees develop a range of instructions they execute without critical deliberation. In agentic chains (A -> B -> C), a broad zone of indifference allows subtle intent mismatches to propagate. The paper calls for engineering "dynamic cognitive friction." Response: `rejectByVerifier` and `escalateSilence` are on-chain cognitive friction mechanisms -- they force explicit decisions rather than passive acceptance.
+**Zone of Indifference** (paper §2.3). Delegatees develop a range of instructions they execute without critical deliberation. In agentic chains (A -> B -> C), a broad zone of indifference allows subtle intent mismatches to propagate. The paper calls for engineering "dynamic cognitive friction." Response: quorum-based verifier voting (`castVerifierVote` / `castMilestoneVerifierVote`) and `escalateSilence` are on-chain cognitive friction mechanisms -- they force explicit decisions rather than passive acceptance.
 
 **Transaction Cost Economics** (paper §2.3). The overhead of negotiation, monitoring, and uncertainty must be weighed against the value of delegation. Below a certain complexity floor, delegation overhead exceeds task value. Response: protocol fee snapshotting, gas-aware minimum escrow thresholds (V2), and tiered service levels (V3) that match assurance cost to task criticality.
 
@@ -63,14 +63,14 @@ V1 implements the financial settlement kernel -- the paper's foundational layer 
 
 | Paper Concept | V1 Implementation |
 |---|---|
-| Transfer of authority/responsibility/accountability | Immutable buyer/worker/verifier/arbitrator roles with signed on-chain transitions |
+| Transfer of authority/responsibility/accountability | Immutable buyer/worker/verifierPanel/arbitrator roles with signed on-chain transitions |
 | Task constraints and boundaries | Task spec hash, deadlines, review/dispute windows, role-gated actions |
-| Verifiability + reversibility axes (§2.2) | Hash commitments, verifier checks, dispute-mediated payout/refund paths |
+| Verifiability + reversibility axes (§2.2) | Hash commitments, quorum verifier votes/checks, dispute-mediated payout/refund paths |
 | Criticality/risk calibration | High-control fixed-role assignments before open market matching |
 | Monitoring requirements (§4.5) | Canonical events for every transition, off-chain indexer |
-| Trust calibration (§4.6) | Designated verifier/arbitrator identities; financial outcomes auditable |
+| Trust calibration (§4.6) | Designated verifier panel + quorum/arbitrator identities; financial outcomes auditable |
 | Adaptive coordination (§4.4) | Arbitrator timeout prevents permanent fund lock |
-| Dynamic cognitive friction (§2.3) | `rejectByVerifier` + `escalateSilence` force explicit decisions |
+| Dynamic cognitive friction (§2.3) | Quorum vote + `escalateSilence` force explicit decisions |
 | Smart contract as settlement (§4.2) | Escrow holds funds; verification clause gates release |
 | Dispute resolution (§4.8) | Arbitrator resolves disputes; split payout via basis points |
 
@@ -339,7 +339,7 @@ See [`SPEC.md`](SPEC.md) for the state machine, settlement math, and invariants.
 |---|---|
 | `buyer` | Funds escrow, approves or disputes, receives refund on failure |
 | `worker` | Submits delivery, receives payout on approval |
-| `verifier` | Checks submission quality, can approve or reject |
+| `verifierPanel[]` | Quorum verifiers check submissions and cast approve/reject votes |
 | `arbitrator` | Final authority in disputed cases |
 | `treasury` | Receives protocol fee from successful payouts |
 | `backupWorker` | Optional pre-designated fallback worker; activated by buyer if primary defaults |
@@ -349,9 +349,10 @@ Roles are immutable per escrow in V1 (including `backupWorker`).
 ### Economics
 
 - **Tiered protocol fees** (paper §5.3): two fee tiers ensure safety does not become a luxury good. `protocolFeeBps` applies to low-assurance (tier 0) escrows; `highAssuranceFeeBps` applies to high-assurance (tier 1) escrows. Both are set at the factory level and snapshotted into each escrow at creation to prevent governance races. In milestone mode, the fee is applied per-milestone payout.
-- **Service tier** (`serviceTier`): `0` = low-assurance (optimistic), `1` = high-assurance (verified). Immutable per escrow. High-assurance escrows require verifier approval -- `approveByBuyer` and `approveMilestoneByBuyer` revert. Low-assurance escrows retain the existing optimistic path where buyer or verifier can approve.
+- **Service tier** (`serviceTier`): `0` = low-assurance (optimistic), `1` = high-assurance (verified). Immutable per escrow. High-assurance escrows require verifier quorum approval -- `approveByBuyer` and `approveMilestoneByBuyer` revert. Low-assurance escrows retain the optimistic path where buyer or verifier quorum can approve.
 - ETH and ERC20 (originally planned for V2, now part of the current baseline).
 - `workerStake`: optional anti-Sybil bond the worker deposits before submission (paper §4.8). Set at escrow creation; 0 means no stake required. If approved, the stake is returned to the worker in full; disputed stakes follow the same proportional split as payment; on timeout, arbitrator timeout, or backup activation, the stake is forfeited to the buyer. In milestone mode, stake is held for the full escrow duration and settled once at the end.
+- `verifierStakePerVerifier`: optional Schelling-game verifier bond (paper §4.8). A deposited verifier stake is cycle-scoped and cannot remain trapped: quorum finalization applies majority/minority settlement, while non-quorum exits (buyer approval, timeout/dispute/emergency paths, and explicit no-quorum expiry via `expireNoQuorum` / `expireMilestoneNoQuorum`) refund deposited verifier stakes before cycle advance or terminal settlement.
 - `backupWorker`: optional pre-designated fallback worker (paper §4.4). If the primary worker defaults, the buyer calls `activateBackup()` to replace the active worker, extend the deadline by `backupDeadlineExtension` seconds, and forfeit any deposited stake.
 - Milestone payouts: each milestone pays out independently on approval. The buyer funds the full `totalAmount` upfront; partial payouts are released as milestones complete. This reduces capital lock-up risk for the worker while maintaining buyer protection for uncompleted work.
 - Complexity floor: factory-level minimum escrow amount (`complexityFloor`), owner-settable via `setComplexityFloor`. Enforced on-chain at `createEscrow` time and off-chain for early rejection. Ensures delegation overhead (gas + protocol fee) doesn't exceed task value (paper §4.3).
@@ -441,7 +442,7 @@ SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 | Table | Purpose |
 |---|---|
 | `tasks` | Task metadata (title, description, spec hash) |
-| `escrows` | Escrow records mirroring on-chain state (includes `milestone_count`, `current_milestone`, `zk_verifier`, `circuit_id`) |
+| `escrows` | Escrow records mirroring on-chain state (includes `milestone_count`, `current_milestone`, `zk_verifier`, `circuit_id`, `verifier_panel_json`, quorum fields) |
 | `milestones` | Per-milestone records: amount, deadline, status, submission/dispute data (V2) |
 | `submissions` | Worker submission records (`submission_hash`, `proof_hash`) |
 | `disputes` | Dispute and resolution records |
@@ -635,13 +636,15 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 
 | Tool | Inputs | Chain Method |
 |---|---|---|
-| `create_escrow` | title, roles, amount, worker_stake, token, deadlines, milestones, backup_worker, backup_deadline_extension, zk_verifier, circuit_id (optional) | `Factory.createEscrow` |
+| `create_escrow` | title, roles, verifier_panel/quorum params, amount, worker_stake, verifier_stake_per_verifier, token, deadlines, milestones, backup_worker, backup_deadline_extension, zk_verifier, circuit_id (optional) | `Factory.createEscrow` |
 | `fund_escrow` | escrow_id | `Escrow.fund` |
 | `deposit_stake` | escrow_id | `Escrow.depositStake` |
+| `deposit_verifier_stake` | escrow_id | `Escrow.depositVerifierStake` |
 | `submit_work` | escrow_id, submission_uri, proof_hash (optional), milestone_index (optional) | `Escrow.submit` / `Escrow.submitMilestone` |
-| `verify_and_approve` | escrow_id, proof, milestone_index (optional) | `Escrow.verifyAndApprove` / `Escrow.verifyAndApproveMilestone` |
-| `approve_work` | escrow_id, role, milestone_index (optional) | `Escrow.approveByBuyer/Verifier` / milestone variants |
-| `dispute_work` | escrow_id, role, reason_uri, milestone_index (optional) | `Escrow.dispute/rejectByVerifier/escalateSilence` / milestone variants |
+| `verify_and_approve` | escrow_id, proof, milestone_index (optional) | `Escrow.verifyAndApprove` / `Escrow.verifyAndApproveMilestone` (casts an approval vote toward quorum; when `verifierStakePerVerifier > 0`, verifier stake requirements still apply before voting) |
+| `cast_verifier_vote` | escrow_id, approve, reason_uri, milestone_index (optional) | `Escrow.castVerifierVote` / `Escrow.castMilestoneVerifierVote` |
+| `approve_work` | escrow_id, role, milestone_index (optional) | `Escrow.approveByBuyer` / verifier role maps to quorum vote |
+| `dispute_work` | escrow_id, role, reason_uri, milestone_index (optional) | `Escrow.dispute/castVerifierVote(false)/escalateSilence` / milestone variants |
 | `resolve_dispute` | escrow_id, worker_award_bps, resolution_uri, milestone_index (optional) | `Escrow.resolveDispute` / milestone variant |
 | `abort_milestones` | escrow_id | `Escrow.abortRemainingMilestones` |
 | `activate_backup` | escrow_id | `Escrow.activateBackup` |
@@ -679,7 +682,7 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/v1/health` | Health check |
-| POST | `/api/v1/escrows` | Create escrow (optional `milestones`, `zk_verifier`, `circuit_id` in body) |
+| POST | `/api/v1/escrows` | Create escrow (includes `verifier_panel`, quorum params, optional `milestones`, `zk_verifier`, `circuit_id`) |
 | GET | `/api/v1/escrows` | List (query: role, address, status) |
 | GET | `/api/v1/escrows/{id}` | Get escrow (includes milestone details if applicable) |
 | POST | `/api/v1/escrows/{id}/fund` | Fund |
@@ -687,8 +690,10 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 | POST | `/api/v1/ap2/validate` | Validate AP2 mandate against x402 facilitator |
 | GET | `/api/v1/ap2/mandates/{id}` | Get mandate details |
 | POST | `/api/v1/escrows/{id}/deposit-stake` | Deposit worker stake |
+| POST | `/api/v1/escrows/{id}/deposit-verifier-stake` | Deposit verifier stake |
 | POST | `/api/v1/escrows/{id}/submit` | Submit work (optional `proof_hash`, `milestone_index` in body) |
 | POST | `/api/v1/escrows/{id}/verify-approve` | Verify provided proof bytes and approve in one on-chain call (optional `milestone_index` in body) |
+| POST | `/api/v1/escrows/{id}/quorum-vote` | Cast verifier quorum vote (body: approve, reason_uri, optional milestone_index) |
 | POST | `/api/v1/escrows/{id}/approve` | Approve (body: role, optional milestone_index) |
 | POST | `/api/v1/escrows/{id}/dispute` | Dispute (body: role, reason_uri, optional milestone_index) |
 | POST | `/api/v1/escrows/{id}/resolve` | Resolve (body: worker_award_bps, resolution_uri, optional milestone_index) |

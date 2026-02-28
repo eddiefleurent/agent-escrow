@@ -93,10 +93,11 @@ func createEscrowOn(ctx context.Context, q dbExecer, e *Escrow) (*Escrow, error)
 		circuitID = "0x0000000000000000000000000000000000000000000000000000000000000000"
 	}
 	res, err := q.ExecContext(ctx,
-		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, service_tier, zk_verifier, circuit_id, parent_escrow_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, verifier_panel_json, quorum_threshold, quorum_verifier_count, verifier_stake_per_verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, service_tier, zk_verifier, circuit_id, parent_escrow_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.TaskID, e.ChainID, e.FactoryAddress, e.EscrowAddress, e.EscrowID,
-		e.Buyer, e.Worker, e.Verifier, e.Arbitrator, e.Amount, e.WorkerStake, e.Token, e.Status,
+		e.Buyer, e.Worker, e.Verifier, e.VerifierPanelJSON, e.QuorumThreshold, e.QuorumVerifierCount, e.VerifierStakePerVerifier,
+		e.Arbitrator, e.Amount, e.WorkerStake, e.Token, e.Status,
 		e.SubmissionDeadline, e.ReviewPeriodSeconds, e.DisputePeriodSeconds, e.ArbitratorTimeoutSeconds,
 		msCount, e.CurrentMilestone,
 		e.BackupWorker, e.BackupDeadlineExtension, activeWorker, boolToInt(e.BackupActivated), boolToInt(e.Frozen),
@@ -125,7 +126,7 @@ func (d *DB) CreateEscrowTx(ctx context.Context, tx *sql.Tx, e *Escrow) (*Escrow
 	return createEscrowOn(ctx, tx, e)
 }
 
-const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, service_tier, zk_verifier, circuit_id, parent_escrow_id, created_at, updated_at`
+const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, verifier_panel_json, quorum_threshold, quorum_verifier_count, verifier_stake_per_verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, service_tier, zk_verifier, circuit_id, parent_escrow_id, created_at, updated_at`
 
 func scanEscrow(scanner interface{ Scan(...any) error }) (*Escrow, error) {
 	e := &Escrow{}
@@ -133,7 +134,8 @@ func scanEscrow(scanner interface{ Scan(...any) error }) (*Escrow, error) {
 	var backupActivatedInt, frozenInt int
 	var parentEscrowID sql.NullInt64
 	err := scanner.Scan(&e.ID, &e.TaskID, &e.ChainID, &e.FactoryAddress, &e.EscrowAddress, &e.EscrowID,
-		&e.Buyer, &e.Worker, &e.Verifier, &e.Arbitrator, &e.Amount, &e.WorkerStake, &e.Token, &e.Status,
+		&e.Buyer, &e.Worker, &e.Verifier, &e.VerifierPanelJSON, &e.QuorumThreshold, &e.QuorumVerifierCount, &e.VerifierStakePerVerifier,
+		&e.Arbitrator, &e.Amount, &e.WorkerStake, &e.Token, &e.Status,
 		&e.SubmissionDeadline, &e.ReviewPeriodSeconds, &e.DisputePeriodSeconds, &e.ArbitratorTimeoutSeconds,
 		&e.MilestoneCount, &e.CurrentMilestone,
 		&e.BackupWorker, &e.BackupDeadlineExtension, &e.ActiveWorker, &backupActivatedInt, &frozenInt,
@@ -219,16 +221,20 @@ func (d *DB) ListEscrows(ctx context.Context, role, address, status string) ([]*
 		switch role {
 		case "buyer":
 			query += ` AND buyer = ?`
+			args = append(args, address)
 		case "worker":
 			query += ` AND worker = ?`
+			args = append(args, address)
 		case "verifier":
-			query += ` AND verifier = ?`
+			normalizedAddr := strings.ToLower(address)
+			query += ` AND (verifier = ? OR verifier_panel_json LIKE ?)`
+			args = append(args, normalizedAddr, "%\""+normalizedAddr+"\"%")
 		case "arbitrator":
 			query += ` AND arbitrator = ?`
+			args = append(args, address)
 		default:
 			return nil, fmt.Errorf("invalid role: %s", role)
 		}
-		args = append(args, address)
 	}
 
 	if status != "" {

@@ -22,6 +22,7 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/numconv"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
@@ -65,7 +66,10 @@ type createEscrowRequest struct {
 	Description              string             `json:"description"`
 	Buyer                    string             `json:"buyer"`
 	Worker                   string             `json:"worker"`
-	Verifier                 string             `json:"verifier"`
+	VerifierPanel            []string           `json:"verifier_panel"`
+	QuorumThreshold          int                `json:"quorum_threshold"`
+	QuorumVerifierCount      int                `json:"quorum_verifier_count"`
+	VerifierStakePerVerifier string             `json:"verifier_stake_per_verifier,omitempty"`
 	Arbitrator               string             `json:"arbitrator"`
 	Amount                   string             `json:"amount"`
 	WorkerStake              string             `json:"worker_stake,omitempty"`
@@ -126,13 +130,52 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 	}{
 		{"buyer", req.Buyer},
 		{"worker", req.Worker},
-		{"verifier", req.Verifier},
 		{"arbitrator", req.Arbitrator},
 	} {
 		if !isValidAddress(pair.addr) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid %s address", pair.name)})
 			return
 		}
+	}
+	if len(req.VerifierPanel) == 0 || len(req.VerifierPanel) > 7 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "verifier_panel must include between 1 and 7 addresses"})
+		return
+	}
+	if req.QuorumVerifierCount <= 0 || req.QuorumVerifierCount > 7 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "quorum_verifier_count must be between 1 and 7"})
+		return
+	}
+	if len(req.VerifierPanel) < req.QuorumVerifierCount {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "verifier_panel length must be at least quorum_verifier_count"})
+		return
+	}
+	if req.QuorumThreshold <= 0 || req.QuorumThreshold > req.QuorumVerifierCount {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "quorum_threshold must be between 1 and quorum_verifier_count"})
+		return
+	}
+	buyerAddr := common.HexToAddress(req.Buyer)
+	workerAddr := common.HexToAddress(req.Worker)
+	arbitratorAddr := common.HexToAddress(req.Arbitrator)
+	var verifierPanel [7]common.Address
+	panelForJSON := make([]string, req.QuorumVerifierCount)
+	seenVerifierPanel := make(map[common.Address]bool, req.QuorumVerifierCount)
+	for i := 0; i < req.QuorumVerifierCount; i++ {
+		if !isValidAddress(req.VerifierPanel[i]) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid verifier_panel[%d] address", i)})
+			return
+		}
+		addr := common.HexToAddress(req.VerifierPanel[i])
+		if seenVerifierPanel[addr] {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("duplicate verifier_panel[%d] address", i)})
+			return
+		}
+		if addr == buyerAddr || addr == workerAddr || addr == arbitratorAddr {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("verifier_panel[%d] must not overlap buyer, worker, or arbitrator", i)})
+			return
+		}
+		seenVerifierPanel[addr] = true
+		verifierPanel[i] = addr
+		panelForJSON[i] = strings.ToLower(addr.Hex())
 	}
 
 	workerStakeVal := big.NewInt(0)
@@ -142,7 +185,24 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid worker_stake"})
 			return
 		}
+		if ws.Sign() < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "worker_stake must not be negative"})
+			return
+		}
 		workerStakeVal = ws
+	}
+	verifierStakePerVerifierVal := big.NewInt(0)
+	if req.VerifierStakePerVerifier != "" {
+		vsv, ok := new(big.Int).SetString(req.VerifierStakePerVerifier, 10)
+		if !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid verifier_stake_per_verifier"})
+			return
+		}
+		if vsv.Sign() < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "verifier_stake_per_verifier must not be negative"})
+			return
+		}
+		verifierStakePerVerifierVal = vsv
 	}
 
 	var tokenAddr common.Address
@@ -257,11 +317,26 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Safe: quorumThreshold and quorumVerifierCount are validated to [1..7] above.
+	quorumThreshold, err := numconv.IntToUint8(req.QuorumThreshold, "quorum_threshold")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	quorumVerifierCount, err := numconv.IntToUint8(req.QuorumVerifierCount, "quorum_verifier_count")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
 	factory := common.HexToAddress(h.cfg.FactoryAddress)
 	params := chain.CreateEscrowParams{
 		Buyer:                    common.HexToAddress(req.Buyer),
 		Worker:                   common.HexToAddress(req.Worker),
-		Verifier:                 common.HexToAddress(req.Verifier),
+		VerifierPanel:            verifierPanel,
+		QuorumThreshold:          quorumThreshold,
+		QuorumVerifierCount:      quorumVerifierCount,
+		VerifierStakePerVerifier: verifierStakePerVerifierVal,
 		Arbitrator:               common.HexToAddress(req.Arbitrator),
 		Amount:                   amount,
 		WorkerStake:              workerStakeVal,
@@ -301,6 +376,11 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 	if len(milestones) > 0 {
 		milestoneCount = len(milestones)
 	}
+	panelJSONBytes, err := json.Marshal(panelForJSON)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("marshal verifier panel: %v", err)})
+		return
+	}
 
 	escrow, err := h.db.CreateEscrow(r.Context(), &storage.Escrow{
 		TaskID:                   task.ID,
@@ -310,7 +390,11 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		EscrowID:                 result.EscrowID,
 		Buyer:                    req.Buyer,
 		Worker:                   req.Worker,
-		Verifier:                 req.Verifier,
+		Verifier:                 strings.ToLower(verifierPanel[0].Hex()),
+		VerifierPanelJSON:        string(panelJSONBytes),
+		QuorumThreshold:          req.QuorumThreshold,
+		QuorumVerifierCount:      req.QuorumVerifierCount,
+		VerifierStakePerVerifier: verifierStakePerVerifierVal.String(),
 		Arbitrator:               req.Arbitrator,
 		Amount:                   req.Amount,
 		WorkerStake:              workerStakeVal.String(),
@@ -546,36 +630,25 @@ func (h *Handlers) FundEscrow(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
 }
 
-func (h *Handlers) DepositStake(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
-		return
-	}
-
-	escrow, err := h.db.GetEscrow(r.Context(), id)
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-		return
-	}
-
-	stakeAmount, ok := new(big.Int).SetString(escrow.WorkerStake, 10)
-	if !ok || stakeAmount.Sign() <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "this escrow does not require a worker stake"})
-		return
-	}
-
-	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
-	isERC20 := escrow.Token != "" && escrow.Token != "0x0000000000000000000000000000000000000000"
-
+// execStakeDeposit handles the ERC20-approve-then-deposit or ETH-deposit flow shared by
+// DepositStake and DepositVerifierStake. deposit is the chain method to call.
+func (h *Handlers) execStakeDeposit(
+	ctx context.Context,
+	w http.ResponseWriter,
+	escrowAddr common.Address,
+	stakeAmount *big.Int,
+	token string,
+	deposit func(context.Context, common.Address, *big.Int) (*types.Transaction, error),
+) {
+	isERC20 := token != "" && token != "0x0000000000000000000000000000000000000000"
 	if isERC20 {
-		tokenAddr := common.HexToAddress(escrow.Token)
-		approveTx, err := h.chain.ApproveERC20(r.Context(), tokenAddr, escrowAddr, stakeAmount)
+		tokenAddr := common.HexToAddress(token)
+		approveTx, err := h.chain.ApproveERC20(ctx, tokenAddr, escrowAddr, stakeAmount)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("approve: %v", err)})
 			return
 		}
-		approveReceipt, err := chain.WaitMined(r.Context(), h.chain, approveTx.Hash())
+		approveReceipt, err := chain.WaitMined(ctx, h.chain, approveTx.Hash())
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("approve receipt: %v", err)})
 			return
@@ -584,22 +657,80 @@ func (h *Handlers) DepositStake(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "approve transaction reverted"})
 			return
 		}
-		tx, err := h.chain.DepositStake(r.Context(), escrowAddr, nil)
+		tx, err := deposit(ctx, escrowAddr, nil)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 			return
 		}
-		_ = h.idx.RunOnce(r.Context())
+		_ = h.idx.RunOnce(ctx)
 		writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
 		return
 	}
 
-	tx, err := h.chain.DepositStake(r.Context(), escrowAddr, stakeAmount)
+	tx, err := deposit(ctx, escrowAddr, stakeAmount)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 		return
 	}
+	_ = h.idx.RunOnce(ctx)
+	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+}
 
+func (h *Handlers) DepositStake(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	escrow, err := h.db.GetEscrow(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	stakeAmount, ok := new(big.Int).SetString(escrow.WorkerStake, 10)
+	if !ok || stakeAmount.Sign() <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "this escrow does not require a worker stake"})
+		return
+	}
+	h.execStakeDeposit(r.Context(), w, common.HexToAddress(escrow.EscrowAddress), stakeAmount, escrow.Token, h.chain.DepositStake)
+}
+
+func (h *Handlers) DepositVerifierStake(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	escrow, err := h.db.GetEscrow(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	stakeAmount, ok := new(big.Int).SetString(escrow.VerifierStakePerVerifier, 10)
+	if !ok || stakeAmount.Sign() <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "this escrow does not require verifier stake"})
+		return
+	}
+	h.execStakeDeposit(r.Context(), w, common.HexToAddress(escrow.EscrowAddress), stakeAmount, escrow.Token, h.chain.DepositVerifierStake)
+}
+
+// WithdrawStake claims verifier stake owed to the caller after quorum settlement or refund.
+func (h *Handlers) WithdrawStake(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	escrow, err := h.db.GetEscrow(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	tx, err := h.chain.WithdrawStake(r.Context(), common.HexToAddress(escrow.EscrowAddress))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
+		return
+	}
 	_ = h.idx.RunOnce(r.Context())
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
 }
@@ -838,7 +969,7 @@ func (h *Handlers) ApproveWork(w http.ResponseWriter, r *http.Request) {
 			}
 			txHash = tx.Hash().Hex()
 		case "verifier":
-			tx, err := h.chain.ApproveMilestoneByVerifier(r.Context(), addr, msIdx)
+			tx, err := h.chain.CastMilestoneVerifierVote(r.Context(), addr, msIdx, true, "")
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 				return
@@ -863,7 +994,7 @@ func (h *Handlers) ApproveWork(w http.ResponseWriter, r *http.Request) {
 		}
 		txHash = tx.Hash().Hex()
 	case "verifier":
-		tx, err := h.chain.ApproveByVerifier(r.Context(), addr)
+		tx, err := h.chain.CastVerifierVote(r.Context(), addr, true, "")
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 			return
@@ -942,6 +1073,71 @@ func (h *Handlers) VerifyAndApprove(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
 }
 
+type quorumVoteRequest struct {
+	Approve        *bool  `json:"approve"`
+	ReasonURI      string `json:"reason_uri,omitempty"`
+	MilestoneIndex *int   `json:"milestone_index,omitempty"`
+}
+
+func (h *Handlers) CastVerifierVote(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+
+	var req quorumVoteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	if req.Approve == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "approve is required"})
+		return
+	}
+
+	escrow, err := h.db.GetEscrow(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	addr := common.HexToAddress(escrow.EscrowAddress)
+
+	if escrow.MilestoneCount > 1 {
+		if req.MilestoneIndex == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "milestone_index required for multi-milestone escrow"})
+			return
+		}
+		msIdxVal := *req.MilestoneIndex
+		if msIdxVal < 0 || msIdxVal >= escrow.MilestoneCount {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdxVal, escrow.MilestoneCount)})
+			return
+		}
+		msIdx, convErr := numconv.IntToUint8(msIdxVal, "milestone_index")
+		if convErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": convErr.Error()})
+			return
+		}
+		tx, err := h.chain.CastMilestoneVerifierVote(r.Context(), addr, msIdx, *req.Approve, req.ReasonURI)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
+			return
+		}
+		_ = h.idx.RunOnce(r.Context())
+		writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+		return
+	}
+
+	tx, err := h.chain.CastVerifierVote(r.Context(), addr, *req.Approve, req.ReasonURI)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
+		return
+	}
+
+	_ = h.idx.RunOnce(r.Context())
+	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+}
+
 type disputeRequest struct {
 	Role           string `json:"role"`
 	ReasonURI      string `json:"reason_uri"`
@@ -994,7 +1190,7 @@ func (h *Handlers) DisputeWork(w http.ResponseWriter, r *http.Request) {
 			}
 			txHash = tx.Hash().Hex()
 		case "verifier":
-			tx, err := h.chain.RejectMilestoneByVerifier(r.Context(), addr, msIdx, req.ReasonURI)
+			tx, err := h.chain.CastMilestoneVerifierVote(r.Context(), addr, msIdx, false, req.ReasonURI)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 				return
@@ -1026,7 +1222,7 @@ func (h *Handlers) DisputeWork(w http.ResponseWriter, r *http.Request) {
 		}
 		txHash = tx.Hash().Hex()
 	case "verifier":
-		tx, err := h.chain.RejectByVerifier(r.Context(), addr, req.ReasonURI)
+		tx, err := h.chain.CastVerifierVote(r.Context(), addr, false, req.ReasonURI)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 			return

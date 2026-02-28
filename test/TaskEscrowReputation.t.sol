@@ -36,7 +36,10 @@ contract TaskEscrowReputationTest is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: AMOUNT,
                 workerStake: 0,
@@ -63,7 +66,10 @@ contract TaskEscrowReputationTest is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: AMOUNT,
                 workerStake: STAKE,
@@ -90,7 +96,10 @@ contract TaskEscrowReputationTest is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: AMOUNT,
                 workerStake: 0,
@@ -142,7 +151,7 @@ contract TaskEscrowReputationTest is Test {
         vm.prank(worker);
         escrow.submit(keccak256("sub"), "ipfs://sub", bytes32(0));
         vm.prank(verifier);
-        escrow.approveByVerifier();
+        escrow.castVerifierVote(true, "");
 
         (uint32 wc,,) = factory.getWorkerReputation(worker);
         assertEq(wc, 1);
@@ -314,7 +323,7 @@ contract TaskEscrowReputationTest is Test {
         vm.prank(worker);
         escrow2.submit(keccak256("sub2"), "ipfs://sub2", bytes32(0));
         vm.prank(verifier);
-        escrow2.approveByVerifier();
+        escrow2.castVerifierVote(true, "");
 
         // Third escrow: disputed
         (, TaskEscrow escrow3) = _createEscrow();
@@ -372,7 +381,10 @@ contract TaskEscrowReputationTest is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: AMOUNT,
                 workerStake: 0,
@@ -429,7 +441,10 @@ contract TaskEscrowReputationTest is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: AMOUNT,
                 workerStake: 0,

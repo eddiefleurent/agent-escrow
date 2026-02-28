@@ -19,7 +19,11 @@ type Escrow struct {
 	EscrowID                 int64
 	Buyer                    string
 	Worker                   string
-	Verifier                 string
+	Verifier                 string // Legacy single-verifier mirror (first panel member) for backward compatibility in older RFQ flows
+	VerifierPanelJSON        string `json:"verifier_panel_json"`
+	QuorumThreshold          int    `json:"quorum_threshold"`
+	QuorumVerifierCount      int    `json:"quorum_verifier_count"`
+	VerifierStakePerVerifier string `json:"verifier_stake_per_verifier"`
 	Arbitrator               string
 	Amount                   string
 	WorkerStake              string // Anti-Sybil bond amount (paper §4.8); "0" means no stake required

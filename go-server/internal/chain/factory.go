@@ -18,7 +18,10 @@ type MilestoneParam struct {
 type CreateEscrowParams struct {
 	Buyer                    common.Address
 	Worker                   common.Address
-	Verifier                 common.Address
+	VerifierPanel            [7]common.Address
+	QuorumThreshold          uint8
+	QuorumVerifierCount      uint8
+	VerifierStakePerVerifier *big.Int
 	Arbitrator               common.Address
 	Amount                   *big.Int
 	WorkerStake              *big.Int
@@ -48,7 +51,10 @@ type milestoneTuple struct {
 type createParamsTuple struct {
 	Buyer                    common.Address
 	Worker                   common.Address
-	Verifier                 common.Address
+	VerifierPanel            [7]common.Address
+	QuorumThreshold          uint8
+	QuorumVerifierCount      uint8
+	VerifierStakePerVerifier *big.Int
 	Arbitrator               common.Address
 	Amount                   *big.Int
 	WorkerStake              *big.Int
@@ -71,6 +77,10 @@ func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p Cre
 	if workerStake == nil {
 		workerStake = big.NewInt(0)
 	}
+	verifierStakePerVerifier := p.VerifierStakePerVerifier
+	if verifierStakePerVerifier == nil {
+		verifierStakePerVerifier = big.NewInt(0)
+	}
 	milestones := make([]milestoneTuple, len(p.Milestones))
 	for i, m := range p.Milestones {
 		milestones[i] = milestoneTuple(m)
@@ -78,7 +88,10 @@ func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p Cre
 	tuple := createParamsTuple{
 		Buyer:                    p.Buyer,
 		Worker:                   p.Worker,
-		Verifier:                 p.Verifier,
+		VerifierPanel:            p.VerifierPanel,
+		QuorumThreshold:          p.QuorumThreshold,
+		QuorumVerifierCount:      p.QuorumVerifierCount,
+		VerifierStakePerVerifier: verifierStakePerVerifier,
 		Arbitrator:               p.Arbitrator,
 		Amount:                   p.Amount,
 		WorkerStake:              workerStake,

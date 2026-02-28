@@ -3,6 +3,7 @@ pragma solidity ^0.8.34;
 
 import {TaskEscrow} from "./TaskEscrow.sol";
 import {EscrowDeployer} from "./EscrowDeployer.sol";
+import {FactoryLib} from "./FactoryLib.sol";
 
 contract TaskEscrowFactory {
     error Unauthorized();
@@ -18,6 +19,7 @@ contract TaskEscrowFactory {
     error FrozenAddress();
     error EscrowNotFrozen();
     error InvalidServiceTier();
+    error InvalidQuorumConfiguration();
 
     // Service tier constants (paper §5.3: tiered service levels)
     uint8 public constant TIER_LOW_ASSURANCE = 0;
@@ -28,7 +30,8 @@ contract TaskEscrowFactory {
         address indexed escrow,
         address indexed buyer,
         address worker,
-        address verifier,
+        uint8 quorumThreshold,
+        uint8 quorumVerifierCount,
         address arbitrator,
         bytes32 taskSpecHash,
         address token,
@@ -111,7 +114,10 @@ contract TaskEscrowFactory {
     struct CreateParams {
         address buyer;
         address worker;
-        address verifier;
+        address[7] verifierPanel;
+        uint8 quorumThreshold;
+        uint8 quorumVerifierCount;
+        uint256 verifierStakePerVerifier;
         address arbitrator;
         uint256 amount;
         uint256 workerStake;
@@ -135,9 +141,21 @@ contract TaskEscrowFactory {
         if (p.submissionDeadline <= block.timestamp) revert InvalidDeadline();
         if (p.serviceTier > TIER_HIGH_ASSURANCE) revert InvalidServiceTier();
         if (
-            frozenAddresses[p.buyer] || frozenAddresses[p.worker] || frozenAddresses[p.verifier]
-                || frozenAddresses[p.arbitrator] || (p.backupWorker != address(0) && frozenAddresses[p.backupWorker])
+            p.quorumThreshold == 0 || p.quorumVerifierCount == 0 || p.quorumVerifierCount > 7
+                || p.quorumThreshold > p.quorumVerifierCount
+        ) revert InvalidQuorumConfiguration();
+        if (
+            frozenAddresses[p.buyer] || frozenAddresses[p.worker] || frozenAddresses[p.arbitrator]
+                || (p.backupWorker != address(0) && frozenAddresses[p.backupWorker])
         ) revert FrozenAddress();
+        for (uint8 i = 0; i < p.quorumVerifierCount; i++) {
+            address panelVerifier = p.verifierPanel[i];
+            if (panelVerifier == address(0)) revert InvalidAddress();
+            if (frozenAddresses[panelVerifier]) revert FrozenAddress();
+        }
+        if (FactoryLib.rolesCollide(
+                p.buyer, p.worker, p.arbitrator, p.backupWorker, p.verifierPanel, p.quorumVerifierCount
+            )) revert TaskEscrow.RolesNotDistinct();
 
         uint16 feeSnapshot = p.serviceTier == TIER_HIGH_ASSURANCE ? highAssuranceFeeBps : protocolFeeBps;
 
@@ -154,7 +172,10 @@ contract TaskEscrowFactory {
                 factory: address(this),
                 buyer: p.buyer,
                 worker: p.worker,
-                verifier: p.verifier,
+                verifierPanel: p.verifierPanel,
+                quorumThreshold: p.quorumThreshold,
+                quorumVerifierCount: p.quorumVerifierCount,
+                verifierStakePerVerifier: p.verifierStakePerVerifier,
                 arbitrator: p.arbitrator,
                 amount: p.amount,
                 workerStake: p.workerStake,
@@ -186,7 +207,8 @@ contract TaskEscrowFactory {
             escrow,
             p.buyer,
             p.worker,
-            p.verifier,
+            p.quorumThreshold,
+            p.quorumVerifierCount,
             p.arbitrator,
             p.taskSpecHash,
             p.token,

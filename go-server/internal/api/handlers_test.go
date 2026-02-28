@@ -151,7 +151,10 @@ func TestCreateEscrow_Success(t *testing.T) {
 		"description": "Do something",
 		"buyer": "0x1000000000000000000000000000000000000001",
 		"worker": "0x2000000000000000000000000000000000000002",
-		"verifier": "0x3000000000000000000000000000000000000003",
+		"verifier_panel": ["0x3000000000000000000000000000000000000003"],
+		"quorum_threshold": 1,
+		"quorum_verifier_count": 1,
+		"verifier_stake_per_verifier": "0",
 		"arbitrator": "0x4000000000000000000000000000000000000004",
 		"amount": "1000000000000000000",
 		"submission_deadline": "1700000000",
@@ -188,6 +191,19 @@ func TestCreateEscrow_Success(t *testing.T) {
 	if escrow.EscrowID != 7 {
 		t.Fatalf("db escrow id: expected 7, got %d", escrow.EscrowID)
 	}
+	if escrow.QuorumThreshold != 1 {
+		t.Fatalf("db quorum_threshold: expected 1, got %d", escrow.QuorumThreshold)
+	}
+	if escrow.QuorumVerifierCount != 1 {
+		t.Fatalf("db quorum_verifier_count: expected 1, got %d", escrow.QuorumVerifierCount)
+	}
+	if escrow.VerifierStakePerVerifier != "0" {
+		t.Fatalf("db verifier_stake_per_verifier: expected 0, got %s", escrow.VerifierStakePerVerifier)
+	}
+	expectedPanel := strings.ToLower("0x3000000000000000000000000000000000000003")
+	if !strings.Contains(strings.ToLower(escrow.VerifierPanelJSON), expectedPanel) {
+		t.Fatalf("db verifier_panel_json: expected to contain %s, got %s", expectedPanel, escrow.VerifierPanelJSON)
+	}
 }
 
 func TestCreateEscrow_ChainError(t *testing.T) {
@@ -198,7 +214,10 @@ func TestCreateEscrow_ChainError(t *testing.T) {
 		"title": "Test", "description": "x",
 		"buyer": "0x1000000000000000000000000000000000000001",
 		"worker": "0x2000000000000000000000000000000000000002",
-		"verifier": "0x3000000000000000000000000000000000000003",
+		"verifier_panel": ["0x3000000000000000000000000000000000000003"],
+		"quorum_threshold": 1,
+		"quorum_verifier_count": 1,
+		"verifier_stake_per_verifier": "0",
 		"arbitrator": "0x4000000000000000000000000000000000000004",
 		"amount": "100", "submission_deadline": "1700000000",
 		"review_period_seconds": "86400", "dispute_period_seconds": "172800",
@@ -793,7 +812,10 @@ func TestCreateEscrow_BelowComplexityFloor(t *testing.T) {
 		"title": "Test", "description": "x",
 		"buyer": "0x1000000000000000000000000000000000000001",
 		"worker": "0x2000000000000000000000000000000000000002",
-		"verifier": "0x3000000000000000000000000000000000000003",
+		"verifier_panel": ["0x3000000000000000000000000000000000000003"],
+		"quorum_threshold": 1,
+		"quorum_verifier_count": 1,
+		"verifier_stake_per_verifier": "0",
 		"arbitrator": "0x4000000000000000000000000000000000000004",
 		"amount": "999999999999999999",
 		"submission_deadline": "1700000000",
@@ -825,7 +847,10 @@ func TestCreateEscrow_AtComplexityFloor(t *testing.T) {
 		"title": "Test", "description": "x",
 		"buyer": "0x1000000000000000000000000000000000000001",
 		"worker": "0x2000000000000000000000000000000000000002",
-		"verifier": "0x3000000000000000000000000000000000000003",
+		"verifier_panel": ["0x3000000000000000000000000000000000000003"],
+		"quorum_threshold": 1,
+		"quorum_verifier_count": 1,
+		"verifier_stake_per_verifier": "0",
 		"arbitrator": "0x4000000000000000000000000000000000000004",
 		"amount": "100",
 		"submission_deadline": "1700000000",
@@ -852,7 +877,10 @@ func TestCreateEscrow_EmptyComplexityFloorAllowsAny(t *testing.T) {
 		"title": "Test", "description": "x",
 		"buyer": "0x1000000000000000000000000000000000000001",
 		"worker": "0x2000000000000000000000000000000000000002",
-		"verifier": "0x3000000000000000000000000000000000000003",
+		"verifier_panel": ["0x3000000000000000000000000000000000000003"],
+		"quorum_threshold": 1,
+		"quorum_verifier_count": 1,
+		"verifier_stake_per_verifier": "0",
 		"arbitrator": "0x4000000000000000000000000000000000000004",
 		"amount": "1",
 		"submission_deadline": "1700000000",

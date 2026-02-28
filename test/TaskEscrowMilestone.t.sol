@@ -50,7 +50,10 @@ contract TaskEscrowMilestoneTest is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: TOTAL,
                 workerStake: stake,
@@ -355,7 +358,10 @@ contract TaskEscrowMilestoneTest is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: 1 ether,
                 workerStake: 0,
@@ -424,7 +430,7 @@ contract TaskEscrowMilestoneTest is Test {
         _submitMilestone(e, 0);
 
         vm.prank(verifier);
-        e.approveMilestoneByVerifier(0);
+        e.castMilestoneVerifierVote(0, true, "");
 
         (,,,,,,,,, TaskEscrow.MilestoneStatus msStatus,) = e.milestones(0);
         assertEq(uint256(msStatus), uint256(TaskEscrow.MilestoneStatus.Approved));
@@ -436,7 +442,7 @@ contract TaskEscrowMilestoneTest is Test {
         _submitMilestone(e, 0);
 
         vm.prank(verifier);
-        e.rejectMilestoneByVerifier(0, "ipfs://reject");
+        e.castMilestoneVerifierVote(0, false, "ipfs://reject");
 
         (,,,,,,,,, TaskEscrow.MilestoneStatus msStatus,) = e.milestones(0);
         assertEq(uint256(msStatus), uint256(TaskEscrow.MilestoneStatus.Disputed));
@@ -472,7 +478,10 @@ contract TaskEscrowMilestoneTest is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: 17 ether,
                 workerStake: 0,
@@ -506,7 +515,10 @@ contract TaskEscrowMilestoneTest is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: 3 ether, // Doesn't match 2 ether total
                 workerStake: 0,
@@ -541,7 +553,10 @@ contract TaskEscrowMilestoneTest is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: 2 ether,
                 workerStake: 0,
@@ -612,7 +627,10 @@ contract TaskEscrowMilestoneTest is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: 1.6 ether,
                 workerStake: 0,

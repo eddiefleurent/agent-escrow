@@ -1,0 +1,84 @@
+@startuml
+title Quorum Approval (Single or Milestone)
+
+actor Worker
+participant Buyer
+participant "Verifier A" as VA
+participant "Verifier B" as VB
+participant "TaskEscrow" as Escrow
+participant "ZK Verifier" as ZK
+
+Worker -> Escrow: submit(...) / submitMilestone(...)
+Escrow --> Worker: status = Submitted
+
+alt verifierStakePerVerifier > 0
+VA -> Escrow: depositVerifierStake() (required before voting)
+VB -> Escrow: depositVerifierStake() (required before voting)
+else verifierStakePerVerifier == 0
+note over VA,VB: depositVerifierStake() is optional and can be skipped
+end
+
+VA -> Escrow: castVerifierVote(true, reasonURI)\n(or castMilestoneVerifierVote)
+Escrow --> VA: quorumApproveCount = 1
+
+VB -> Escrow: verifyAndApprove(proof)\n(or verifyAndApproveMilestone)
+Escrow -> ZK: verifyProof(circuitId, proof)
+ZK --> Escrow: true
+Escrow --> VB: quorumApproveCount = threshold
+
+Escrow -> Escrow: _quorumApprove()
+Escrow -> Escrow: settle verifier stakes\n(majority refund, minority slash to buyer)
+Escrow --> Buyer: status = Settled / milestone advanced
+@enduml
+
+@startuml
+title Quorum Rejection Path
+
+actor Worker
+participant "Verifier A" as VA
+participant "Verifier B" as VB
+participant "TaskEscrow" as Escrow
+participant Buyer
+
+Worker -> Escrow: submit(...) / submitMilestone(...)
+Escrow --> Worker: status = Submitted
+
+VA -> Escrow: castVerifierVote(false, "ipfs://reason-a")
+Escrow --> VA: quorumRejectCount = 1
+
+VB -> Escrow: castVerifierVote(false, "ipfs://reason-b")
+Escrow --> VB: quorumRejectCount = rejectThreshold
+
+Escrow -> Escrow: _quorumReject(reasonURI)
+Escrow -> Escrow: settle verifier stakes\n(majority refund, minority slash to buyer)
+Escrow --> Buyer: status = Disputed
+@enduml
+
+@startuml
+title No-Quorum Exit Stake Unwind
+
+actor Worker
+participant Buyer
+participant Arbitrator
+participant "Verifier A" as VA
+participant "TaskEscrow" as Escrow
+
+Worker -> Escrow: submit(...) / submitMilestone(...)
+Escrow --> Worker: status = Submitted
+
+VA -> Escrow: depositVerifierStake()
+Escrow --> VA: quorum stake recorded
+
+alt review+dispute windows still open
+  Buyer -> Escrow: dispute(...) / disputeMilestone(...)
+  Escrow --> Buyer: status = Disputed
+else review+dispute windows expired
+  Buyer -> Escrow: expireNoQuorum(...) / expireMilestoneNoQuorum(...)
+  Escrow --> Buyer: status = Disputed
+end
+
+Arbitrator -> Escrow: resolveDispute(...) / resolveMilestoneDispute(...)
+Escrow -> Escrow: refund unsettled verifier stakes
+Escrow --> VA: stake refunded in full
+Escrow --> Buyer: status = Settled / milestone advanced
+@enduml
