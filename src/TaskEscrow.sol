@@ -391,6 +391,8 @@ contract TaskEscrow {
     function verifyAndApprove(bytes calldata proof) external nonReentrant whenNotFrozen {
         if (msg.sender != verifier) revert Unauthorized();
         if (zkVerifier == address(0)) revert NoVerifierConfigured();
+        _requireState(Status.Submitted);
+        if (block.timestamp > _reviewWindowEnds()) revert WindowExpired();
         if (proofHash == bytes32(0)) revert NoProofSubmitted();
         if (keccak256(proof) != proofHash) revert ProofHashMismatch();
         // Trust model: zkVerifier is immutable and validated as a deployed contract in the constructor.
@@ -557,6 +559,7 @@ contract TaskEscrow {
         if (milestoneIndex != currentMilestone) revert InvalidMilestoneIndex();
         Milestone storage ms = milestones[milestoneIndex];
         if (ms.status != MilestoneStatus.Submitted) revert InvalidState();
+        if (block.timestamp > uint256(ms.submittedAt) + uint256(reviewPeriodSeconds)) revert WindowExpired();
         if (ms.proofHash == bytes32(0)) revert NoProofSubmitted();
         if (keccak256(proof) != ms.proofHash) revert ProofHashMismatch();
         // Trust model: zkVerifier is immutable and validated as a deployed contract in the constructor.

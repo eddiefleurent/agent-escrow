@@ -78,8 +78,9 @@ contract TaskEscrowMilestoneTest is Test {
 
     function _submitMilestone(TaskEscrow e, uint8 idx) internal {
         vm.prank(worker);
+        string memory idxStr = vm.toString(uint256(idx));
         e.submitMilestone(
-            idx, keccak256(abi.encodePacked("ms-", idx)), string(abi.encodePacked("ipfs://ms-", idx)), bytes32(0)
+            idx, keccak256(abi.encodePacked("ms-", idxStr)), string(abi.encodePacked("ipfs://ms-", idxStr)), bytes32(0)
         );
     }
 

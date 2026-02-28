@@ -91,7 +91,7 @@ No body. Deposits the worker stake configured at escrow creation.
 POST /api/v1/escrows/{id}/submit
 ```
 
-Fields: `submission_uri` (required URI string), `proof_hash` (optional, 0x-prefixed hex (32-byte hex)), `milestone_index` (optional, int)
+Fields: `submission_uri` (required URI string), `proof_hash` (optional, 0x-prefixed 32-byte hex), `milestone_index` (optional, int)
 
 Hex encoding note: for this payload, only `proof_hash` is hex and it must be 0x-prefixed; `submission_uri` is a URI string and `milestone_index` is a decimal integer.
 
@@ -108,6 +108,8 @@ Fields: `role` (required: `"buyer"` or `"verifier"`), `milestone_index` (optiona
 ```http
 POST /api/v1/escrows/{id}/verify-approve
 ```
+
+Use `verify-approve` instead of `approve` when on-chain or protocol-level ZK verification is required: this command submits the raw proof bytes to the escrow's configured `zkVerifier` contract for cryptographic validation before releasing funds. Use `approve` for standard approvals where no proof is needed.
 
 Fields: `proof` (required, 0x-prefixed hex-encoded bytes), `milestone_index` (optional, int)
 
