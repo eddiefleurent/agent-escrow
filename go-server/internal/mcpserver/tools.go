@@ -39,7 +39,7 @@ type createEscrowArgs struct {
 	Worker                   string         `json:"worker" jsonschema:"Worker address (0x...). Must be distinct from buyer, verifier panel members, and arbitrator."`
 	VerifierPanel            []string       `json:"verifier_panel" jsonschema:"Verifier panel addresses (1-7 entries). Members must be distinct and must not overlap other roles."`
 	QuorumThreshold          FlexibleString `json:"quorum_threshold" jsonschema:"Votes required to finalize verifier decision (1..quorum_verifier_count)."`
-	QuorumVerifierCount      FlexibleString `json:"quorum_verifier_count" jsonschema:"Number of active verifier panel entries (1..7). Uses the first N entries from verifier_panel."`
+	QuorumVerifierCount      FlexibleString `json:"quorum_verifier_count" jsonschema:"Number of active verifier panel entries (1..7). Must equal verifier_panel length."`
 	VerifierStakePerVerifier FlexibleString `json:"verifier_stake_per_verifier,omitempty" jsonschema:"Optional Schelling stake each verifier must deposit before voting; omit or 0 for no verifier stake."`
 	Arbitrator               string         `json:"arbitrator" jsonschema:"Arbitrator address (0x...). Must be distinct from buyer, worker, and all verifier panel members."`
 	Amount                   FlexibleString `json:"amount" jsonschema:"Total amount in wei (ETH) or smallest unit (ERC20)"`
@@ -543,6 +543,27 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 	if !common.IsHexAddress(args.Arbitrator) {
 		return textResult("invalid arbitrator address"), nil, nil
 	}
+	buyerAddr := common.HexToAddress(args.Buyer)
+	workerAddr := common.HexToAddress(args.Worker)
+	arbitratorAddr := common.HexToAddress(args.Arbitrator)
+	if buyerAddr == (common.Address{}) {
+		return textResult("zero buyer address"), nil, nil
+	}
+	if workerAddr == (common.Address{}) {
+		return textResult("zero worker address"), nil, nil
+	}
+	if arbitratorAddr == (common.Address{}) {
+		return textResult("zero arbitrator address"), nil, nil
+	}
+	if buyerAddr == workerAddr {
+		return textResult("buyer and worker must be distinct"), nil, nil
+	}
+	if buyerAddr == arbitratorAddr {
+		return textResult("buyer and arbitrator must be distinct"), nil, nil
+	}
+	if workerAddr == arbitratorAddr {
+		return textResult("worker and arbitrator must be distinct"), nil, nil
+	}
 	amount, ok := new(big.Int).SetString(args.Amount.String(), 10)
 	if !ok {
 		return textResult("invalid amount"), nil, nil
@@ -581,6 +602,9 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		if !ok {
 			return textResult("invalid verifier_stake_per_verifier"), nil, nil
 		}
+		if vsv.Sign() < 0 {
+			return textResult("invalid verifier_stake_per_verifier: must not be negative"), nil, nil
+		}
 		verifierStakePerVerifierVal = vsv
 	}
 
@@ -607,9 +631,6 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 	var verifierPanel [7]common.Address
 	panelForJSON := make([]string, int(quorumVerifierCount))
 	seen := make(map[common.Address]bool)
-	buyerAddr := common.HexToAddress(args.Buyer)
-	workerAddr := common.HexToAddress(args.Worker)
-	arbitratorAddr := common.HexToAddress(args.Arbitrator)
 	for i := 0; i < int(quorumVerifierCount); i++ {
 		if !common.IsHexAddress(args.VerifierPanel[i]) {
 			return textResult(fmt.Sprintf("invalid verifier_panel[%d] address", i)), nil, nil

@@ -153,15 +153,29 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "quorum_threshold must be between 1 and quorum_verifier_count"})
 		return
 	}
+	buyerAddr := common.HexToAddress(req.Buyer)
+	workerAddr := common.HexToAddress(req.Worker)
+	arbitratorAddr := common.HexToAddress(req.Arbitrator)
 	var verifierPanel [7]common.Address
 	panelForJSON := make([]string, req.QuorumVerifierCount)
+	seenVerifierPanel := make(map[common.Address]bool, req.QuorumVerifierCount)
 	for i := 0; i < req.QuorumVerifierCount; i++ {
 		if !isValidAddress(req.VerifierPanel[i]) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid verifier_panel[%d] address", i)})
 			return
 		}
-		verifierPanel[i] = common.HexToAddress(req.VerifierPanel[i])
-		panelForJSON[i] = strings.ToLower(verifierPanel[i].Hex())
+		addr := common.HexToAddress(req.VerifierPanel[i])
+		if seenVerifierPanel[addr] {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("duplicate verifier_panel[%d] address", i)})
+			return
+		}
+		if addr == buyerAddr || addr == workerAddr || addr == arbitratorAddr {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("verifier_panel[%d] must not overlap buyer, worker, or arbitrator", i)})
+			return
+		}
+		seenVerifierPanel[addr] = true
+		verifierPanel[i] = addr
+		panelForJSON[i] = strings.ToLower(addr.Hex())
 	}
 
 	workerStakeVal := big.NewInt(0)

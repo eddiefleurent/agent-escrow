@@ -241,6 +241,26 @@ contract TaskEscrowQuorumTest is Test {
         assertEq(uint8(e.status()), uint8(TaskEscrow.Status.Settled));
     }
 
+    function testZKVerifyRequiresStakeWhenVerifierStakeConfigured() public {
+        uint256 stake = 0.2 ether;
+        (TaskEscrow e,) = _createSingle(2, 3, stake, 0, address(zk), CIRCUIT_ID);
+
+        bytes memory proof = abi.encodePacked("proof-with-stake");
+        bytes32 proofHash = keccak256(proof);
+        _fundAndSubmit(e, proofHash);
+
+        vm.expectRevert(TaskEscrow.QuorumStakeRequired.selector);
+        vm.prank(verifierA);
+        e.verifyAndApprove(proof);
+
+        vm.prank(verifierA);
+        e.depositVerifierStake{value: stake}();
+
+        vm.prank(verifierA);
+        e.verifyAndApprove(proof);
+        assertEq(uint8(e.status()), uint8(TaskEscrow.Status.Submitted));
+    }
+
     function testHighAssuranceStillRejectsBuyerApproval() public {
         (TaskEscrow e,) = _createSingle(1, 1, 0, 1, address(0), bytes32(0));
         _fundAndSubmit(e, bytes32(0));

@@ -98,7 +98,7 @@ Terminal states (Settled, Refunded, Cancelled) are mutually exclusive and irreve
 | `approveByBuyer` | buyer | Submitted | Within review window |
 | `depositVerifierStake` | verifier panel member | Funded/Submitted | `verifierStakePerVerifier > 0`, not already deposited |
 | `castVerifierVote(approve, reasonURI)` | verifier panel member | Submitted | Within review window; one vote per verifier; quorum threshold or reject-threshold finalizes |
-| `verifyAndApprove` | verifier | Submitted | `zkVerifier != 0`, `proofHash != 0`, `keccak256(proof) == proofHash`, verifier contract returns `true` |
+| `verifyAndApprove` | verifier panel member | Submitted | `zkVerifier != 0`, `proofHash != 0`, `keccak256(proof) == proofHash`, verifier contract returns `true` |
 | `dispute` | buyer | Submitted | Within review + dispute window |
 | `escalateSilence` | worker | Submitted | After review window lapse without action |
 | `resolveDispute` | arbitrator | Disputed | `workerAwardBps` in [0, 10000] |
@@ -273,7 +273,7 @@ The factory owner can freeze or unfreeze individual addresses via `freezeAddress
 
 ### Contract Freeze
 
-The factory owner can freeze or unfreeze individual escrows via `freezeEscrow(escrowId)` / `unfreezeEscrow(escrowId)`. A frozen escrow blocks participant-callable state-changing functions protected by `whenNotFrozen`: `fund`, `fundWithAuthorization`, `depositStake`, `depositVerifierStake`, `submit`, `approveByBuyer`, `castVerifierVote`, `dispute`, `escalateSilence`, `resolveDispute`, `activateBackup`, `submitMilestone`, `approveMilestoneByBuyer`, `castMilestoneVerifierVote`, `disputeMilestone`, `escalateMilestoneSilence`, `resolveMilestoneDispute`, and `abortRemainingMilestones`. Timeout claim paths (`claimTimeoutRefund`, `claimArbitratorTimeout`) remain callable while frozen to preserve fund-recovery liveness. `emergencyResolve` is intentionally excluded from this participant-callable list because it is owner/factory-callable emergency control.
+The factory owner can freeze or unfreeze individual escrows via `freezeEscrow(escrowId)` / `unfreezeEscrow(escrowId)`. A frozen escrow blocks participant-callable state-changing functions protected by `whenNotFrozen`: `fund`, `fundWithAuthorization`, `depositStake`, `depositVerifierStake`, `submit`, `verifyAndApprove`, `approveByBuyer`, `castVerifierVote`, `dispute`, `escalateSilence`, `resolveDispute`, `activateBackup`, `submitMilestone`, `verifyAndApproveMilestone`, `approveMilestoneByBuyer`, `castMilestoneVerifierVote`, `disputeMilestone`, `escalateMilestoneSilence`, `resolveMilestoneDispute`, and `abortRemainingMilestones`. Timeout claim paths (`claimTimeoutRefund`, `claimArbitratorTimeout`) remain callable while frozen to preserve fund-recovery liveness. `emergencyResolve` is intentionally excluded from this participant-callable list because it is owner/factory-callable emergency control.
 
 ### Emergency Resolution
 

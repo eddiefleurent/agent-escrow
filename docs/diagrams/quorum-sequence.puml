@@ -11,8 +11,12 @@ participant "ZK Verifier" as ZK
 Worker -> Escrow: submit(...) / submitMilestone(...)
 Escrow --> Worker: status = Submitted
 
-VA -> Escrow: depositVerifierStake() (optional)
-VB -> Escrow: depositVerifierStake() (optional)
+alt verifierStakePerVerifier > 0
+VA -> Escrow: depositVerifierStake() (required before voting)
+VB -> Escrow: depositVerifierStake() (required before voting)
+else verifierStakePerVerifier == 0
+note over VA,VB: depositVerifierStake() is optional and can be skipped
+end
 
 VA -> Escrow: castVerifierVote(true, reasonURI)\n(or castMilestoneVerifierVote)
 Escrow --> VA: quorumApproveCount = 1

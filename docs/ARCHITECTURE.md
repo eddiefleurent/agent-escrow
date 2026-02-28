@@ -641,7 +641,7 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 | `deposit_stake` | escrow_id | `Escrow.depositStake` |
 | `deposit_verifier_stake` | escrow_id | `Escrow.depositVerifierStake` |
 | `submit_work` | escrow_id, submission_uri, proof_hash (optional), milestone_index (optional) | `Escrow.submit` / `Escrow.submitMilestone` |
-| `verify_and_approve` | escrow_id, proof, milestone_index (optional) | `Escrow.verifyAndApprove` / `Escrow.verifyAndApproveMilestone` |
+| `verify_and_approve` | escrow_id, proof, milestone_index (optional) | `Escrow.verifyAndApprove` / `Escrow.verifyAndApproveMilestone` (casts an approval vote toward quorum; when `verifierStakePerVerifier > 0`, verifier stake requirements still apply before voting) |
 | `cast_verifier_vote` | escrow_id, approve, reason_uri, milestone_index (optional) | `Escrow.castVerifierVote` / `Escrow.castMilestoneVerifierVote` |
 | `approve_work` | escrow_id, role, milestone_index (optional) | `Escrow.approveByBuyer` / verifier role maps to quorum vote |
 | `dispute_work` | escrow_id, role, reason_uri, milestone_index (optional) | `Escrow.dispute/castVerifierVote(false)/escalateSilence` / milestone variants |
