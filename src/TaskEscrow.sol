@@ -900,6 +900,7 @@ contract TaskEscrow {
         emit QuorumReached(false, quorumApproveCount, quorumRejectCount);
         _settleVerifierStakes(false);
         _setSingleDisputed(voter, reasonURI, false);
+        _resetQuorumVoteState();
     }
 
     function _setSingleDisputed(address raisedBy, string memory reasonURI, bool emitSilence) internal {

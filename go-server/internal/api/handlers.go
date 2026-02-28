@@ -145,8 +145,8 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "quorum_verifier_count must be between 1 and 7"})
 		return
 	}
-	if len(req.VerifierPanel) != req.QuorumVerifierCount {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "verifier_panel length must equal quorum_verifier_count"})
+	if len(req.VerifierPanel) < req.QuorumVerifierCount {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "verifier_panel length must be at least quorum_verifier_count"})
 		return
 	}
 	if req.QuorumThreshold <= 0 || req.QuorumThreshold > req.QuorumVerifierCount {
@@ -183,6 +183,10 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		ws, ok := new(big.Int).SetString(req.WorkerStake, 10)
 		if !ok {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid worker_stake"})
+			return
+		}
+		if ws.Sign() < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "worker_stake must not be negative"})
 			return
 		}
 		workerStakeVal = ws

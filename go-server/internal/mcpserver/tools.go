@@ -39,7 +39,7 @@ type createEscrowArgs struct {
 	Worker                   string         `json:"worker" jsonschema:"Worker address (0x...). Must be distinct from buyer, verifier panel members, and arbitrator."`
 	VerifierPanel            []string       `json:"verifier_panel" jsonschema:"Verifier panel addresses (1-7 entries). Members must be distinct and must not overlap other roles."`
 	QuorumThreshold          FlexibleString `json:"quorum_threshold" jsonschema:"Votes required to finalize verifier decision (1..quorum_verifier_count)."`
-	QuorumVerifierCount      FlexibleString `json:"quorum_verifier_count" jsonschema:"Number of active verifier panel entries (1..7). Must equal verifier_panel length."`
+	QuorumVerifierCount      FlexibleString `json:"quorum_verifier_count" jsonschema:"Number of active verifier panel entries (1..7). verifier_panel must have at least this many entries."`
 	VerifierStakePerVerifier FlexibleString `json:"verifier_stake_per_verifier,omitempty" jsonschema:"Optional Schelling stake each verifier must deposit before voting; omit or 0 for no verifier stake."`
 	Arbitrator               string         `json:"arbitrator" jsonschema:"Arbitrator address (0x...). Must be distinct from buyer, worker, and all verifier panel members."`
 	Amount                   FlexibleString `json:"amount" jsonschema:"Total amount in wei (ETH) or smallest unit (ERC20)"`
@@ -633,8 +633,8 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 	if quorumThreshold == 0 || quorumThreshold > quorumVerifierCount {
 		return textResult("invalid quorum_threshold: must be 1..quorum_verifier_count"), nil, nil
 	}
-	if len(args.VerifierPanel) != int(quorumVerifierCount) {
-		return textResult("verifier_panel length must equal quorum_verifier_count"), nil, nil
+	if len(args.VerifierPanel) < int(quorumVerifierCount) {
+		return textResult("verifier_panel length must be at least quorum_verifier_count"), nil, nil
 	}
 	var verifierPanel [7]common.Address
 	panelForJSON := make([]string, int(quorumVerifierCount))
