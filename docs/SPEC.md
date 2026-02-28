@@ -295,12 +295,14 @@ V2 records raw outcome counts only. The paper warns that naive implementations a
 ## 9) Economic Parameters
 
 Global (factory-level):
-- `protocolFeeBps` (0-10000) -- snapshotted at escrow creation to prevent governance race conditions mid-task.
+- `protocolFeeBps` (0-10000) -- fee for low-assurance (tier 0) escrows, snapshotted at creation to prevent governance race conditions mid-task.
+- `highAssuranceFeeBps` (0-10000) -- fee for high-assurance (tier 1) escrows, snapshotted at creation. Typically higher than `protocolFeeBps` to reflect the additional verification overhead.
 - `treasury` address -- snapshotted at creation.
 - `complexityFloor` -- minimum escrow amount (in wei or smallest token unit) to justify delegation overhead. Owner-settable via `setComplexityFloor`. `0` means disabled (no minimum). Checked against `p.amount` (total escrow amount) at `createEscrow` time. Rationale (paper §4.3): below a certain complexity floor, transaction costs (gas + protocol fee) exceed the value of the task, rendering delegation infeasible.
 
 Per-escrow:
 - `amount` -- total escrow amount (ETH or ERC20). For milestone escrows, equals sum of all milestone amounts.
+- `serviceTier` -- `0` (low-assurance / optimistic) or `1` (high-assurance / verified). Immutable after creation. Determines which fee is snapshotted and whether buyer-only approval is permitted (see §9a).
 - `workerStake` -- anti-Sybil bond (paper §4.8). `0` means no stake required.
 - `submissionDeadline` -- unix timestamp (single-shot) or per-milestone deadlines.
 - `reviewPeriodSeconds` -- window for approval/rejection after submission.
@@ -310,6 +312,22 @@ Per-escrow:
 Default values: review = 86,400s (24h), dispute = 172,800s (48h).
 
 Rationale (paper §4.3, §4.4): 24h/48h windows balance oversight with capital efficiency. Explicit reject avoids passive acceptance under ambiguity (criticality and accountability). Silence-escalation prevents indefinite lock under asymmetric power/inattention (monitoring and authority gradients).
+
+### 9a) Tiered Service Levels (paper §5.3)
+
+Two service tiers ensure safety does not become a luxury good:
+
+| Tier | Name | Fee Source | Approval Rule |
+|------|------|-----------|---------------|
+| 0 | Low-assurance (optimistic) | `protocolFeeBps` | Buyer **or** verifier can approve |
+| 1 | High-assurance (verified) | `highAssuranceFeeBps` | Verifier **only** can approve; `approveByBuyer` / `approveMilestoneByBuyer` revert with `HighAssuranceRequiresVerifier()` |
+
+**Fee snapshot**: at `createEscrow` time, the factory reads `highAssuranceFeeBps` or `protocolFeeBps` depending on `serviceTier` and writes the result into the escrow's immutable `protocolFeeBpsSnapshot`. Subsequent factory fee changes do not affect existing escrows.
+
+**Invariants**:
+- `serviceTier` is immutable (set in constructor, stored as `uint8`).
+- `createEscrow` reverts with `InvalidServiceTier()` if `serviceTier > 1`.
+- All other escrow behavior (dispute, timeout, settlement math, milestone flows, stake handling) is tier-agnostic -- only the approval gate and fee snapshot differ.
 
 ## 10) Edge Cases
 

@@ -68,6 +68,7 @@ contract TaskEscrow {
     error NoBackupDesignated();
     error FactoryCallbackFailed();
     error Frozen();
+    error HighAssuranceRequiresVerifier();
 
     event EscrowFunded(address indexed buyer, uint256 amount);
     event WorkerStakeDeposited(address indexed worker, uint256 amount);
@@ -96,6 +97,9 @@ contract TaskEscrow {
     event EmergencyUnfrozen();
     event EmergencyResolved(uint16 workerAwardBps);
 
+    // Service tier constants (paper §5.3)
+    uint8 public constant TIER_HIGH_ASSURANCE = 1;
+
     address public immutable factory;
     address public immutable token;
     address public immutable buyer;
@@ -111,6 +115,7 @@ contract TaskEscrow {
     uint16 public immutable protocolFeeBpsSnapshot;
     address public immutable treasurySnapshot;
     uint64 public immutable arbitratorTimeoutSeconds;
+    uint8 public immutable serviceTier;
     address public immutable backupWorker;
     uint64 public immutable backupDeadlineExtension;
 
@@ -155,6 +160,7 @@ contract TaskEscrow {
         address treasurySnapshot;
         uint64 arbitratorTimeoutSeconds;
         address token;
+        uint8 serviceTier;
         address backupWorker;
         uint64 backupDeadlineExtension;
         CreateMilestoneParams[] milestones;
@@ -195,6 +201,7 @@ contract TaskEscrow {
         treasurySnapshot = p.treasurySnapshot;
         arbitratorTimeoutSeconds = p.arbitratorTimeoutSeconds;
         token = p.token;
+        serviceTier = p.serviceTier;
         backupWorker = p.backupWorker;
         backupDeadlineExtension = p.backupDeadlineExtension;
         activeWorker = p.worker;
@@ -357,6 +364,7 @@ contract TaskEscrow {
 
     function approveByBuyer() external nonReentrant whenNotFrozen {
         _requireBuyer();
+        if (serviceTier == TIER_HIGH_ASSURANCE) revert HighAssuranceRequiresVerifier();
         _approve(msg.sender);
     }
 
@@ -504,6 +512,7 @@ contract TaskEscrow {
 
     function approveMilestoneByBuyer(uint8 milestoneIndex) external nonReentrant whenNotFrozen {
         _requireBuyer();
+        if (serviceTier == TIER_HIGH_ASSURANCE) revert HighAssuranceRequiresVerifier();
         _approveMilestone(milestoneIndex, msg.sender);
     }
 

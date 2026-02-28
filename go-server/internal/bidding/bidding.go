@@ -86,6 +86,7 @@ type CreateRFQParams struct {
 	MilestonesJSON           string
 	RequirementsJSON         string
 	RequiredCredentialsJSON  string
+	ServiceTier              int // 0 = low_assurance (default), 1 = high_assurance (paper §5.3)
 	CommitDeadline           int64
 	RevealDeadline           int64
 	ExpiresAt                int64
@@ -183,6 +184,10 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 		return nil, errors.New("invalid arbitrator address")
 	}
 
+	if p.ServiceTier != 0 && p.ServiceTier != 1 {
+		return nil, errors.New("invalid service_tier: must be 0 (low_assurance) or 1 (high_assurance)")
+	}
+
 	if p.WorkerStake == "" {
 		p.WorkerStake = "0"
 	}
@@ -244,6 +249,7 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 		BiddingMode:              "sealed",
 		CommitDeadline:           p.CommitDeadline,
 		RevealDeadline:           p.RevealDeadline,
+		ServiceTier:              p.ServiceTier,
 		ParentEscrowID:           p.ParentEscrowID,
 		Status:                   "open",
 		ExpiresAt:                p.ExpiresAt,
@@ -703,6 +709,7 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 		TaskSpecHash:             specHash,
 		ArbitratorTimeoutSeconds: arbitratorTimeoutSeconds,
 		Token:                    tokenAddr,
+		ServiceTier:              uint8(rfq.ServiceTier), //nolint:gosec // validated 0-1 at RFQ creation
 		Milestones:               milestones,
 	}
 
@@ -753,6 +760,7 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 		MilestoneCount:           milestoneCount,
 		CurrentMilestone:         0,
 		ActiveWorker:             bid.Bidder,
+		ServiceTier:              rfq.ServiceTier,
 		ParentEscrowID:           rfq.ParentEscrowID,
 	})
 	if err != nil {

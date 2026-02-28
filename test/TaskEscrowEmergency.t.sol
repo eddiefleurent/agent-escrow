@@ -25,7 +25,7 @@ contract TaskEscrowEmergencyTest is Test {
     uint64 internal constant ARB_TIMEOUT = 7 days;
 
     function setUp() public {
-        factory = new TaskEscrowFactory(FEE_BPS, treasury, owner);
+        factory = new TaskEscrowFactory(FEE_BPS, FEE_BPS, treasury, owner);
 
         vm.prank(nonOwner);
         (, address escrowAddr) = factory.createEscrow(
@@ -42,6 +42,7 @@ contract TaskEscrowEmergencyTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
@@ -67,6 +68,7 @@ contract TaskEscrowEmergencyTest is Test {
             taskSpecHash: keccak256("spec"),
             arbitratorTimeoutSeconds: ARB_TIMEOUT,
             token: address(0),
+            serviceTier: 0,
             backupWorker: address(0),
             backupDeadlineExtension: 0,
             milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)

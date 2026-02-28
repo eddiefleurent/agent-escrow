@@ -194,7 +194,7 @@ contract TaskEscrowEIP3009Test is Test {
 
     function setUp() public {
         (buyer, buyerPk) = makeAddrAndKey("buyer");
-        factory = new TaskEscrowFactory(FEE_BPS, treasury, owner);
+        factory = new TaskEscrowFactory(FEE_BPS, FEE_BPS, treasury, owner);
         usdc = new MockEIP3009Token("USD Coin", "USDC", 6);
         usdc.mint(buyer, 10_000e6);
     }
@@ -214,6 +214,7 @@ contract TaskEscrowEIP3009Test is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(usdc),
+                serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
@@ -237,6 +238,7 @@ contract TaskEscrowEIP3009Test is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
@@ -372,6 +374,7 @@ contract TaskEscrowEIP3009Test is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(feeToken),
+                serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
@@ -435,6 +438,7 @@ contract TaskEscrowEIP3009Test is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(usdc),
+                serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
                 milestones: ms

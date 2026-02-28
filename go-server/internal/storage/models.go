@@ -36,6 +36,7 @@ type Escrow struct {
 	ActiveWorker             string `json:"active_worker"`
 	BackupActivated          bool   `json:"backup_activated"`
 	Frozen                   bool   `json:"frozen"`
+	ServiceTier              int    `json:"service_tier"` // 0 = low_assurance, 1 = high_assurance (paper §5.3)
 	ParentEscrowID           *int64 `json:"parent_escrow_id,omitempty"`
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
@@ -111,6 +112,7 @@ type RFQ struct {
 	BiddingMode              string    `json:"bidding_mode"`
 	CommitDeadline           int64     `json:"commit_deadline"`
 	RevealDeadline           int64     `json:"reveal_deadline"`
+	ServiceTier              int       `json:"service_tier"` // 0 = low_assurance, 1 = high_assurance (paper §5.3)
 	ParentEscrowID           *int64    `json:"parent_escrow_id,omitempty"`
 	Status                   string    `json:"status"`
 	ExpiresAt                int64     `json:"expires_at"`

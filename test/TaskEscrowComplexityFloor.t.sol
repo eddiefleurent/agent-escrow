@@ -56,7 +56,7 @@ contract TaskEscrowComplexityFloorTest is Test {
     uint256 internal constant FLOOR = 0.01 ether;
 
     function setUp() public {
-        factory = new TaskEscrowFactory(FEE_BPS, treasury, factoryOwner);
+        factory = new TaskEscrowFactory(FEE_BPS, FEE_BPS, treasury, factoryOwner);
         token = new MockERC20Floor();
     }
 
@@ -74,6 +74,7 @@ contract TaskEscrowComplexityFloorTest is Test {
             taskSpecHash: keccak256("spec"),
             arbitratorTimeoutSeconds: ARB_TIMEOUT,
             token: address(0),
+            serviceTier: 0,
             backupWorker: address(0),
             backupDeadlineExtension: 0,
             milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)

@@ -13,10 +13,14 @@ contract DeployFactory is Script {
         require(rawFeeBps <= 10_000, "PROTOCOL_FEE_BPS exceeds 10000");
         uint16 protocolFeeBps = uint16(rawFeeBps);
 
+        uint256 rawHighFeeBps = vm.envOr("HIGH_ASSURANCE_FEE_BPS", uint256(0));
+        require(rawHighFeeBps <= 10_000, "HIGH_ASSURANCE_FEE_BPS exceeds 10000");
+        uint16 highAssuranceFeeBps = uint16(rawHighFeeBps);
+
         uint256 rawFloor = vm.envOr("COMPLEXITY_FLOOR", uint256(0));
 
         vm.startBroadcast(deployerPrivateKey);
-        factory = new TaskEscrowFactory(protocolFeeBps, treasury, owner);
+        factory = new TaskEscrowFactory(protocolFeeBps, highAssuranceFeeBps, treasury, owner);
         if (rawFloor > 0) {
             factory.setComplexityFloor(rawFloor);
         }

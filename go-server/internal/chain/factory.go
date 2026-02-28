@@ -28,6 +28,7 @@ type CreateEscrowParams struct {
 	TaskSpecHash             [32]byte
 	ArbitratorTimeoutSeconds uint64
 	Token                    common.Address // address(0) for ETH, non-zero for ERC20
+	ServiceTier              uint8          // 0 = low_assurance (optimistic), 1 = high_assurance (verifier required)
 	Milestones               []MilestoneParam
 	BackupWorker             common.Address // Optional backup agent; address(0) means none
 	BackupDeadlineExtension  uint64         // Seconds added to deadline when backup activates
@@ -55,6 +56,7 @@ type createParamsTuple struct {
 	TaskSpecHash             [32]byte
 	ArbitratorTimeoutSeconds uint64
 	Token                    common.Address
+	ServiceTier              uint8
 	BackupWorker             common.Address
 	BackupDeadlineExtension  uint64
 	Milestones               []milestoneTuple
@@ -82,6 +84,7 @@ func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p Cre
 		TaskSpecHash:             p.TaskSpecHash,
 		ArbitratorTimeoutSeconds: p.ArbitratorTimeoutSeconds,
 		Token:                    p.Token,
+		ServiceTier:              p.ServiceTier,
 		BackupWorker:             p.BackupWorker,
 		BackupDeadlineExtension:  p.BackupDeadlineExtension,
 		Milestones:               milestones,
