@@ -84,15 +84,23 @@ func createEscrowOn(ctx context.Context, q dbExecer, e *Escrow) (*Escrow, error)
 	if activeWorker == "" {
 		activeWorker = e.Worker
 	}
+	zkVerifier := e.ZKVerifier
+	if zkVerifier == "" {
+		zkVerifier = "0x0000000000000000000000000000000000000000"
+	}
+	circuitID := e.CircuitID
+	if circuitID == "" {
+		circuitID = "0x0000000000000000000000000000000000000000000000000000000000000000"
+	}
 	res, err := q.ExecContext(ctx,
-		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, service_tier, parent_escrow_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, service_tier, zk_verifier, circuit_id, parent_escrow_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.TaskID, e.ChainID, e.FactoryAddress, e.EscrowAddress, e.EscrowID,
 		e.Buyer, e.Worker, e.Verifier, e.Arbitrator, e.Amount, e.WorkerStake, e.Token, e.Status,
 		e.SubmissionDeadline, e.ReviewPeriodSeconds, e.DisputePeriodSeconds, e.ArbitratorTimeoutSeconds,
 		msCount, e.CurrentMilestone,
 		e.BackupWorker, e.BackupDeadlineExtension, activeWorker, boolToInt(e.BackupActivated), boolToInt(e.Frozen),
-		e.ServiceTier, e.ParentEscrowID,
+		e.ServiceTier, zkVerifier, circuitID, e.ParentEscrowID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert escrow: %w", err)
@@ -117,7 +125,7 @@ func (d *DB) CreateEscrowTx(ctx context.Context, tx *sql.Tx, e *Escrow) (*Escrow
 	return createEscrowOn(ctx, tx, e)
 }
 
-const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, service_tier, parent_escrow_id, created_at, updated_at`
+const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, service_tier, zk_verifier, circuit_id, parent_escrow_id, created_at, updated_at`
 
 func scanEscrow(scanner interface{ Scan(...any) error }) (*Escrow, error) {
 	e := &Escrow{}
@@ -129,7 +137,7 @@ func scanEscrow(scanner interface{ Scan(...any) error }) (*Escrow, error) {
 		&e.SubmissionDeadline, &e.ReviewPeriodSeconds, &e.DisputePeriodSeconds, &e.ArbitratorTimeoutSeconds,
 		&e.MilestoneCount, &e.CurrentMilestone,
 		&e.BackupWorker, &e.BackupDeadlineExtension, &e.ActiveWorker, &backupActivatedInt, &frozenInt,
-		&e.ServiceTier, &parentEscrowID,
+		&e.ServiceTier, &e.ZKVerifier, &e.CircuitID, &parentEscrowID,
 		&createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
@@ -277,10 +285,13 @@ func (d *DB) UpdateEscrowMilestoneProgress(ctx context.Context, id int64, curren
 
 // Submission queries
 
-func (d *DB) CreateSubmission(ctx context.Context, escrowID int64, submissionHash, submissionURI string) (*Submission, error) {
+func (d *DB) CreateSubmission(ctx context.Context, escrowID int64, submissionHash, submissionURI, proofHash string) (*Submission, error) {
+	if proofHash == "" {
+		proofHash = "0x0000000000000000000000000000000000000000000000000000000000000000"
+	}
 	res, err := d.db.ExecContext(ctx,
-		`INSERT INTO submissions (escrow_id, submission_hash, submission_uri) VALUES (?, ?, ?)`,
-		escrowID, submissionHash, submissionURI,
+		`INSERT INTO submissions (escrow_id, submission_hash, submission_uri, proof_hash) VALUES (?, ?, ?, ?)`,
+		escrowID, submissionHash, submissionURI, proofHash,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert submission: %w", err)
@@ -292,8 +303,8 @@ func (d *DB) CreateSubmission(ctx context.Context, escrowID int64, submissionHas
 	s := &Submission{}
 	var submittedAt string
 	err = d.db.QueryRowContext(ctx,
-		`SELECT id, escrow_id, submission_hash, submission_uri, submitted_at FROM submissions WHERE id = ?`, id,
-	).Scan(&s.ID, &s.EscrowID, &s.SubmissionHash, &s.SubmissionURI, &submittedAt)
+		`SELECT id, escrow_id, submission_hash, submission_uri, proof_hash, submitted_at FROM submissions WHERE id = ?`, id,
+	).Scan(&s.ID, &s.EscrowID, &s.SubmissionHash, &s.SubmissionURI, &s.ProofHash, &submittedAt)
 	if err != nil {
 		return nil, fmt.Errorf("get submission: %w", err)
 	}
@@ -306,7 +317,7 @@ func (d *DB) CreateSubmission(ctx context.Context, escrowID int64, submissionHas
 
 func (d *DB) GetSubmissionsByEscrow(ctx context.Context, escrowID int64) ([]*Submission, error) {
 	rows, err := d.db.QueryContext(ctx,
-		`SELECT id, escrow_id, submission_hash, submission_uri, submitted_at FROM submissions WHERE escrow_id = ? ORDER BY id`, escrowID,
+		`SELECT id, escrow_id, submission_hash, submission_uri, proof_hash, submitted_at FROM submissions WHERE escrow_id = ? ORDER BY id`, escrowID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list submissions: %w", err)
@@ -317,7 +328,7 @@ func (d *DB) GetSubmissionsByEscrow(ctx context.Context, escrowID int64) ([]*Sub
 	for rows.Next() {
 		s := &Submission{}
 		var submittedAt string
-		if err := rows.Scan(&s.ID, &s.EscrowID, &s.SubmissionHash, &s.SubmissionURI, &submittedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.EscrowID, &s.SubmissionHash, &s.SubmissionURI, &s.ProofHash, &submittedAt); err != nil {
 			return nil, fmt.Errorf("scan submission: %w", err)
 		}
 		s.SubmittedAt, err = parseSQLiteTime(submittedAt)
@@ -1237,7 +1248,7 @@ func (d *DB) CreateMilestoneTx(ctx context.Context, tx *sql.Tx, m *MilestoneReco
 }
 
 const milestoneColumns = `id, escrow_id, milestone_index, amount, submission_deadline, status,
-        submission_hash, submission_uri, submitted_at, approved_at, disputed_at,
+        submission_hash, submission_uri, proof_hash, submitted_at, approved_at, disputed_at,
         dispute_reason_uri, created_at, updated_at`
 
 func scanMilestone(scanner interface{ Scan(...any) error }) (*MilestoneRecord, error) {
@@ -1245,7 +1256,7 @@ func scanMilestone(scanner interface{ Scan(...any) error }) (*MilestoneRecord, e
 	var createdAt, updatedAt string
 	var submittedAt, approvedAt, disputedAt sql.NullString
 	err := scanner.Scan(&m.ID, &m.EscrowID, &m.MilestoneIndex, &m.Amount, &m.SubmissionDeadline, &m.Status,
-		&m.SubmissionHash, &m.SubmissionURI, &submittedAt, &approvedAt, &disputedAt,
+		&m.SubmissionHash, &m.SubmissionURI, &m.ProofHash, &submittedAt, &approvedAt, &disputedAt,
 		&m.DisputeReasonURI, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
@@ -1323,12 +1334,15 @@ func (d *DB) UpdateMilestoneStatus(ctx context.Context, escrowID int64, mileston
 	return nil
 }
 
-func (d *DB) UpdateMilestoneSubmission(ctx context.Context, escrowID int64, milestoneIndex int, hash, uri string) error {
+func (d *DB) UpdateMilestoneSubmission(ctx context.Context, escrowID int64, milestoneIndex int, hash, uri, proofHash string) error {
+	if proofHash == "" {
+		proofHash = "0x0000000000000000000000000000000000000000000000000000000000000000"
+	}
 	res, err := d.db.ExecContext(ctx,
-		`UPDATE milestones SET submission_hash = ?, submission_uri = ?, submitted_at = datetime('now'),
+		`UPDATE milestones SET submission_hash = ?, submission_uri = ?, proof_hash = ?, submitted_at = datetime('now'),
 		        status = 'submitted', updated_at = datetime('now')
 		 WHERE escrow_id = ? AND milestone_index = ?`,
-		hash, uri, escrowID, milestoneIndex,
+		hash, uri, proofHash, escrowID, milestoneIndex,
 	)
 	if err != nil {
 		return fmt.Errorf("UpdateMilestoneSubmission: %w", err)

@@ -56,6 +56,13 @@ type VerificationArtifact struct {
 	ProofProtocol     string `json:"proof_protocol,omitempty"`
 }
 
+const (
+	VerificationArtifactUnitTestLog  = "unit_test_log"
+	VerificationArtifactManualReview = "manual_review"
+	// VerificationArtifactZKSnarkTrace is a zk proof trace artifact for high-assurance verification flows.
+	VerificationArtifactZKSnarkTrace = "zk_snark_trace"
+)
+
 // JSON-RPC 2.0 envelope types for the POST /a2a endpoint.
 
 type JSONRPCRequest struct {

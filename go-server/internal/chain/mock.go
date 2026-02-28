@@ -46,6 +46,7 @@ type MockClient struct {
 	DepositStakeErr        error
 	ApproveERC20Err        error
 	SubmitErr              error
+	VerifyAndApproveErr    error
 	ApproveByBuyerErr      error
 	ApproveByVerifierErr   error
 	RejectByVerifierErr    error
@@ -59,6 +60,7 @@ type MockClient struct {
 
 	// Milestone-specific error fields
 	SubmitMilestoneErr              error
+	VerifyAndApproveMilestoneErr    error
 	ApproveMilestoneBuyerErr        error
 	ApproveMilestoneVerifierErr     error
 	RejectMilestoneVerifierErr      error
@@ -228,13 +230,23 @@ func (m *MockClient) ApproveERC20(_ context.Context, tokenAddr common.Address, s
 	return makeFakeTx(), nil
 }
 
-func (m *MockClient) Submit(_ context.Context, addr common.Address, _ [32]byte, _ string) (*types.Transaction, error) {
+func (m *MockClient) Submit(_ context.Context, addr common.Address, _ [32]byte, _ string, _ [32]byte) (*types.Transaction, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.SubmitErr != nil {
 		return nil, m.SubmitErr
 	}
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "submit", To: addr})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) VerifyAndApprove(_ context.Context, addr common.Address, _ []byte) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.VerifyAndApproveErr != nil {
+		return nil, m.VerifyAndApproveErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "verifyAndApprove", To: addr})
 	return makeFakeTx(), nil
 }
 
@@ -324,13 +336,23 @@ func (m *MockClient) Status(_ context.Context, _ common.Address) (uint8, error) 
 	return m.StatusVal, m.StatusErr
 }
 
-func (m *MockClient) SubmitMilestone(_ context.Context, addr common.Address, idx uint8, _ [32]byte, _ string) (*types.Transaction, error) {
+func (m *MockClient) SubmitMilestone(_ context.Context, addr common.Address, idx uint8, _ [32]byte, _ string, _ [32]byte) (*types.Transaction, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.SubmitMilestoneErr != nil {
 		return nil, m.SubmitMilestoneErr
 	}
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "submitMilestone", To: addr})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) VerifyAndApproveMilestone(_ context.Context, addr common.Address, _ uint8, _ []byte) (*types.Transaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.VerifyAndApproveMilestoneErr != nil {
+		return nil, m.VerifyAndApproveMilestoneErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "verifyAndApproveMilestone", To: addr})
 	return makeFakeTx(), nil
 }
 
@@ -500,7 +522,7 @@ func MakeEscrowCreatedReceipt(escrowID int64, escrowAddr, buyer common.Address) 
 	addrBytes := common.BytesToHash(escrowAddr.Bytes())
 	buyerBytes := common.BytesToHash(buyer.Bytes())
 
-	// Non-indexed: worker, verifier, arbitrator, taskSpecHash, token, serviceTier
+	// Non-indexed: worker, verifier, arbitrator, taskSpecHash, token, serviceTier, zkVerifier, circuitId
 	nonIndexed, _ := FactoryABI.Events["EscrowCreated"].Inputs.NonIndexed().Pack(
 		common.HexToAddress("0x2222222222222222222222222222222222222222"),
 		common.HexToAddress("0x3333333333333333333333333333333333333333"),
@@ -508,6 +530,8 @@ func MakeEscrowCreatedReceipt(escrowID int64, escrowAddr, buyer common.Address) 
 		[32]byte{0x01},
 		common.Address{},
 		uint8(0),
+		common.Address{},
+		[32]byte{},
 	)
 
 	return &types.Receipt{

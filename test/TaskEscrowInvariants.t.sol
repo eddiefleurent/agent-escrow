@@ -34,7 +34,7 @@ contract TaskEscrowHandler is Test {
 
     function submit(bytes32 hash) external {
         vm.prank(worker);
-        try escrow.submit(hash, "ipfs://submission") {} catch {}
+        try escrow.submit(hash, "ipfs://submission", bytes32(0)) {} catch {}
     }
 
     function approveByBuyer() external {
@@ -127,6 +127,8 @@ contract TaskEscrowInvariantsTest is StdInvariant, Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -138,7 +140,7 @@ contract TaskEscrowInvariantsTest is StdInvariant, Test {
         vm.prank(buyer);
         escrow.fund{value: AMOUNT}();
         vm.prank(worker);
-        escrow.submit(keccak256("submission"), "ipfs://result");
+        escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
 
         baselineSystemSum = buyer.balance + worker.balance + treasury.balance + address(escrow).balance;
 
@@ -164,7 +166,7 @@ contract TaskEscrowInvariantsTest is StdInvariant, Test {
 
         vm.expectRevert(TaskEscrow.InvalidState.selector);
         vm.prank(worker);
-        escrow.submit(keccak256("late-submission"), "ipfs://late");
+        escrow.submit(keccak256("late-submission"), "ipfs://late", bytes32(0));
 
         vm.expectRevert(TaskEscrow.InvalidState.selector);
         vm.prank(buyer);

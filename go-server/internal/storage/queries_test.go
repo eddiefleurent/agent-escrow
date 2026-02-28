@@ -227,12 +227,15 @@ func TestSubmissions(t *testing.T) {
 		t.Fatalf("setup escrow: %v", err)
 	}
 
-	sub, err := db.CreateSubmission(ctx, escrow.ID, "0xhash123", "ipfs://result")
+	sub, err := db.CreateSubmission(ctx, escrow.ID, "0xhash123", "ipfs://result", "0xproof123")
 	if err != nil {
 		t.Fatalf("create submission: %v", err)
 	}
 	if sub.SubmissionHash != "0xhash123" {
 		t.Fatalf("expected hash '0xhash123', got %q", sub.SubmissionHash)
+	}
+	if sub.ProofHash != "0xproof123" {
+		t.Fatalf("expected proof hash '0xproof123', got %q", sub.ProofHash)
 	}
 
 	subs, err := db.GetSubmissionsByEscrow(ctx, escrow.ID)

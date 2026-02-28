@@ -63,6 +63,8 @@ contract TaskEscrowMilestoneTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: _milestoneParams3()
             })
         );
@@ -76,7 +78,9 @@ contract TaskEscrowMilestoneTest is Test {
 
     function _submitMilestone(TaskEscrow e, uint8 idx) internal {
         vm.prank(worker);
-        e.submitMilestone(idx, keccak256(abi.encodePacked("ms-", idx)), string(abi.encodePacked("ipfs://ms-", idx)));
+        e.submitMilestone(
+            idx, keccak256(abi.encodePacked("ms-", idx)), string(abi.encodePacked("ipfs://ms-", idx)), bytes32(0)
+        );
     }
 
     function _approveMilestone(TaskEscrow e, uint8 idx) internal {
@@ -204,7 +208,7 @@ contract TaskEscrowMilestoneTest is Test {
 
         vm.expectRevert(TaskEscrow.Unauthorized.selector);
         vm.prank(buyer);
-        e.submitMilestone(0, keccak256("test"), "ipfs://test");
+        e.submitMilestone(0, keccak256("test"), "ipfs://test", bytes32(0));
     }
 
     function testMilestoneApproveOnlyBuyerOrVerifier() public {
@@ -261,7 +265,7 @@ contract TaskEscrowMilestoneTest is Test {
 
         vm.expectRevert(TaskEscrow.InvalidMilestoneIndex.selector);
         vm.prank(worker);
-        e.submitMilestone(1, keccak256("test"), "ipfs://test");
+        e.submitMilestone(1, keccak256("test"), "ipfs://test", bytes32(0));
     }
 
     // ── Cannot use V1 functions on multi-milestone escrow ──
@@ -275,17 +279,17 @@ contract TaskEscrowMilestoneTest is Test {
         // escrows, callers should use submitMilestone(). Verify that V1 submit
         // does NOT advance milestone state for multi-milestone escrows.
         vm.prank(worker);
-        e.submit(keccak256("v1-sub"), "ipfs://v1-sub");
+        e.submit(keccak256("v1-sub"), "ipfs://v1-sub", bytes32(0));
 
         // Escrow-level status transitions to Submitted
         assertEq(uint256(e.status()), uint256(TaskEscrow.Status.Submitted));
 
         // Milestone 0 should remain Pending because _syncMs0Submit only fires when milestoneCount == 1
-        (,,,,,,,, TaskEscrow.MilestoneStatus ms0Status,) = e.milestones(0);
+        (,,,,,,,,, TaskEscrow.MilestoneStatus ms0Status,) = e.milestones(0);
         assertEq(uint256(ms0Status), uint256(TaskEscrow.MilestoneStatus.Pending));
 
         // Milestone 1 and 2 also remain Pending
-        (,,,,,,,, TaskEscrow.MilestoneStatus ms1Status,) = e.milestones(1);
+        (,,,,,,,,, TaskEscrow.MilestoneStatus ms1Status,) = e.milestones(1);
         assertEq(uint256(ms1Status), uint256(TaskEscrow.MilestoneStatus.Pending));
     }
 
@@ -375,6 +379,8 @@ contract TaskEscrowMilestoneTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: ms
             })
         );
@@ -387,7 +393,7 @@ contract TaskEscrowMilestoneTest is Test {
         e.fund{value: 1 ether}();
 
         vm.prank(worker);
-        e.submit(keccak256("submission"), "ipfs://result");
+        e.submit(keccak256("submission"), "ipfs://result", bytes32(0));
 
         uint256 workerBefore = worker.balance;
         uint256 treasuryBefore = treasury.balance;
@@ -431,7 +437,7 @@ contract TaskEscrowMilestoneTest is Test {
         vm.prank(verifier);
         e.approveMilestoneByVerifier(0);
 
-        (,,,,,,,, TaskEscrow.MilestoneStatus msStatus,) = e.milestones(0);
+        (,,,,,,,,, TaskEscrow.MilestoneStatus msStatus,) = e.milestones(0);
         assertEq(uint256(msStatus), uint256(TaskEscrow.MilestoneStatus.Approved));
     }
 
@@ -443,7 +449,7 @@ contract TaskEscrowMilestoneTest is Test {
         vm.prank(verifier);
         e.rejectMilestoneByVerifier(0, "ipfs://reject");
 
-        (,,,,,,,, TaskEscrow.MilestoneStatus msStatus,) = e.milestones(0);
+        (,,,,,,,,, TaskEscrow.MilestoneStatus msStatus,) = e.milestones(0);
         assertEq(uint256(msStatus), uint256(TaskEscrow.MilestoneStatus.Disputed));
     }
 
@@ -458,7 +464,7 @@ contract TaskEscrowMilestoneTest is Test {
         vm.prank(worker);
         e.escalateMilestoneSilence(0, "ipfs://silence");
 
-        (,,,,,,,, TaskEscrow.MilestoneStatus msStatus,) = e.milestones(0);
+        (,,,,,,,,, TaskEscrow.MilestoneStatus msStatus,) = e.milestones(0);
         assertEq(uint256(msStatus), uint256(TaskEscrow.MilestoneStatus.Disputed));
     }
 
@@ -490,6 +496,8 @@ contract TaskEscrowMilestoneTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: ms
             })
         );
@@ -522,6 +530,8 @@ contract TaskEscrowMilestoneTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: ms
             })
         );
@@ -555,6 +565,8 @@ contract TaskEscrowMilestoneTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: ms
             })
         );
@@ -624,6 +636,8 @@ contract TaskEscrowMilestoneTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: ms
             })
         );

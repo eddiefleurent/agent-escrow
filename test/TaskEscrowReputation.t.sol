@@ -49,6 +49,8 @@ contract TaskEscrowReputationTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -74,6 +76,8 @@ contract TaskEscrowReputationTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -99,6 +103,8 @@ contract TaskEscrowReputationTest is Test {
                 serviceTier: 0,
                 backupWorker: backupWorker,
                 backupDeadlineExtension: 3 days,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -113,7 +119,7 @@ contract TaskEscrowReputationTest is Test {
         vm.prank(buyer);
         escrow.fund{value: AMOUNT}();
         vm.prank(worker);
-        escrow.submit(keccak256("sub"), "ipfs://sub");
+        escrow.submit(keccak256("sub"), "ipfs://sub", bytes32(0));
         vm.prank(buyer);
         escrow.approveByBuyer();
 
@@ -134,7 +140,7 @@ contract TaskEscrowReputationTest is Test {
         vm.prank(buyer);
         escrow.fund{value: AMOUNT}();
         vm.prank(worker);
-        escrow.submit(keccak256("sub"), "ipfs://sub");
+        escrow.submit(keccak256("sub"), "ipfs://sub", bytes32(0));
         vm.prank(verifier);
         escrow.approveByVerifier();
 
@@ -152,7 +158,7 @@ contract TaskEscrowReputationTest is Test {
         vm.prank(buyer);
         escrow.fund{value: AMOUNT}();
         vm.prank(worker);
-        escrow.submit(keccak256("sub"), "ipfs://sub");
+        escrow.submit(keccak256("sub"), "ipfs://sub", bytes32(0));
         vm.prank(buyer);
         escrow.dispute("ipfs://reason");
         vm.prank(arbitrator);
@@ -199,7 +205,7 @@ contract TaskEscrowReputationTest is Test {
         vm.prank(buyer);
         escrow.fund{value: AMOUNT}();
         vm.prank(worker);
-        escrow.submit(keccak256("sub"), "ipfs://sub");
+        escrow.submit(keccak256("sub"), "ipfs://sub", bytes32(0));
         vm.prank(buyer);
         escrow.dispute("ipfs://reason");
 
@@ -252,7 +258,7 @@ contract TaskEscrowReputationTest is Test {
 
         // Backup worker submits and gets approved
         vm.prank(backupWorker);
-        escrow.submit(keccak256("backup-sub"), "ipfs://backup-sub");
+        escrow.submit(keccak256("backup-sub"), "ipfs://backup-sub", bytes32(0));
         vm.prank(buyer);
         escrow.approveByBuyer();
 
@@ -297,7 +303,7 @@ contract TaskEscrowReputationTest is Test {
         vm.prank(buyer);
         escrow1.fund{value: AMOUNT}();
         vm.prank(worker);
-        escrow1.submit(keccak256("sub1"), "ipfs://sub1");
+        escrow1.submit(keccak256("sub1"), "ipfs://sub1", bytes32(0));
         vm.prank(buyer);
         escrow1.approveByBuyer();
 
@@ -306,7 +312,7 @@ contract TaskEscrowReputationTest is Test {
         vm.prank(buyer);
         escrow2.fund{value: AMOUNT}();
         vm.prank(worker);
-        escrow2.submit(keccak256("sub2"), "ipfs://sub2");
+        escrow2.submit(keccak256("sub2"), "ipfs://sub2", bytes32(0));
         vm.prank(verifier);
         escrow2.approveByVerifier();
 
@@ -315,7 +321,7 @@ contract TaskEscrowReputationTest is Test {
         vm.prank(buyer);
         escrow3.fund{value: AMOUNT}();
         vm.prank(worker);
-        escrow3.submit(keccak256("sub3"), "ipfs://sub3");
+        escrow3.submit(keccak256("sub3"), "ipfs://sub3", bytes32(0));
         vm.prank(buyer);
         escrow3.dispute("ipfs://reason");
         vm.prank(arbitrator);
@@ -339,7 +345,7 @@ contract TaskEscrowReputationTest is Test {
         vm.prank(buyer);
         escrow.fund{value: AMOUNT}();
         vm.prank(worker);
-        escrow.submit(keccak256("sub"), "ipfs://sub");
+        escrow.submit(keccak256("sub"), "ipfs://sub", bytes32(0));
 
         vm.expectEmit(true, true, false, true, address(factory));
         emit TaskEscrowFactory.OutcomeRecorded(escrowId, worker, "worker", "completed");
@@ -379,6 +385,8 @@ contract TaskEscrowReputationTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: ms
             })
         );
@@ -389,13 +397,13 @@ contract TaskEscrowReputationTest is Test {
 
         // Approve milestone 0
         vm.prank(worker);
-        escrow.submitMilestone(0, keccak256("ms0"), "ipfs://ms0");
+        escrow.submitMilestone(0, keccak256("ms0"), "ipfs://ms0", bytes32(0));
         vm.prank(buyer);
         escrow.approveMilestoneByBuyer(0);
 
         // Approve milestone 1
         vm.prank(worker);
-        escrow.submitMilestone(1, keccak256("ms1"), "ipfs://ms1");
+        escrow.submitMilestone(1, keccak256("ms1"), "ipfs://ms1", bytes32(0));
         vm.prank(buyer);
         escrow.approveMilestoneByBuyer(1);
 
@@ -434,6 +442,8 @@ contract TaskEscrowReputationTest is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: ms
             })
         );
@@ -444,7 +454,7 @@ contract TaskEscrowReputationTest is Test {
 
         // Approve milestone 0
         vm.prank(worker);
-        escrow.submitMilestone(0, keccak256("ms0"), "ipfs://ms0");
+        escrow.submitMilestone(0, keccak256("ms0"), "ipfs://ms0", bytes32(0));
         vm.prank(buyer);
         escrow.approveMilestoneByBuyer(0);
 

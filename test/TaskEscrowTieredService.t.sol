@@ -47,6 +47,8 @@ contract TaskEscrowTieredServiceTest is Test {
                 serviceTier: tier,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -57,7 +59,7 @@ contract TaskEscrowTieredServiceTest is Test {
         vm.prank(buyer);
         e.fund{value: AMOUNT}();
         vm.prank(worker);
-        e.submit(keccak256("submission"), "ipfs://submission");
+        e.submit(keccak256("submission"), "ipfs://submission", bytes32(0));
     }
 
     // ── Factory tier constants ──
@@ -123,6 +125,8 @@ contract TaskEscrowTieredServiceTest is Test {
                 serviceTier: 2,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -199,6 +203,8 @@ contract TaskEscrowTieredServiceTest is Test {
                 serviceTier: 1,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: ms
             })
         );
@@ -208,7 +214,7 @@ contract TaskEscrowTieredServiceTest is Test {
         e.fund{value: AMOUNT}();
 
         vm.prank(worker);
-        e.submitMilestone(0, keccak256("ms0"), "ipfs://ms0");
+        e.submitMilestone(0, keccak256("ms0"), "ipfs://ms0", bytes32(0));
 
         vm.prank(buyer);
         vm.expectRevert(TaskEscrow.HighAssuranceRequiresVerifier.selector);
@@ -241,6 +247,8 @@ contract TaskEscrowTieredServiceTest is Test {
                 serviceTier: 1,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: ms
             })
         );
@@ -250,12 +258,12 @@ contract TaskEscrowTieredServiceTest is Test {
         e.fund{value: AMOUNT}();
 
         vm.prank(worker);
-        e.submitMilestone(0, keccak256("ms0"), "ipfs://ms0");
+        e.submitMilestone(0, keccak256("ms0"), "ipfs://ms0", bytes32(0));
 
         vm.prank(verifier);
         e.approveMilestoneByVerifier(0);
 
-        (,,,,,,,, TaskEscrow.MilestoneStatus msStatus,) = e.milestones(0);
+        (,,,,,,,,, TaskEscrow.MilestoneStatus msStatus,) = e.milestones(0);
         assertEq(uint8(msStatus), uint8(TaskEscrow.MilestoneStatus.Approved));
     }
 
@@ -294,7 +302,17 @@ contract TaskEscrowTieredServiceTest is Test {
     function testEscrowCreatedEventIncludesTier() public {
         vm.expectEmit(true, false, true, false);
         emit TaskEscrowFactory.EscrowCreated(
-            0, address(0), buyer, worker, verifier, arbitrator, keccak256("spec-event"), address(0), 1
+            0,
+            address(0),
+            buyer,
+            worker,
+            verifier,
+            arbitrator,
+            keccak256("spec-event"),
+            address(0),
+            1,
+            address(0),
+            bytes32(0)
         );
 
         _createEscrow(1);

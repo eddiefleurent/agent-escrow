@@ -176,6 +176,8 @@ contract TaskEscrowERC20Test is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -192,7 +194,7 @@ contract TaskEscrowERC20Test is Test {
     function _fundAndSubmit(TaskEscrow escrow) internal {
         _fundERC20Escrow(escrow);
         vm.prank(worker);
-        escrow.submit(keccak256("submission"), "ipfs://result");
+        escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
     }
 
     // ── Token field ──
@@ -220,6 +222,8 @@ contract TaskEscrowERC20Test is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -480,6 +484,8 @@ contract TaskEscrowERC20Test is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -511,7 +517,7 @@ contract TaskEscrowERC20Test is Test {
         assertTrue(escrow.workerStaked());
 
         vm.prank(worker);
-        escrow.submit(keccak256("submission"), "ipfs://result");
+        escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
 
         uint256 workerBefore = usdc.balanceOf(worker);
         uint256 treasuryBefore = usdc.balanceOf(treasury);
@@ -532,7 +538,7 @@ contract TaskEscrowERC20Test is Test {
 
         vm.expectRevert(TaskEscrow.StakeNotDeposited.selector);
         vm.prank(worker);
-        escrow.submit(keccak256("submission"), "ipfs://result");
+        escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
     }
 
     function testERC20WorkerStakeRejectsETH() public {
@@ -556,7 +562,7 @@ contract TaskEscrowERC20Test is Test {
         vm.startPrank(worker);
         usdc.approve(address(escrow), stakeAmount);
         escrow.depositStake();
-        escrow.submit(keccak256("submission"), "ipfs://result");
+        escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
         vm.stopPrank();
 
         vm.prank(buyer);
@@ -583,7 +589,7 @@ contract TaskEscrowERC20Test is Test {
         vm.startPrank(worker);
         usdc.approve(address(escrow), stakeAmount);
         escrow.depositStake();
-        escrow.submit(keccak256("submission"), "ipfs://result");
+        escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
         vm.stopPrank();
 
         vm.prank(buyer);
@@ -632,6 +638,8 @@ contract TaskEscrowERC20Test is Test {
                 serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
+                zkVerifier: address(0),
+                circuitId: bytes32(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -645,7 +653,7 @@ contract TaskEscrowERC20Test is Test {
         assertEq(usdt.balanceOf(address(escrow)), AMOUNT);
 
         vm.prank(worker);
-        escrow.submit(keccak256("submission"), "ipfs://result");
+        escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
 
         uint256 workerBefore = usdt.balanceOf(worker);
         uint256 treasuryBefore = usdt.balanceOf(treasury);

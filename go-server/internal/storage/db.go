@@ -67,6 +67,9 @@ var migration018SQL string
 //go:embed migrations/019_add_service_tier.sql
 var migration019SQL string
 
+//go:embed migrations/020_add_proof_hash.sql
+var migration020SQL string
+
 type DB struct {
 	db *sql.DB
 }
@@ -116,6 +119,7 @@ func Open(dsn string) (*DB, error) {
 		{"017", migration017SQL},
 		{"018", migration018SQL},
 		{"019", migration019SQL},
+		{"020", migration020SQL},
 	}
 
 	for _, m := range migrations {

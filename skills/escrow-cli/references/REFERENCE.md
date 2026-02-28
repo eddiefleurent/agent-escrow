@@ -45,7 +45,7 @@ POST /api/v1/escrows
 
 Required fields: `title`, `description`, `buyer`, `worker`, `verifier`, `arbitrator`, `amount`, `submission_deadline`, `review_period_seconds`, `dispute_period_seconds`, `arbitrator_timeout_seconds`
 
-Optional fields: `worker_stake`, `token`, `milestones` (array of `{amount, submission_deadline}`), `backup_worker`, `backup_deadline_extension`
+Optional fields: `worker_stake`, `token`, `milestones` (array of `{amount, submission_deadline}`), `backup_worker`, `backup_deadline_extension`, `zk_verifier`, `circuit_id`
 
 All numeric values are strings. Amounts in wei. Deadlines as Unix timestamps. Periods in seconds.
 
@@ -91,7 +91,7 @@ No body. Deposits the worker stake configured at escrow creation.
 POST /api/v1/escrows/{id}/submit
 ```
 
-Fields: `submission_uri` (required), `milestone_index` (optional, int)
+Fields: `submission_uri` (required), `proof_hash` (optional, 32-byte hex), `milestone_index` (optional, int)
 
 #### `escrow approve <id>` (body required)
 
@@ -100,6 +100,14 @@ POST /api/v1/escrows/{id}/approve
 ```
 
 Fields: `role` (required: `"buyer"` or `"verifier"`), `milestone_index` (optional, int)
+
+#### `escrow verify-approve <id>` (body required)
+
+```
+POST /api/v1/escrows/{id}/verify-approve
+```
+
+Fields: `proof` (required, hex-encoded bytes), `milestone_index` (optional, int)
 
 #### `escrow dispute <id>` (body required)
 

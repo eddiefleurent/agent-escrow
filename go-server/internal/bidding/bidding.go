@@ -86,6 +86,7 @@ type CreateRFQParams struct {
 	MilestonesJSON           string
 	RequirementsJSON         string
 	RequiredCredentialsJSON  string
+	RequiredProofProtocol    string
 	ServiceTier              int // 0 = low_assurance (default), 1 = high_assurance (paper §5.3)
 	CommitDeadline           int64
 	RevealDeadline           int64
@@ -201,6 +202,24 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 	}
 	if p.RequirementsJSON == "" {
 		p.RequirementsJSON = "{}"
+	}
+	if p.RequiredProofProtocol != "" {
+		if p.RequiredProofProtocol != "groth16" {
+			return nil, errors.New("required_proof_protocol must be 'groth16' when set")
+		}
+		var requirements map[string]any
+		if err := json.Unmarshal([]byte(p.RequirementsJSON), &requirements); err != nil {
+			return nil, fmt.Errorf("invalid requirements_json: %w", err)
+		}
+		if requirements == nil {
+			requirements = map[string]any{}
+		}
+		requirements["required_proof_protocol"] = p.RequiredProofProtocol
+		normalizedReq, err := json.Marshal(requirements)
+		if err != nil {
+			return nil, fmt.Errorf("marshal requirements_json: %w", err)
+		}
+		p.RequirementsJSON = string(normalizedReq)
 	}
 	if p.RequiredCredentialsJSON == "" {
 		p.RequiredCredentialsJSON = "[]"

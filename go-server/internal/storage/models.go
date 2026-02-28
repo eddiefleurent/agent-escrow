@@ -37,6 +37,8 @@ type Escrow struct {
 	BackupActivated          bool   `json:"backup_activated"`
 	Frozen                   bool   `json:"frozen"`
 	ServiceTier              int    `json:"service_tier"` // 0 = low_assurance, 1 = high_assurance (paper §5.3)
+	ZKVerifier               string `json:"zk_verifier"`  // Optional on-chain verifier contract; zero address means disabled
+	CircuitID                string `json:"circuit_id"`   // bytes32 circuit identifier used by zkVerifier
 	ParentEscrowID           *int64 `json:"parent_escrow_id,omitempty"`
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
@@ -51,6 +53,7 @@ type MilestoneRecord struct {
 	Status             string
 	SubmissionHash     string
 	SubmissionURI      string
+	ProofHash          string
 	SubmittedAt        *time.Time
 	ApprovedAt         *time.Time
 	DisputedAt         *time.Time
@@ -64,6 +67,7 @@ type Submission struct {
 	EscrowID       int64
 	SubmissionHash string
 	SubmissionURI  string
+	ProofHash      string
 	SubmittedAt    time.Time
 }
 
