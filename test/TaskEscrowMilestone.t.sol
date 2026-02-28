@@ -274,23 +274,11 @@ contract TaskEscrowMilestoneTest is Test {
         TaskEscrow e = _create3MilestoneEscrow();
         _fundEscrow(e);
 
-        // V1 submit() on a multi-milestone escrow succeeds at the escrow level
-        // but only syncs milestone[0] when milestoneCount == 1. For multi-milestone
-        // escrows, callers should use submitMilestone(). Verify that V1 submit
-        // does NOT advance milestone state for multi-milestone escrows.
+        // Multi-milestone escrows must use submitMilestone(). V1 submit()
+        // is restricted to single-milestone mode.
+        vm.expectRevert(TaskEscrow.InvalidState.selector);
         vm.prank(worker);
         e.submit(keccak256("v1-sub"), "ipfs://v1-sub", bytes32(0));
-
-        // Escrow-level status transitions to Submitted
-        assertEq(uint256(e.status()), uint256(TaskEscrow.Status.Submitted));
-
-        // Milestone 0 should remain Pending because _syncMs0Submit only fires when milestoneCount == 1
-        (,,,,,,,,, TaskEscrow.MilestoneStatus ms0Status,) = e.milestones(0);
-        assertEq(uint256(ms0Status), uint256(TaskEscrow.MilestoneStatus.Pending));
-
-        // Milestone 1 and 2 also remain Pending
-        (,,,,,,,,, TaskEscrow.MilestoneStatus ms1Status,) = e.milestones(1);
-        assertEq(uint256(ms1Status), uint256(TaskEscrow.MilestoneStatus.Pending));
     }
 
     // ── Abort requires terminal failure state ──

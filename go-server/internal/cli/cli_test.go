@@ -196,7 +196,15 @@ func TestCLIEscrowVerifyApprove(t *testing.T) {
 	}
 
 	idStr := strconv.FormatInt(escrow.ID, 10)
-	stdout, stderr, err := runCLI(t, env.server.URL, "escrow", "verify-approve", idStr, "--data", `{"proof":"0x1234"}`)
+	stdout, stderr, err := runCLI(
+		t,
+		env.server.URL,
+		"escrow",
+		"verify-approve",
+		idStr,
+		"--data",
+		`{"proof":"0x1234","caller":"0xV"}`,
+	)
 	if err != nil {
 		t.Fatalf("execute escrow verify-approve: %v stderr=%s", err, stderr)
 	}
@@ -204,8 +212,9 @@ func TestCLIEscrowVerifyApprove(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &resp); err != nil {
 		t.Fatalf("unmarshal verify-approve output: %v\n%s", err, stdout)
 	}
-	if _, ok := resp["tx_hash"]; !ok {
-		t.Fatalf("expected tx_hash in response: %v", resp)
+	txHash, ok := resp["tx_hash"].(string)
+	if !ok || strings.TrimSpace(txHash) == "" {
+		t.Fatalf("expected non-empty string tx_hash in response: %v", resp)
 	}
 }
 

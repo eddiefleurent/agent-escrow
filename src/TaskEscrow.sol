@@ -375,6 +375,7 @@ contract TaskEscrow {
     {
         if (msg.sender != activeWorker) revert Unauthorized();
         _requireState(Status.Funded);
+        if (milestoneCount > 1) revert InvalidState();
         if (block.timestamp > uint256(submissionDeadline) + uint256(deadlineExtensionApplied)) revert WindowExpired();
         if (_submissionHash == bytes32(0)) revert InvalidHash();
         if (workerStake > 0 && !workerStaked) revert StakeNotDeposited();
@@ -384,7 +385,7 @@ contract TaskEscrow {
         submittedAt = uint64(block.timestamp);
         status = Status.Submitted;
         emit SubmissionMade(msg.sender, _submissionHash, _submissionURI, _proofHash);
-        if (milestoneCount == 1) _syncMs0Submit(_submissionHash, _submissionURI, _proofHash);
+        _syncMs0Submit(_submissionHash, _submissionURI, _proofHash);
     }
 
     function verifyAndApprove(bytes calldata proof) external nonReentrant whenNotFrozen {

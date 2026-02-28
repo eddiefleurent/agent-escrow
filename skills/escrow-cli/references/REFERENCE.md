@@ -105,7 +105,7 @@ Fields: `role` (required: `"buyer"` or `"verifier"`), `milestone_index` (optiona
 
 #### `escrow verify-approve <id>` (body required)
 
-```
+```http
 POST /api/v1/escrows/{id}/verify-approve
 ```
 
