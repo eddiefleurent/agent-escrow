@@ -81,4 +81,4 @@ go-fmt:
 # Combined targets
 all: build go-build go-cli-build
 
-test-all: fmt-check test test-invariant go-vet go-lint go-test go-cli-build
+test-all: fmt-check sizes test test-invariant go-vet go-lint go-test go-cli-build

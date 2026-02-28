@@ -601,17 +601,32 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 	if quorumThreshold == 0 || quorumThreshold > quorumVerifierCount {
 		return textResult("invalid quorum_threshold: must be 1..quorum_verifier_count"), nil, nil
 	}
-	if int(quorumVerifierCount) > len(args.VerifierPanel) {
-		return textResult("quorum_verifier_count cannot exceed verifier_panel length"), nil, nil
+	if len(args.VerifierPanel) != int(quorumVerifierCount) {
+		return textResult("verifier_panel length must equal quorum_verifier_count"), nil, nil
 	}
 	var verifierPanel [7]common.Address
 	panelForJSON := make([]string, int(quorumVerifierCount))
+	seen := make(map[common.Address]bool)
+	buyerAddr := common.HexToAddress(args.Buyer)
+	workerAddr := common.HexToAddress(args.Worker)
+	arbitratorAddr := common.HexToAddress(args.Arbitrator)
 	for i := 0; i < int(quorumVerifierCount); i++ {
 		if !common.IsHexAddress(args.VerifierPanel[i]) {
 			return textResult(fmt.Sprintf("invalid verifier_panel[%d] address", i)), nil, nil
 		}
-		verifierPanel[i] = common.HexToAddress(args.VerifierPanel[i])
-		panelForJSON[i] = strings.ToLower(verifierPanel[i].Hex())
+		addr := common.HexToAddress(args.VerifierPanel[i])
+		if addr == (common.Address{}) {
+			return textResult(fmt.Sprintf("invalid verifier_panel[%d]: zero address", i)), nil, nil
+		}
+		if seen[addr] {
+			return textResult(fmt.Sprintf("invalid verifier_panel[%d]: duplicate address", i)), nil, nil
+		}
+		if addr == buyerAddr || addr == workerAddr || addr == arbitratorAddr {
+			return textResult(fmt.Sprintf("invalid verifier_panel[%d]: overlaps with buyer, worker, or arbitrator", i)), nil, nil
+		}
+		seen[addr] = true
+		verifierPanel[i] = addr
+		panelForJSON[i] = strings.ToLower(addr.Hex())
 	}
 
 	specHash := crypto.Keccak256Hash([]byte(args.Title + args.Description))

@@ -49,3 +49,27 @@ Escrow -> Escrow: _quorumReject(reasonURI)
 Escrow -> Escrow: settle verifier stakes\n(majority refund, minority slash to buyer)
 Escrow --> Buyer: status = Disputed
 @enduml
+
+@startuml
+title No-Quorum Exit Stake Unwind
+
+actor Worker
+participant Buyer
+participant Arbitrator
+participant "Verifier A" as VA
+participant "TaskEscrow" as Escrow
+
+Worker -> Escrow: submit(...) / submitMilestone(...)
+Escrow --> Worker: status = Submitted
+
+VA -> Escrow: depositVerifierStake()
+Escrow --> VA: quorum stake recorded
+
+Buyer -> Escrow: dispute(...) / disputeMilestone(...)
+Escrow --> Buyer: status = Disputed
+
+Arbitrator -> Escrow: resolveDispute(...) / resolveMilestoneDispute(...)
+Escrow -> Escrow: refund unsettled verifier stakes
+Escrow --> VA: stake refunded in full
+Escrow --> Buyer: status = Settled / milestone advanced
+@enduml

@@ -427,10 +427,10 @@ func (idx *Indexer) handleEscrowCreated(ctx context.Context, lg types.Log) error
 	}
 
 	buyer := common.BytesToAddress(lg.Topics[3].Bytes())
-	verifierPanelJSON := "[]"
+	verifierPanelJSON := ""
 	primaryVerifier := ""
+	verifierStakeStr := ""
 
-	panelOK := false
 	panelCallData, packErr := chain.EscrowABI.Pack("getQuorumPanel")
 	if packErr == nil {
 		if rawPanel, callErr := idx.chain.CallContract(ctx, escrowAddr, panelCallData); callErr == nil {
@@ -445,14 +445,22 @@ func (idx *Indexer) handleEscrowCreated(ctx context.Context, lg types.Log) error
 					}
 					if b, marshalErr := json.Marshal(lowerPanel); marshalErr == nil {
 						verifierPanelJSON = string(b)
-						panelOK = true
 					}
 				}
 			}
 		}
 	}
-	if !panelOK {
-		slog.Warn("failed to fetch quorum panel; escrow stored with empty panel defaults", "escrow", escrowAddr.Hex())
+	if stakeCallData, packErr := chain.EscrowABI.Pack("verifierStakePerVerifier"); packErr == nil {
+		if rawStake, callErr := idx.chain.CallContract(ctx, escrowAddr, stakeCallData); callErr == nil {
+			if unpacked, unpackErr := chain.EscrowABI.Unpack("verifierStakePerVerifier", rawStake); unpackErr == nil && len(unpacked) == 1 {
+				if stake, ok := unpacked[0].(*big.Int); ok {
+					verifierStakeStr = stake.String()
+				}
+			}
+		}
+	}
+	if verifierPanelJSON == "" {
+		slog.Warn("failed to fetch quorum panel; escrow stored with empty panel", "escrow", escrowAddr.Hex())
 	}
 
 	// Check if escrow already exists (e.g. created via API/MCP handler with on-chain fields already set)
@@ -481,7 +489,7 @@ func (idx *Indexer) handleEscrowCreated(ctx context.Context, lg types.Log) error
 		VerifierPanelJSON:        verifierPanelJSON,
 		QuorumThreshold:          int(quorumThreshold),
 		QuorumVerifierCount:      int(quorumVerifierCount),
-		VerifierStakePerVerifier: "0",
+		VerifierStakePerVerifier: verifierStakeStr,
 		Arbitrator:               arbitratorAddr.Hex(),
 		Amount:                   "0",
 		Token:                    tokenAddr.Hex(),

@@ -22,6 +22,7 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/numconv"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
@@ -144,8 +145,8 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "quorum_verifier_count must be between 1 and 7"})
 		return
 	}
-	if req.QuorumVerifierCount > len(req.VerifierPanel) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "quorum_verifier_count cannot exceed verifier_panel length"})
+	if len(req.VerifierPanel) != req.QuorumVerifierCount {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "verifier_panel length must equal quorum_verifier_count"})
 		return
 	}
 	if req.QuorumThreshold <= 0 || req.QuorumThreshold > req.QuorumVerifierCount {
@@ -177,6 +178,10 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		vsv, ok := new(big.Int).SetString(req.VerifierStakePerVerifier, 10)
 		if !ok {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid verifier_stake_per_verifier"})
+			return
+		}
+		if vsv.Sign() < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "verifier_stake_per_verifier must not be negative"})
 			return
 		}
 		verifierStakePerVerifierVal = vsv
@@ -607,36 +612,25 @@ func (h *Handlers) FundEscrow(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
 }
 
-func (h *Handlers) DepositStake(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
-		return
-	}
-
-	escrow, err := h.db.GetEscrow(r.Context(), id)
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-		return
-	}
-
-	stakeAmount, ok := new(big.Int).SetString(escrow.WorkerStake, 10)
-	if !ok || stakeAmount.Sign() <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "this escrow does not require a worker stake"})
-		return
-	}
-
-	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
-	isERC20 := escrow.Token != "" && escrow.Token != "0x0000000000000000000000000000000000000000"
-
+// execStakeDeposit handles the ERC20-approve-then-deposit or ETH-deposit flow shared by
+// DepositStake and DepositVerifierStake. deposit is the chain method to call.
+func (h *Handlers) execStakeDeposit(
+	ctx context.Context,
+	w http.ResponseWriter,
+	escrowAddr common.Address,
+	stakeAmount *big.Int,
+	token string,
+	deposit func(context.Context, common.Address, *big.Int) (*types.Transaction, error),
+) {
+	isERC20 := token != "" && token != "0x0000000000000000000000000000000000000000"
 	if isERC20 {
-		tokenAddr := common.HexToAddress(escrow.Token)
-		approveTx, err := h.chain.ApproveERC20(r.Context(), tokenAddr, escrowAddr, stakeAmount)
+		tokenAddr := common.HexToAddress(token)
+		approveTx, err := h.chain.ApproveERC20(ctx, tokenAddr, escrowAddr, stakeAmount)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("approve: %v", err)})
 			return
 		}
-		approveReceipt, err := chain.WaitMined(r.Context(), h.chain, approveTx.Hash())
+		approveReceipt, err := chain.WaitMined(ctx, h.chain, approveTx.Hash())
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("approve receipt: %v", err)})
 			return
@@ -645,24 +639,42 @@ func (h *Handlers) DepositStake(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "approve transaction reverted"})
 			return
 		}
-		tx, err := h.chain.DepositStake(r.Context(), escrowAddr, nil)
+		tx, err := deposit(ctx, escrowAddr, nil)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 			return
 		}
-		_ = h.idx.RunOnce(r.Context())
+		_ = h.idx.RunOnce(ctx)
 		writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
 		return
 	}
 
-	tx, err := h.chain.DepositStake(r.Context(), escrowAddr, stakeAmount)
+	tx, err := deposit(ctx, escrowAddr, stakeAmount)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 		return
 	}
-
-	_ = h.idx.RunOnce(r.Context())
+	_ = h.idx.RunOnce(ctx)
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+}
+
+func (h *Handlers) DepositStake(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	escrow, err := h.db.GetEscrow(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	stakeAmount, ok := new(big.Int).SetString(escrow.WorkerStake, 10)
+	if !ok || stakeAmount.Sign() <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "this escrow does not require a worker stake"})
+		return
+	}
+	h.execStakeDeposit(r.Context(), w, common.HexToAddress(escrow.EscrowAddress), stakeAmount, escrow.Token, h.chain.DepositStake)
 }
 
 func (h *Handlers) DepositVerifierStake(w http.ResponseWriter, r *http.Request) {
@@ -671,56 +683,17 @@ func (h *Handlers) DepositVerifierStake(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
 		return
 	}
-
 	escrow, err := h.db.GetEscrow(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
-
 	stakeAmount, ok := new(big.Int).SetString(escrow.VerifierStakePerVerifier, 10)
 	if !ok || stakeAmount.Sign() <= 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "this escrow does not require verifier stake"})
 		return
 	}
-
-	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
-	isERC20 := escrow.Token != "" && escrow.Token != "0x0000000000000000000000000000000000000000"
-
-	if isERC20 {
-		tokenAddr := common.HexToAddress(escrow.Token)
-		approveTx, err := h.chain.ApproveERC20(r.Context(), tokenAddr, escrowAddr, stakeAmount)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("approve: %v", err)})
-			return
-		}
-		approveReceipt, err := chain.WaitMined(r.Context(), h.chain, approveTx.Hash())
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("approve receipt: %v", err)})
-			return
-		}
-		if approveReceipt.Status != 1 {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "approve transaction reverted"})
-			return
-		}
-		tx, err := h.chain.DepositVerifierStake(r.Context(), escrowAddr, nil)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-			return
-		}
-		_ = h.idx.RunOnce(r.Context())
-		writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
-		return
-	}
-
-	tx, err := h.chain.DepositVerifierStake(r.Context(), escrowAddr, stakeAmount)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-		return
-	}
-
-	_ = h.idx.RunOnce(r.Context())
-	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+	h.execStakeDeposit(r.Context(), w, common.HexToAddress(escrow.EscrowAddress), stakeAmount, escrow.Token, h.chain.DepositVerifierStake)
 }
 
 type submitRequest struct {

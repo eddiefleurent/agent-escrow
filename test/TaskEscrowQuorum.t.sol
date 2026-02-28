@@ -115,6 +115,72 @@ contract TaskEscrowQuorumTest is Test {
         assertEq(buyer.balance, buyerBefore + stake);
     }
 
+    function testBuyerApprovalRefundsDepositedVerifierStake() public {
+        uint256 stake = 0.2 ether;
+        (TaskEscrow e,) = _createSingle(2, 3, stake, 0, address(0), bytes32(0));
+        _fundAndSubmit(e, bytes32(0));
+
+        vm.prank(verifierA);
+        e.depositVerifierStake{value: stake}();
+        uint256 verifierAfterDeposit = verifierA.balance;
+
+        vm.prank(buyer);
+        e.approveByBuyer();
+
+        assertEq(uint8(e.status()), uint8(TaskEscrow.Status.Settled));
+        assertEq(verifierA.balance, verifierAfterDeposit + stake);
+        assertFalse(e.quorumStaked(verifierA));
+        assertEq(uint256(e.quorumStakeCount()), 0);
+    }
+
+    function testDisputeResolutionRefundsUnsettledVerifierStakes() public {
+        uint256 stake = 0.2 ether;
+        (TaskEscrow e,) = _createSingle(2, 3, stake, 0, address(0), bytes32(0));
+        _fundAndSubmit(e, bytes32(0));
+
+        vm.prank(verifierA);
+        e.depositVerifierStake{value: stake}();
+        uint256 verifierAfterDeposit = verifierA.balance;
+
+        vm.prank(verifierA);
+        e.castVerifierVote(true, "");
+        assertEq(uint8(e.status()), uint8(TaskEscrow.Status.Submitted));
+
+        vm.prank(buyer);
+        e.dispute("ipfs://manual-dispute");
+        assertEq(uint8(e.status()), uint8(TaskEscrow.Status.Disputed));
+
+        vm.prank(arbitrator);
+        e.resolveDispute(5000, "ipfs://resolution");
+
+        assertEq(uint8(e.status()), uint8(TaskEscrow.Status.Settled));
+        assertEq(verifierA.balance, verifierAfterDeposit + stake);
+        assertFalse(e.quorumStaked(verifierA));
+        assertEq(uint256(e.quorumStakeCount()), 0);
+    }
+
+    function testClaimTimeoutRefundReturnsVerifierStake() public {
+        uint256 stake = 0.2 ether;
+        (TaskEscrow e,) = _createSingle(2, 3, stake, 0, address(0), bytes32(0));
+
+        uint256 amount = e.amount();
+        vm.prank(buyer);
+        e.fund{value: amount}();
+
+        vm.prank(verifierA);
+        e.depositVerifierStake{value: stake}();
+        uint256 verifierAfterDeposit = verifierA.balance;
+
+        vm.warp(uint256(e.submissionDeadline()) + 1);
+        vm.prank(buyer);
+        e.claimTimeoutRefund();
+
+        assertEq(uint8(e.status()), uint8(TaskEscrow.Status.Refunded));
+        assertEq(verifierA.balance, verifierAfterDeposit + stake);
+        assertFalse(e.quorumStaked(verifierA));
+        assertEq(uint256(e.quorumStakeCount()), 0);
+    }
+
     function testVoteAfterQuorumReachedReverts() public {
         (TaskEscrow e,) = _createSingle(2, 3, 0, 0, address(0), bytes32(0));
         _fundAndSubmit(e, bytes32(0));
@@ -221,6 +287,37 @@ contract TaskEscrowQuorumTest is Test {
 
         uint256 fee = (1 ether * uint256(FEE_BPS)) / 10_000;
         assertEq(worker.balance, workerBefore + 1 ether - fee);
+    }
+
+    function testMilestoneDisputeResolutionRefundsVerifierStakeForNextCycle() public {
+        uint256 stake = 0.2 ether;
+        (TaskEscrow e,) = _createTwoMilestoneEscrow(2, 3, stake);
+
+        vm.prank(buyer);
+        e.fund{value: 2 ether}();
+
+        vm.prank(verifierA);
+        e.depositVerifierStake{value: stake}();
+        uint256 verifierAfterDeposit = verifierA.balance;
+
+        vm.prank(worker);
+        e.submitMilestone(0, keccak256("ms0"), "ipfs://ms0", bytes32(0));
+        vm.prank(buyer);
+        e.disputeMilestone(0, "ipfs://ms0-dispute");
+        vm.prank(arbitrator);
+        e.resolveMilestoneDispute(0, 5000, "ipfs://ms0-resolution");
+
+        assertEq(e.currentMilestone(), 1);
+        assertEq(verifierA.balance, verifierAfterDeposit + stake);
+        assertFalse(e.quorumStaked(verifierA));
+        assertEq(uint256(e.quorumStakeCount()), 0);
+
+        vm.prank(worker);
+        e.submitMilestone(1, keccak256("ms1"), "ipfs://ms1", bytes32(0));
+
+        vm.expectRevert(TaskEscrow.QuorumStakeRequired.selector);
+        vm.prank(verifierA);
+        e.castMilestoneVerifierVote(1, true, "");
     }
 
     function testFuzzVerifierStakeConservationSinglePanel(uint96 rawStake, bool approve) public {

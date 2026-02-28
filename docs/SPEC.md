@@ -233,7 +233,8 @@ When `verifierStakePerVerifier > 0`, each verifier panel member must deposit sta
 
 - On quorum finalization, verifiers who voted with the majority outcome (approval-majority or rejection-majority) receive their full verifier stake back.
 - Verifiers who voted against the majority forfeit their verifier stake to the buyer.
-- Abstainers (`quorumVote == 0`) keep stake locked until they vote or dispute flow terminates.
+- Abstainers (`quorumVote == 0`) are refunded on quorum finalization.
+- If a review cycle exits without quorum finalization (e.g. buyer approval in low-assurance mode, dispute/arbitrator timeout resolution, milestone timeout cancellation, or emergency resolve), all currently deposited verifier stakes are refunded to their depositors before the cycle advances or settles.
 - `verifyAndApprove` and `verifyAndApproveMilestone` count as approval votes for quorum and therefore participate in the same majority/minority stake settlement logic.
 
 ### Abort Refund
@@ -260,7 +261,7 @@ These must hold for every escrow at all times:
 6. **Backup exclusivity**: backup activation can occur at most once per escrow; `activeWorker` replaces the original worker for all subsequent operations.
 7. **Milestone ordering**: milestones are processed sequentially; `milestoneIndex` must equal `currentMilestone`.
 8. **Milestone fund conservation**: sum of all milestone payouts + refunds + fees + remaining stake = `amount + workerStake`.
-9. **Verifier stake conservation**: on quorum finalization, each staked verifier vote path settles exactly one `verifierStakePerVerifier` amount (refund to majority voter or slash to buyer).
+9. **Verifier stake conservation**: each deposited verifier stake settles exactly once per review cycle -- either by quorum outcome (majority refund / minority slash) or by full refund when the cycle exits without quorum.
 
 ## 7) Emergency Response Protocol (Paper §4.9)
 
