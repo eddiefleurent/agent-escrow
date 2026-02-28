@@ -430,6 +430,7 @@ func (idx *Indexer) handleEscrowCreated(ctx context.Context, lg types.Log) error
 	verifierPanelJSON := "[]"
 	primaryVerifier := ""
 
+	panelOK := false
 	panelCallData, packErr := chain.EscrowABI.Pack("getQuorumPanel")
 	if packErr == nil {
 		if rawPanel, callErr := idx.chain.CallContract(ctx, escrowAddr, panelCallData); callErr == nil {
@@ -444,10 +445,14 @@ func (idx *Indexer) handleEscrowCreated(ctx context.Context, lg types.Log) error
 					}
 					if b, marshalErr := json.Marshal(lowerPanel); marshalErr == nil {
 						verifierPanelJSON = string(b)
+						panelOK = true
 					}
 				}
 			}
 		}
+	}
+	if !panelOK {
+		slog.Warn("failed to fetch quorum panel; escrow stored with empty panel defaults", "escrow", escrowAddr.Hex())
 	}
 
 	// Check if escrow already exists (e.g. created via API/MCP handler with on-chain fields already set)

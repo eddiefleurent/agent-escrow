@@ -294,13 +294,25 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Safe: quorumThreshold and quorumVerifierCount are validated to [1..7] above.
+	quorumThreshold, err := numconv.IntToUint8(req.QuorumThreshold, "quorum_threshold")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	quorumVerifierCount, err := numconv.IntToUint8(req.QuorumVerifierCount, "quorum_verifier_count")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
 	factory := common.HexToAddress(h.cfg.FactoryAddress)
 	params := chain.CreateEscrowParams{
 		Buyer:                    common.HexToAddress(req.Buyer),
 		Worker:                   common.HexToAddress(req.Worker),
 		VerifierPanel:            verifierPanel,
-		QuorumThreshold:          uint8(req.QuorumThreshold),     //nolint:gosec // validated bounds [1..7]
-		QuorumVerifierCount:      uint8(req.QuorumVerifierCount), //nolint:gosec // validated bounds [1..7]
+		QuorumThreshold:          quorumThreshold,
+		QuorumVerifierCount:      quorumVerifierCount,
 		VerifierStakePerVerifier: verifierStakePerVerifierVal,
 		Arbitrator:               common.HexToAddress(req.Arbitrator),
 		Amount:                   amount,
@@ -1050,7 +1062,7 @@ func (h *Handlers) VerifyAndApprove(w http.ResponseWriter, r *http.Request) {
 }
 
 type quorumVoteRequest struct {
-	Approve        bool   `json:"approve"`
+	Approve        *bool  `json:"approve"`
 	ReasonURI      string `json:"reason_uri,omitempty"`
 	MilestoneIndex *int   `json:"milestone_index,omitempty"`
 }
@@ -1065,6 +1077,10 @@ func (h *Handlers) CastVerifierVote(w http.ResponseWriter, r *http.Request) {
 	var req quorumVoteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	if req.Approve == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "approve is required"})
 		return
 	}
 
@@ -1090,7 +1106,7 @@ func (h *Handlers) CastVerifierVote(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": convErr.Error()})
 			return
 		}
-		tx, err := h.chain.CastMilestoneVerifierVote(r.Context(), addr, msIdx, req.Approve, req.ReasonURI)
+		tx, err := h.chain.CastMilestoneVerifierVote(r.Context(), addr, msIdx, *req.Approve, req.ReasonURI)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 			return
@@ -1100,7 +1116,7 @@ func (h *Handlers) CastVerifierVote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.chain.CastVerifierVote(r.Context(), addr, req.Approve, req.ReasonURI)
+	tx, err := h.chain.CastVerifierVote(r.Context(), addr, *req.Approve, req.ReasonURI)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
 		return

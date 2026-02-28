@@ -191,6 +191,19 @@ func TestCreateEscrow_Success(t *testing.T) {
 	if escrow.EscrowID != 7 {
 		t.Fatalf("db escrow id: expected 7, got %d", escrow.EscrowID)
 	}
+	if escrow.QuorumThreshold != 1 {
+		t.Fatalf("db quorum_threshold: expected 1, got %d", escrow.QuorumThreshold)
+	}
+	if escrow.QuorumVerifierCount != 1 {
+		t.Fatalf("db quorum_verifier_count: expected 1, got %d", escrow.QuorumVerifierCount)
+	}
+	if escrow.VerifierStakePerVerifier != "0" {
+		t.Fatalf("db verifier_stake_per_verifier: expected 0, got %s", escrow.VerifierStakePerVerifier)
+	}
+	expectedPanel := strings.ToLower("0x3000000000000000000000000000000000000003")
+	if !strings.Contains(strings.ToLower(escrow.VerifierPanelJSON), expectedPanel) {
+		t.Fatalf("db verifier_panel_json: expected to contain %s, got %s", expectedPanel, escrow.VerifierPanelJSON)
+	}
 }
 
 func TestCreateEscrow_ChainError(t *testing.T) {

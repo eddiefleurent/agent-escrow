@@ -534,6 +534,15 @@ func (s *Server) persistAttestationChainTx(ctx context.Context, tx *sql.Tx, escr
 }
 
 func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolRequest, args createEscrowArgs) (*mcp.CallToolResult, any, error) {
+	if !common.IsHexAddress(args.Buyer) {
+		return textResult("invalid buyer address"), nil, nil
+	}
+	if !common.IsHexAddress(args.Worker) {
+		return textResult("invalid worker address"), nil, nil
+	}
+	if !common.IsHexAddress(args.Arbitrator) {
+		return textResult("invalid arbitrator address"), nil, nil
+	}
 	amount, ok := new(big.Int).SetString(args.Amount.String(), 10)
 	if !ok {
 		return textResult("invalid amount"), nil, nil

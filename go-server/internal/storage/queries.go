@@ -221,18 +221,19 @@ func (d *DB) ListEscrows(ctx context.Context, role, address, status string) ([]*
 		switch role {
 		case "buyer":
 			query += ` AND buyer = ?`
+			args = append(args, address)
 		case "worker":
 			query += ` AND worker = ?`
+			args = append(args, address)
 		case "verifier":
+			normalizedAddr := strings.ToLower(address)
 			query += ` AND (verifier = ? OR verifier_panel_json LIKE ?)`
-			args = append(args, address, "%\""+strings.ToLower(address)+"\"%")
+			args = append(args, normalizedAddr, "%\""+normalizedAddr+"\"%")
 		case "arbitrator":
 			query += ` AND arbitrator = ?`
+			args = append(args, address)
 		default:
 			return nil, fmt.Errorf("invalid role: %s", role)
-		}
-		if role != "verifier" {
-			args = append(args, address)
 		}
 	}
 

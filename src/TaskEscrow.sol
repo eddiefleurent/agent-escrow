@@ -454,12 +454,13 @@ contract TaskEscrow {
         // Trust model: zkVerifier is immutable and validated as a deployed contract in the constructor.
         bool ok = IZKVerifier(zkVerifier).verifyProof(circuitId, proof);
         if (!ok) revert ProofVerificationFailed();
-        _castSingleVote(msg.sender, true, "", false);
+        _castSingleVote(msg.sender, true, "", verifierStakePerVerifier > 0);
     }
 
     function approveByBuyer() external nonReentrant whenNotFrozen {
         _requireBuyer();
         if (serviceTier == TIER_HIGH_ASSURANCE) revert HighAssuranceRequiresVerifier();
+        _resetQuorumVoteState();
         _approve(msg.sender);
     }
 
@@ -471,6 +472,7 @@ contract TaskEscrow {
         _requireBuyer();
         _requireState(Status.Submitted);
         if (block.timestamp > _disputeWindowEnds()) revert WindowExpired();
+        _resetQuorumVoteState();
         disputeReasonURI = reasonURI;
         disputedAt = uint64(block.timestamp);
         status = Status.Disputed;
@@ -483,6 +485,7 @@ contract TaskEscrow {
         _requireState(Status.Submitted);
         if (block.timestamp <= _reviewWindowEnds()) revert WindowNotOpen();
         if (block.timestamp > _disputeWindowEnds()) revert WindowExpired();
+        _resetQuorumVoteState();
         disputeReasonURI = reasonURI;
         disputedAt = uint64(block.timestamp);
         status = Status.Disputed;
@@ -606,12 +609,13 @@ contract TaskEscrow {
         // Trust model: zkVerifier is immutable and validated as a deployed contract in the constructor.
         bool ok = IZKVerifier(zkVerifier).verifyProof(circuitId, proof);
         if (!ok) revert ProofVerificationFailed();
-        _castMilestoneVote(msg.sender, milestoneIndex, true, "", false);
+        _castMilestoneVote(msg.sender, milestoneIndex, true, "", verifierStakePerVerifier > 0);
     }
 
     function approveMilestoneByBuyer(uint8 milestoneIndex) external nonReentrant whenNotFrozen {
         _requireBuyer();
         if (serviceTier == TIER_HIGH_ASSURANCE) revert HighAssuranceRequiresVerifier();
+        _resetQuorumVoteState();
         _approveMilestone(milestoneIndex, msg.sender);
     }
 
@@ -624,6 +628,7 @@ contract TaskEscrow {
         if (block.timestamp > uint256(ms.submittedAt) + uint256(reviewPeriodSeconds) + uint256(disputePeriodSeconds)) {
             revert WindowExpired();
         }
+        _resetQuorumVoteState();
         ms.disputeReasonURI = reasonURI;
         ms.disputedAt = uint64(block.timestamp);
         ms.status = MilestoneStatus.Disputed;
@@ -647,6 +652,7 @@ contract TaskEscrow {
         uint256 reviewEnd = uint256(ms.submittedAt) + uint256(reviewPeriodSeconds);
         if (block.timestamp <= reviewEnd) revert WindowNotOpen();
         if (block.timestamp > reviewEnd + uint256(disputePeriodSeconds)) revert WindowExpired();
+        _resetQuorumVoteState();
         ms.disputeReasonURI = reasonURI;
         ms.disputedAt = uint64(block.timestamp);
         ms.status = MilestoneStatus.Disputed;
@@ -875,12 +881,16 @@ contract TaskEscrow {
             address panelVerifier = verifierPanel[i];
             if (!quorumStaked[panelVerifier]) continue;
 
-            uint8 vote = quorumVote[panelVerifier];
-            if (vote == 0) continue; // abstainers keep stake locked; no slash/no refund
-
-            bool inMajority = approvalMajority ? vote == 1 : vote == 2;
             quorumStaked[panelVerifier] = false;
             if (quorumStakeCount > 0) quorumStakeCount--;
+
+            uint8 vote = quorumVote[panelVerifier];
+            if (vote == 0) {
+                _send(panelVerifier, verifierStakePerVerifier); // refund abstainers
+                continue;
+            }
+
+            bool inMajority = approvalMajority ? vote == 1 : vote == 2;
             if (inMajority) _send(panelVerifier, verifierStakePerVerifier);
             else _send(buyer, verifierStakePerVerifier);
         }
