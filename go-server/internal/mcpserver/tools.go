@@ -45,6 +45,7 @@ type createEscrowArgs struct {
 	DisputePeriodSeconds     FlexibleString `json:"dispute_period_seconds" jsonschema:"Dispute period in seconds"`
 	ArbitratorTimeoutSeconds FlexibleString `json:"arbitrator_timeout_seconds" jsonschema:"Arbitrator timeout in seconds"`
 	Token                    string         `json:"token,omitempty" jsonschema:"Omit or leave empty for ETH. ERC20 token address otherwise."`
+	ServiceTier              FlexibleString `json:"service_tier,omitempty" jsonschema:"0 = low_assurance (optimistic, default), 1 = high_assurance (verifier approval required). Paper §5.3."`
 	Milestones               []milestoneArg `json:"milestones,omitempty" jsonschema:"Optional array of milestones; omit for single-milestone (V1) escrow"`
 	BackupWorker             string         `json:"backup_worker,omitempty" jsonschema:"Optional backup worker address; omit for no backup agent"`
 	BackupDeadlineExtension  FlexibleString `json:"backup_deadline_extension,omitempty" jsonschema:"Seconds to extend deadline when backup activates; omit or 0 for no extension"`
@@ -110,6 +111,7 @@ type createRFQArgs struct {
 	RequiredCredentialsJSON  string         `json:"required_credentials_json,omitempty" jsonschema:"JSON array of credential requirement selectors [{domain, capabilities, trusted_issuers}]. Bidders must present matching attestations."`
 	CommitDeadline           FlexibleString `json:"commit_deadline,omitempty" jsonschema:"Unix timestamp: end of commit phase (sealed bids)"`
 	RevealDeadline           FlexibleString `json:"reveal_deadline,omitempty" jsonschema:"Unix timestamp: end of reveal phase (must be >= commit_deadline and <= deadline)"`
+	ServiceTier              FlexibleString `json:"service_tier,omitempty" jsonschema:"0 = low_assurance (optimistic, default), 1 = high_assurance (verifier approval required). Paper §5.3."`
 	ExpiresAt                FlexibleString `json:"expires_at" jsonschema:"Unix timestamp: when the RFQ stops accepting bids (distinct from deadline which is when work must be done)"`
 	ParentEscrowID           FlexibleString `json:"parent_escrow_id,omitempty" jsonschema:"Optional parent escrow ID for sub-delegation (paper §4.8). Buyer must be active worker of parent."`
 }
@@ -574,6 +576,16 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		return textResult("backup_deadline_extension set but no backup_worker provided"), nil, nil
 	}
 
+	var serviceTier uint8
+	if s := args.ServiceTier.String(); s != "" {
+		if s != "0" && s != "1" {
+			return textResult("invalid service_tier: must be 0 (low_assurance) or 1 (high_assurance)"), nil, nil
+		}
+		if s == "1" {
+			serviceTier = 1
+		}
+	}
+
 	// Validate all uint64→int64 conversions before any on-chain or DB side effects.
 	submissionDeadline, err := numconv.Uint64ToInt64(deadline, "submission_deadline")
 	if err != nil {
@@ -618,6 +630,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		TaskSpecHash:             specHash,
 		ArbitratorTimeoutSeconds: arbTimeout,
 		Token:                    tokenAddr,
+		ServiceTier:              serviceTier,
 		Milestones:               milestones,
 		BackupWorker:             backupWorkerAddr,
 		BackupDeadlineExtension:  backupDeadlineExt,
@@ -666,6 +679,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		BackupWorker:             backupWorkerAddr.Hex(),
 		BackupDeadlineExtension:  backupDeadline,
 		ActiveWorker:             args.Worker,
+		ServiceTier:              int(serviceTier),
 	})
 	if err != nil {
 		return textResult(fmt.Sprintf("db error: %v", err)), nil, nil
@@ -1405,6 +1419,16 @@ func (s *Server) handleCreateRFQ(ctx context.Context, req *mcp.CallToolRequest, 
 	// Normalize token field.
 	token := normalizeToken(args.Token)
 
+	var serviceTier int
+	if s := args.ServiceTier.String(); s != "" {
+		if s != "0" && s != "1" {
+			return textResult("invalid service_tier: must be 0 (low_assurance) or 1 (high_assurance)"), nil, nil
+		}
+		if s == "1" {
+			serviceTier = 1
+		}
+	}
+
 	var parentEscrowID *int64
 	if args.ParentEscrowID.String() != "" {
 		pid, pidErr := strconv.ParseInt(args.ParentEscrowID.String(), 10, 64)
@@ -1434,6 +1458,7 @@ func (s *Server) handleCreateRFQ(ctx context.Context, req *mcp.CallToolRequest, 
 		RequiredCredentialsJSON:  args.RequiredCredentialsJSON,
 		CommitDeadline:           commitDeadline,
 		RevealDeadline:           revealDeadline,
+		ServiceTier:              serviceTier,
 		ExpiresAt:                expiresAt,
 		ParentEscrowID:           parentEscrowID,
 	})

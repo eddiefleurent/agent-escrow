@@ -363,7 +363,7 @@ func (idx *Indexer) ProcessFactoryLog(ctx context.Context, lg types.Log) error {
 }
 
 func (idx *Indexer) handleEscrowCreated(ctx context.Context, lg types.Log) error {
-	// EscrowCreated(uint256 indexed escrowId, address indexed escrow, address indexed buyer, address worker, address verifier, address arbitrator, bytes32 taskSpecHash, address token)
+	// EscrowCreated(uint256 indexed escrowId, address indexed escrow, address indexed buyer, address worker, address verifier, address arbitrator, bytes32 taskSpecHash, address token, uint8 serviceTier)
 	if len(lg.Topics) < 4 {
 		return errors.New("insufficient topics")
 	}
@@ -405,6 +405,13 @@ func (idx *Indexer) handleEscrowCreated(ctx context.Context, lg types.Log) error
 		}
 	}
 
+	var serviceTier int
+	if len(values) > 5 {
+		if st, ok := values[5].(uint8); ok {
+			serviceTier = int(st)
+		}
+	}
+
 	buyer := common.BytesToAddress(lg.Topics[3].Bytes())
 
 	// Check if escrow already exists (e.g. created via API/MCP handler with on-chain fields already set)
@@ -435,6 +442,7 @@ func (idx *Indexer) handleEscrowCreated(ctx context.Context, lg types.Log) error
 		Token:              tokenAddr.Hex(),
 		Status:             "created",
 		SubmissionDeadline: 0,
+		ServiceTier:        serviceTier,
 	})
 	return err
 }

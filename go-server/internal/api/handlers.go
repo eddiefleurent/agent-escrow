@@ -73,6 +73,7 @@ type createEscrowRequest struct {
 	DisputePeriodSeconds     string             `json:"dispute_period_seconds"`
 	ArbitratorTimeoutSeconds string             `json:"arbitrator_timeout_seconds"`
 	Token                    string             `json:"token,omitempty"`
+	ServiceTier              int                `json:"service_tier,omitempty"`
 	Milestones               []milestoneRequest `json:"milestones,omitempty"`
 	BackupWorker             string             `json:"backup_worker,omitempty"`
 	BackupDeadlineExtension  string             `json:"backup_deadline_extension,omitempty"`
@@ -190,6 +191,11 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		backupDeadlineExt = bde
 	}
 
+	if req.ServiceTier < 0 || req.ServiceTier > 1 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid service_tier: must be 0 or 1"})
+		return
+	}
+
 	// Validate all uint64→int64 conversions before any on-chain or DB side effects.
 	submissionDeadline, err := numconv.Uint64ToInt64(deadline, "submission_deadline")
 	if err != nil {
@@ -240,6 +246,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		TaskSpecHash:             specHash,
 		ArbitratorTimeoutSeconds: arbTimeout,
 		Token:                    tokenAddr,
+		ServiceTier:              uint8(req.ServiceTier), //nolint:gosec // validated 0-1 above
 		Milestones:               milestones,
 		BackupWorker:             backupWorkerAddr,
 		BackupDeadlineExtension:  backupDeadlineExt,
@@ -291,6 +298,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		BackupWorker:             backupWorkerAddr.Hex(),
 		BackupDeadlineExtension:  backupDeadline,
 		ActiveWorker:             req.Worker,
+		ServiceTier:              req.ServiceTier,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("db: %v", err)})
@@ -1148,6 +1156,7 @@ type createRFQRequest struct {
 	RequiredCredentialsJSON  string `json:"required_credentials_json,omitempty"`
 	CommitDeadline           string `json:"commit_deadline,omitempty"`
 	RevealDeadline           string `json:"reveal_deadline,omitempty"`
+	ServiceTier              int    `json:"service_tier,omitempty"`
 	ExpiresAt                string `json:"expires_at"`
 	ParentEscrowID           *int64 `json:"parent_escrow_id,omitempty"`
 }
@@ -1201,6 +1210,11 @@ func (h *Handlers) CreateRFQ(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if req.ServiceTier < 0 || req.ServiceTier > 1 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid service_tier: must be 0 or 1"})
+		return
+	}
+
 	svc := h.biddingService()
 	rfq, err := svc.CreateRFQ(r.Context(), bidding.CreateRFQParams{
 		Title:                    req.Title,
@@ -1219,6 +1233,7 @@ func (h *Handlers) CreateRFQ(w http.ResponseWriter, r *http.Request) {
 		MilestonesJSON:           req.MilestonesJSON,
 		RequirementsJSON:         req.RequirementsJSON,
 		RequiredCredentialsJSON:  req.RequiredCredentialsJSON,
+		ServiceTier:              req.ServiceTier,
 		CommitDeadline:           commitDeadline,
 		RevealDeadline:           revealDeadline,
 		ExpiresAt:                expiresAt,

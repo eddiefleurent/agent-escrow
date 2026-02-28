@@ -500,13 +500,14 @@ func MakeEscrowCreatedReceipt(escrowID int64, escrowAddr, buyer common.Address) 
 	addrBytes := common.BytesToHash(escrowAddr.Bytes())
 	buyerBytes := common.BytesToHash(buyer.Bytes())
 
-	// Non-indexed: worker, verifier, arbitrator, taskSpecHash, token
+	// Non-indexed: worker, verifier, arbitrator, taskSpecHash, token, serviceTier
 	nonIndexed, _ := FactoryABI.Events["EscrowCreated"].Inputs.NonIndexed().Pack(
 		common.HexToAddress("0x2222222222222222222222222222222222222222"),
 		common.HexToAddress("0x3333333333333333333333333333333333333333"),
 		common.HexToAddress("0x4444444444444444444444444444444444444444"),
 		[32]byte{0x01},
 		common.Address{},
+		uint8(0),
 	)
 
 	return &types.Receipt{

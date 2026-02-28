@@ -85,14 +85,14 @@ func createEscrowOn(ctx context.Context, q dbExecer, e *Escrow) (*Escrow, error)
 		activeWorker = e.Worker
 	}
 	res, err := q.ExecContext(ctx,
-		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, parent_escrow_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, service_tier, parent_escrow_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.TaskID, e.ChainID, e.FactoryAddress, e.EscrowAddress, e.EscrowID,
 		e.Buyer, e.Worker, e.Verifier, e.Arbitrator, e.Amount, e.WorkerStake, e.Token, e.Status,
 		e.SubmissionDeadline, e.ReviewPeriodSeconds, e.DisputePeriodSeconds, e.ArbitratorTimeoutSeconds,
 		msCount, e.CurrentMilestone,
 		e.BackupWorker, e.BackupDeadlineExtension, activeWorker, boolToInt(e.BackupActivated), boolToInt(e.Frozen),
-		e.ParentEscrowID,
+		e.ServiceTier, e.ParentEscrowID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert escrow: %w", err)
@@ -117,7 +117,7 @@ func (d *DB) CreateEscrowTx(ctx context.Context, tx *sql.Tx, e *Escrow) (*Escrow
 	return createEscrowOn(ctx, tx, e)
 }
 
-const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, parent_escrow_id, created_at, updated_at`
+const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, service_tier, parent_escrow_id, created_at, updated_at`
 
 func scanEscrow(scanner interface{ Scan(...any) error }) (*Escrow, error) {
 	e := &Escrow{}
@@ -129,7 +129,7 @@ func scanEscrow(scanner interface{ Scan(...any) error }) (*Escrow, error) {
 		&e.SubmissionDeadline, &e.ReviewPeriodSeconds, &e.DisputePeriodSeconds, &e.ArbitratorTimeoutSeconds,
 		&e.MilestoneCount, &e.CurrentMilestone,
 		&e.BackupWorker, &e.BackupDeadlineExtension, &e.ActiveWorker, &backupActivatedInt, &frozenInt,
-		&parentEscrowID,
+		&e.ServiceTier, &parentEscrowID,
 		&createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
@@ -506,7 +506,7 @@ func (d *DB) ListReputations(ctx context.Context, minCompleted int) ([]*Reputati
 const rfqColumns = `id, title, description, spec_hash, buyer, token, budget_min, budget_max,
 	deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds,
 	verifier, arbitrator, worker_stake, milestones_json, requirements_json, required_credentials_json,
-	bidding_mode, commit_deadline, reveal_deadline, parent_escrow_id,
+	bidding_mode, commit_deadline, reveal_deadline, service_tier, parent_escrow_id,
 	status, expires_at, created_at, updated_at`
 
 func scanRFQ(scanner interface{ Scan(...any) error }) (*RFQ, error) {
@@ -519,7 +519,7 @@ func scanRFQ(scanner interface{ Scan(...any) error }) (*RFQ, error) {
 		&r.Verifier, &r.Arbitrator, &r.WorkerStake, &r.MilestonesJSON, &r.RequirementsJSON,
 		&r.RequiredCredentialsJSON,
 		&r.BiddingMode, &r.CommitDeadline, &r.RevealDeadline,
-		&parentEscrowID,
+		&r.ServiceTier, &parentEscrowID,
 		&r.Status, &r.ExpiresAt, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
@@ -544,13 +544,13 @@ func (d *DB) CreateRFQ(ctx context.Context, r *RFQ) (*RFQ, error) {
 		`INSERT INTO rfqs (title, description, spec_hash, buyer, token, budget_min, budget_max,
 			deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds,
 			verifier, arbitrator, worker_stake, milestones_json, requirements_json, required_credentials_json,
-			bidding_mode, commit_deadline, reveal_deadline, parent_escrow_id, status, expires_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			bidding_mode, commit_deadline, reveal_deadline, service_tier, parent_escrow_id, status, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.Title, r.Description, r.SpecHash, r.Buyer, r.Token, r.BudgetMin, r.BudgetMax,
 		r.Deadline, r.ReviewPeriodSeconds, r.DisputePeriodSeconds, r.ArbitratorTimeoutSeconds,
 		r.Verifier, r.Arbitrator, r.WorkerStake, r.MilestonesJSON, r.RequirementsJSON,
 		r.RequiredCredentialsJSON,
-		r.BiddingMode, r.CommitDeadline, r.RevealDeadline, r.ParentEscrowID, r.Status, r.ExpiresAt,
+		r.BiddingMode, r.CommitDeadline, r.RevealDeadline, r.ServiceTier, r.ParentEscrowID, r.Status, r.ExpiresAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert rfq: %w", err)
