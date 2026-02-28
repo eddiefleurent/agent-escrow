@@ -184,6 +184,10 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 		return nil, errors.New("invalid arbitrator address")
 	}
 
+	if p.ServiceTier != 0 && p.ServiceTier != 1 {
+		return nil, errors.New("invalid service_tier: must be 0 (low_assurance) or 1 (high_assurance)")
+	}
+
 	if p.WorkerStake == "" {
 		p.WorkerStake = "0"
 	}

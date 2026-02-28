@@ -97,6 +97,9 @@ contract TaskEscrow {
     event EmergencyUnfrozen();
     event EmergencyResolved(uint16 workerAwardBps);
 
+    // Service tier constants (paper §5.3)
+    uint8 public constant TIER_HIGH_ASSURANCE = 1;
+
     address public immutable factory;
     address public immutable token;
     address public immutable buyer;
@@ -361,7 +364,7 @@ contract TaskEscrow {
 
     function approveByBuyer() external nonReentrant whenNotFrozen {
         _requireBuyer();
-        if (serviceTier == 1) revert HighAssuranceRequiresVerifier();
+        if (serviceTier == TIER_HIGH_ASSURANCE) revert HighAssuranceRequiresVerifier();
         _approve(msg.sender);
     }
 
@@ -509,7 +512,7 @@ contract TaskEscrow {
 
     function approveMilestoneByBuyer(uint8 milestoneIndex) external nonReentrant whenNotFrozen {
         _requireBuyer();
-        if (serviceTier == 1) revert HighAssuranceRequiresVerifier();
+        if (serviceTier == TIER_HIGH_ASSURANCE) revert HighAssuranceRequiresVerifier();
         _approveMilestone(milestoneIndex, msg.sender);
     }
 

@@ -380,12 +380,12 @@ contract TaskEscrowEdgeCasesTest is Test {
         factory.acceptOwnership();
 
         vm.prank(newOwner);
-        factory.setProtocolFeeBps(200);
-        assertEq(factory.protocolFeeBps(), 200);
+        factory.setProtocolFeeBps(50);
+        assertEq(factory.protocolFeeBps(), 50);
 
         vm.expectRevert(TaskEscrowFactory.Unauthorized.selector);
         vm.prank(owner);
-        factory.setProtocolFeeBps(300);
+        factory.setProtocolFeeBps(50);
     }
 
     function testTransferOwnershipOverwritesPending() public {

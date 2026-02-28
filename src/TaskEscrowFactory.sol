@@ -82,6 +82,7 @@ contract TaskEscrowFactory {
     constructor(uint16 _protocolFeeBps, uint16 _highAssuranceFeeBps, address _treasury, address _owner) {
         if (_protocolFeeBps > 10_000) revert InvalidFeeBps();
         if (_highAssuranceFeeBps > 10_000) revert InvalidFeeBps();
+        if (_highAssuranceFeeBps < _protocolFeeBps) revert InvalidFeeBps();
         if (_treasury == address(0) || _owner == address(0)) revert InvalidAddress();
         protocolFeeBps = _protocolFeeBps;
         highAssuranceFeeBps = _highAssuranceFeeBps;
@@ -185,6 +186,7 @@ contract TaskEscrowFactory {
 
     function setProtocolFeeBps(uint16 newFeeBps) external onlyOwner {
         if (newFeeBps > 10_000) revert InvalidFeeBps();
+        if (newFeeBps > highAssuranceFeeBps) revert InvalidFeeBps();
         uint16 oldFee = protocolFeeBps;
         protocolFeeBps = newFeeBps;
         emit ProtocolFeeUpdated(oldFee, newFeeBps);
@@ -192,6 +194,7 @@ contract TaskEscrowFactory {
 
     function setHighAssuranceFeeBps(uint16 newFeeBps) external onlyOwner {
         if (newFeeBps > 10_000) revert InvalidFeeBps();
+        if (newFeeBps < protocolFeeBps) revert InvalidFeeBps();
         uint16 oldFee = highAssuranceFeeBps;
         highAssuranceFeeBps = newFeeBps;
         emit HighAssuranceFeeUpdated(oldFee, newFeeBps);

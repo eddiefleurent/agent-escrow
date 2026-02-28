@@ -195,6 +195,10 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid service_tier: must be 0 or 1"})
 		return
 	}
+	var serviceTier uint8
+	if req.ServiceTier == 1 {
+		serviceTier = 1
+	}
 
 	// Validate all uint64→int64 conversions before any on-chain or DB side effects.
 	submissionDeadline, err := numconv.Uint64ToInt64(deadline, "submission_deadline")
@@ -246,7 +250,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		TaskSpecHash:             specHash,
 		ArbitratorTimeoutSeconds: arbTimeout,
 		Token:                    tokenAddr,
-		ServiceTier:              uint8(req.ServiceTier), //nolint:gosec // validated 0-1 above
+		ServiceTier:              serviceTier,
 		Milestones:               milestones,
 		BackupWorker:             backupWorkerAddr,
 		BackupDeadlineExtension:  backupDeadlineExt,
