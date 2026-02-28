@@ -63,7 +63,7 @@ type escrowIDArgs struct {
 
 type castVerifierVoteArgs struct {
 	EscrowID       FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID or on-chain escrow address (0x...)"`
-	Approve        bool           `json:"approve" jsonschema:"true = approve, false = reject"`
+	Approve        *bool          `json:"approve" jsonschema:"true = approve, false = reject"`
 	ReasonURI      string         `json:"reason_uri,omitempty" jsonschema:"Optional reason URI (recommended when approve=false)"`
 	MilestoneIndex FlexibleString `json:"milestone_index,omitempty" jsonschema:"Milestone index (required for multi-milestone escrows)"`
 }
@@ -930,35 +930,11 @@ func (s *Server) handleDepositStake(ctx context.Context, req *mcp.CallToolReques
 	}
 
 	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
-
-	if isERC20Token(escrow.Token) {
-		tokenAddr := common.HexToAddress(escrow.Token)
-		approveTx, err := s.chain.ApproveERC20(ctx, tokenAddr, escrowAddr, stakeAmount)
-		if err != nil {
-			return textResult(fmt.Sprintf("approve error: %v", chain.HumanizeError(err))), nil, nil
-		}
-		approveReceipt, err := chain.WaitMined(ctx, s.chain, approveTx.Hash())
-		if err != nil {
-			return textResult(fmt.Sprintf("approve receipt error: %v", err)), nil, nil
-		}
-		if approveReceipt.Status != 1 {
-			return textResult("approve transaction reverted"), nil, nil
-		}
-		tx, err := s.chain.DepositStake(ctx, escrowAddr, nil)
-		if err != nil {
-			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
-		}
-		_ = s.idx.RunOnce(ctx)
-		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Worker can now call submit_work."})
+	txHash, errResult := s.processStakeDeposit(ctx, escrowAddr, escrow.Token, stakeAmount, false)
+	if errResult != nil {
+		return errResult, nil, nil
 	}
-
-	tx, err := s.chain.DepositStake(ctx, escrowAddr, stakeAmount)
-	if err != nil {
-		return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
-	}
-
-	_ = s.idx.RunOnce(ctx)
-	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Worker can now call submit_work."})
+	return jsonResult(map[string]any{"tx_hash": txHash, "next_steps": "Worker can now call submit_work."})
 }
 
 func (s *Server) handleDepositVerifierStake(ctx context.Context, req *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
@@ -973,35 +949,54 @@ func (s *Server) handleDepositVerifierStake(ctx context.Context, req *mcp.CallTo
 	}
 
 	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
+	txHash, errResult := s.processStakeDeposit(ctx, escrowAddr, escrow.Token, stakeAmount, true)
+	if errResult != nil {
+		return errResult, nil, nil
+	}
+	return jsonResult(map[string]any{"tx_hash": txHash, "next_steps": "Verifier can now cast_verifier_vote."})
+}
 
-	if isERC20Token(escrow.Token) {
-		tokenAddr := common.HexToAddress(escrow.Token)
+// processStakeDeposit handles shared ERC20 approve+wait and deposit flow.
+func (s *Server) processStakeDeposit(
+	ctx context.Context,
+	escrowAddr common.Address,
+	token string,
+	stakeAmount *big.Int,
+	isVerifierStake bool,
+) (string, *mcp.CallToolResult) {
+	depositFn := s.chain.DepositStake
+	if isVerifierStake {
+		depositFn = s.chain.DepositVerifierStake
+	}
+
+	if isERC20Token(token) {
+		tokenAddr := common.HexToAddress(token)
 		approveTx, err := s.chain.ApproveERC20(ctx, tokenAddr, escrowAddr, stakeAmount)
 		if err != nil {
-			return textResult(fmt.Sprintf("approve error: %v", chain.HumanizeError(err))), nil, nil
+			return "", textResult(fmt.Sprintf("approve error: %v", chain.HumanizeError(err)))
 		}
 		approveReceipt, err := chain.WaitMined(ctx, s.chain, approveTx.Hash())
 		if err != nil {
-			return textResult(fmt.Sprintf("approve receipt error: %v", err)), nil, nil
+			return "", textResult(fmt.Sprintf("approve receipt error: %v", err))
 		}
 		if approveReceipt.Status != 1 {
-			return textResult("approve transaction reverted"), nil, nil
+			return "", textResult("approve transaction reverted")
 		}
-		tx, err := s.chain.DepositVerifierStake(ctx, escrowAddr, nil)
+		tx, err := depositFn(ctx, escrowAddr, nil)
 		if err != nil {
-			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
+			return "", textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err)))
 		}
 		_ = s.idx.RunOnce(ctx)
-		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Verifier can now cast_verifier_vote."})
+		return tx.Hash().Hex(), nil
 	}
 
-	tx, err := s.chain.DepositVerifierStake(ctx, escrowAddr, stakeAmount)
+	tx, err := depositFn(ctx, escrowAddr, stakeAmount)
 	if err != nil {
-		return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
+		return "", textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err)))
 	}
 
 	_ = s.idx.RunOnce(ctx)
-	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Verifier can now cast_verifier_vote."})
+	return tx.Hash().Hex(), nil
 }
 
 func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest, args submitArgs) (*mcp.CallToolResult, any, error) {
@@ -1228,6 +1223,10 @@ func (s *Server) handleVerifyAndApprove(ctx context.Context, req *mcp.CallToolRe
 }
 
 func (s *Server) handleCastVerifierVote(ctx context.Context, req *mcp.CallToolRequest, args castVerifierVoteArgs) (*mcp.CallToolResult, any, error) {
+	if args.Approve == nil {
+		return textResult("approve is required"), nil, nil
+	}
+
 	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
@@ -1242,7 +1241,7 @@ func (s *Server) handleCastVerifierVote(ctx context.Context, req *mcp.CallToolRe
 		if err != nil {
 			return textResult(err.Error()), nil, nil
 		}
-		tx, err := s.chain.CastMilestoneVerifierVote(ctx, addr, msIdx, args.Approve, args.ReasonURI)
+		tx, err := s.chain.CastMilestoneVerifierVote(ctx, addr, msIdx, *args.Approve, args.ReasonURI)
 		if err != nil {
 			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 		}
@@ -1250,7 +1249,7 @@ func (s *Server) handleCastVerifierVote(ctx context.Context, req *mcp.CallToolRe
 		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Poll get_escrow for quorum status updates (~15s indexer lag)."})
 	}
 
-	tx, err := s.chain.CastVerifierVote(ctx, addr, args.Approve, args.ReasonURI)
+	tx, err := s.chain.CastVerifierVote(ctx, addr, *args.Approve, args.ReasonURI)
 	if err != nil {
 		return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 	}

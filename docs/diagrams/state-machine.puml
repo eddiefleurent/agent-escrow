@@ -47,6 +47,7 @@ Submitted --> Approved : verifier verifyAndApprove(proof)\n(when zkVerifier conf
 Submitted --> Disputed : buyer disputes
 Submitted -[#FF8F00]-> Disputed : verifier rejects
 Submitted -[#FF8F00]-> Disputed : worker escalates silence
+Submitted -[#FF8F00]-> Disputed : no-quorum expiry\n(expireNoQuorum)
 
 Disputed --> Resolved : arbitrator resolves
 Disputed --> Refunded : arbitrator timeout
@@ -74,8 +75,9 @@ end note
 
 note right of Submitted
   Review window opens.
-  Three paths to Disputed:
-  buyer, verifier, or worker.
+  Four paths to Disputed:
+  buyer, verifier, worker,
+  or no-quorum expiry.
   **Tier 1 (high-assurance)**:
   buyer approval blocked;
   verifier must approve
@@ -141,6 +143,7 @@ state "Escrow: Funded" as EscrowFunded #E3F2FD ##42A5F5 {
     MsSubmitted --> MsDisputed : buyer disputes
     MsSubmitted --> MsDisputed : verifier rejects
     MsSubmitted --> MsDisputed : worker escalates
+    MsSubmitted --> MsDisputed : no-quorum expiry\n(expireMilestoneNoQuorum)
 
     MsDisputed --> MsResolved : arbitrator resolves
     MsDisputed --> MsCancelled : arbitrator timeout

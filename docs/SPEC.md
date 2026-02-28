@@ -101,6 +101,7 @@ Terminal states (Settled, Refunded, Cancelled) are mutually exclusive and irreve
 | `verifyAndApprove` | verifier panel member | Submitted | `zkVerifier != 0`, `proofHash != 0`, `keccak256(proof) == proofHash`, verifier contract returns `true` |
 | `dispute` | buyer | Submitted | Within review + dispute window |
 | `escalateSilence` | worker | Submitted | After review window lapse without action |
+| `expireNoQuorum` | buyer / worker / verifier panel member | Submitted | After review + dispute window; transitions stale no-quorum cycle to `Disputed` |
 | `resolveDispute` | arbitrator | Disputed | `workerAwardBps` in [0, 10000] |
 | `claimTimeoutRefund` | buyer | Funded | Past submission deadline |
 | `claimArbitratorTimeout` | buyer | Disputed | Past `disputedAt + arbitratorTimeoutSeconds` |
@@ -234,7 +235,7 @@ When `verifierStakePerVerifier > 0`, each verifier panel member must deposit sta
 - On quorum finalization, verifiers who voted with the majority outcome (approval-majority or rejection-majority) receive their full verifier stake back.
 - Verifiers who voted against the majority forfeit their verifier stake to the buyer.
 - Abstainers (`quorumVote == 0`) are refunded on quorum finalization.
-- If a review cycle exits without quorum finalization (e.g. buyer approval in low-assurance mode, dispute/arbitrator timeout resolution, milestone timeout cancellation, or emergency resolve), all currently deposited verifier stakes are refunded to their depositors before the cycle advances or settles.
+- If a review cycle exits without quorum finalization (e.g. buyer approval in low-assurance mode, dispute/arbitrator timeout resolution, milestone timeout cancellation, explicit no-quorum expiry via `expireNoQuorum` / `expireMilestoneNoQuorum`, or emergency resolve), all currently deposited verifier stakes are refunded to their depositors before the cycle advances or settles.
 - `verifyAndApprove` and `verifyAndApproveMilestone` count as approval votes for quorum and therefore participate in the same majority/minority stake settlement logic.
 
 ### Abort Refund
@@ -273,7 +274,7 @@ The factory owner can freeze or unfreeze individual addresses via `freezeAddress
 
 ### Contract Freeze
 
-The factory owner can freeze or unfreeze individual escrows via `freezeEscrow(escrowId)` / `unfreezeEscrow(escrowId)`. A frozen escrow blocks participant-callable state-changing functions protected by `whenNotFrozen`: `fund`, `fundWithAuthorization`, `depositStake`, `depositVerifierStake`, `submit`, `verifyAndApprove`, `approveByBuyer`, `castVerifierVote`, `dispute`, `escalateSilence`, `resolveDispute`, `activateBackup`, `submitMilestone`, `verifyAndApproveMilestone`, `approveMilestoneByBuyer`, `castMilestoneVerifierVote`, `disputeMilestone`, `escalateMilestoneSilence`, `resolveMilestoneDispute`, and `abortRemainingMilestones`. Timeout claim paths (`claimTimeoutRefund`, `claimArbitratorTimeout`) remain callable while frozen to preserve fund-recovery liveness. `emergencyResolve` is intentionally excluded from this participant-callable list because it is owner/factory-callable emergency control.
+The factory owner can freeze or unfreeze individual escrows via `freezeEscrow(escrowId)` / `unfreezeEscrow(escrowId)`. A frozen escrow blocks participant-callable state-changing functions protected by `whenNotFrozen`: `fund`, `fundWithAuthorization`, `depositStake`, `depositVerifierStake`, `submit`, `verifyAndApprove`, `approveByBuyer`, `castVerifierVote`, `dispute`, `escalateSilence`, `expireNoQuorum`, `resolveDispute`, `activateBackup`, `submitMilestone`, `verifyAndApproveMilestone`, `approveMilestoneByBuyer`, `castMilestoneVerifierVote`, `disputeMilestone`, `escalateMilestoneSilence`, `expireMilestoneNoQuorum`, `resolveMilestoneDispute`, and `abortRemainingMilestones`. Timeout claim paths (`claimTimeoutRefund`, `claimArbitratorTimeout`) remain callable while frozen to preserve fund-recovery liveness. `emergencyResolve` is intentionally excluded from this participant-callable list because it is owner/factory-callable emergency control.
 
 ### Emergency Resolution
 
@@ -360,6 +361,7 @@ Two service tiers ensure safety does not become a luxury good:
 - **Late submission**: reverts if `block.timestamp > submissionDeadline`.
 - **Approval/dispute race**: first confirmed transition wins; subsequent calls revert by status guard.
 - **Buyer inactivity after submission**: verifier panel can still finalize via quorum within review window. Worker can escalate silence to Disputed after review window lapse; arbitrator remains final payout authority.
+- **No-quorum expiry**: if neither quorum threshold is reached before the review+dispute window ends, any lifecycle participant (buyer, active worker, or verifier panel member) can call `expireNoQuorum` / `expireMilestoneNoQuorum` to move the cycle to `Disputed` and refund all unsettled verifier stakes.
 - **Arbitrator inactivity**: buyer can claim full refund via `claimArbitratorTimeout()` after the configured timeout period. This records a `disputed` outcome (not `failed`) since the arbitrator's inaction -- not the worker's performance -- caused the refund.
 - **ERC20 vs ETH**: `token == address(0)` means ETH-denominated. All settlement math is token-agnostic; the transfer mechanism differs.
 - **Zero worker stake**: `depositStake()` reverts. Submit proceeds without stake check.

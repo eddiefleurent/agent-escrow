@@ -475,11 +475,7 @@ contract TaskEscrow {
         if (block.timestamp > _disputeWindowEnds()) revert WindowExpired();
         _refundUnsettledVerifierStakes();
         _resetQuorumVoteState();
-        disputeReasonURI = reasonURI;
-        disputedAt = uint64(block.timestamp);
-        status = Status.Disputed;
-        emit Disputed(msg.sender, reasonURI, uint64(block.timestamp));
-        if (milestoneCount == 1) _syncMs0Dispute(reasonURI);
+        _setSingleDisputed(msg.sender, reasonURI, false);
     }
 
     function escalateSilence(string calldata reasonURI) external whenNotFrozen {
@@ -489,12 +485,17 @@ contract TaskEscrow {
         if (block.timestamp > _disputeWindowEnds()) revert WindowExpired();
         _refundUnsettledVerifierStakes();
         _resetQuorumVoteState();
-        disputeReasonURI = reasonURI;
-        disputedAt = uint64(block.timestamp);
-        status = Status.Disputed;
-        emit SilenceEscalated(msg.sender, reasonURI, uint64(block.timestamp));
-        emit Disputed(msg.sender, reasonURI, uint64(block.timestamp));
-        if (milestoneCount == 1) _syncMs0Dispute(reasonURI);
+        _setSingleDisputed(msg.sender, reasonURI, true);
+    }
+
+    /// @notice Advances an expired single-shot review cycle into dispute when quorum did not finalize in time.
+    function expireNoQuorum(string calldata reasonURI) external whenNotFrozen {
+        _requireState(Status.Submitted);
+        if (!_isLifecycleParticipant(msg.sender)) revert Unauthorized();
+        if (block.timestamp <= _disputeWindowEnds()) revert WindowNotOpen();
+        _refundUnsettledVerifierStakes();
+        _resetQuorumVoteState();
+        _setSingleDisputed(msg.sender, reasonURI, false);
     }
 
     function resolveDispute(uint16 workerAwardBps, string calldata resolutionURI) external nonReentrant whenNotFrozen {
@@ -636,10 +637,7 @@ contract TaskEscrow {
         }
         _refundUnsettledVerifierStakes();
         _resetQuorumVoteState();
-        ms.disputeReasonURI = reasonURI;
-        ms.disputedAt = uint64(block.timestamp);
-        ms.status = MilestoneStatus.Disputed;
-        emit MilestoneDisputed(milestoneIndex, msg.sender, reasonURI);
+        _setMilestoneDisputed(milestoneIndex, msg.sender, reasonURI, false);
     }
 
     function castMilestoneVerifierVote(uint8 milestoneIndex, bool approve, string calldata reasonURI)
@@ -661,11 +659,21 @@ contract TaskEscrow {
         if (block.timestamp > reviewEnd + uint256(disputePeriodSeconds)) revert WindowExpired();
         _refundUnsettledVerifierStakes();
         _resetQuorumVoteState();
-        ms.disputeReasonURI = reasonURI;
-        ms.disputedAt = uint64(block.timestamp);
-        ms.status = MilestoneStatus.Disputed;
-        emit MilestoneSilenceEscalated(milestoneIndex, msg.sender, reasonURI);
-        emit MilestoneDisputed(milestoneIndex, msg.sender, reasonURI);
+        _setMilestoneDisputed(milestoneIndex, msg.sender, reasonURI, true);
+    }
+
+    /// @notice Advances an expired milestone review cycle into dispute when quorum did not finalize in time.
+    function expireMilestoneNoQuorum(uint8 milestoneIndex, string calldata reasonURI) external whenNotFrozen {
+        _requireMultiMsFunded();
+        if (!_isLifecycleParticipant(msg.sender)) revert Unauthorized();
+        if (milestoneIndex != currentMilestone) revert InvalidMilestoneIndex();
+        Milestone storage ms = milestones[milestoneIndex];
+        if (ms.status != MilestoneStatus.Submitted) revert InvalidState();
+        uint256 disputeEnd = uint256(ms.submittedAt) + uint256(reviewPeriodSeconds) + uint256(disputePeriodSeconds);
+        if (block.timestamp <= disputeEnd) revert WindowNotOpen();
+        _refundUnsettledVerifierStakes();
+        _resetQuorumVoteState();
+        _setMilestoneDisputed(milestoneIndex, msg.sender, reasonURI, false);
     }
 
     function resolveMilestoneDispute(uint8 milestoneIndex, uint16 workerAwardBps, string calldata resolutionURI)
@@ -858,10 +866,7 @@ contract TaskEscrow {
         if (quorumRejectCount >= _quorumRejectThreshold()) {
             emit QuorumReached(false, quorumApproveCount, quorumRejectCount);
             _settleVerifierStakes(false);
-            ms.disputeReasonURI = reasonURI;
-            ms.disputedAt = uint64(block.timestamp);
-            ms.status = MilestoneStatus.Disputed;
-            emit MilestoneDisputed(milestoneIndex, voter, reasonURI);
+            _setMilestoneDisputed(milestoneIndex, voter, reasonURI, false);
             _resetQuorumVoteState();
         }
     }
@@ -875,11 +880,28 @@ contract TaskEscrow {
     function _quorumReject(string memory reasonURI) internal {
         emit QuorumReached(false, quorumApproveCount, quorumRejectCount);
         _settleVerifierStakes(false);
+        _setSingleDisputed(msg.sender, reasonURI, false);
+    }
+
+    function _setSingleDisputed(address raisedBy, string memory reasonURI, bool emitSilence) internal {
+        uint64 ts = uint64(block.timestamp);
         disputeReasonURI = reasonURI;
-        disputedAt = uint64(block.timestamp);
+        disputedAt = ts;
         status = Status.Disputed;
-        emit Disputed(msg.sender, reasonURI, uint64(block.timestamp));
+        if (emitSilence) emit SilenceEscalated(raisedBy, reasonURI, ts);
+        emit Disputed(raisedBy, reasonURI, ts);
         if (milestoneCount == 1) _syncMs0Dispute(reasonURI);
+    }
+
+    function _setMilestoneDisputed(uint8 milestoneIndex, address raisedBy, string memory reasonURI, bool emitSilence)
+        internal
+    {
+        Milestone storage ms = milestones[milestoneIndex];
+        ms.disputeReasonURI = reasonURI;
+        ms.disputedAt = uint64(block.timestamp);
+        ms.status = MilestoneStatus.Disputed;
+        if (emitSilence) emit MilestoneSilenceEscalated(milestoneIndex, raisedBy, reasonURI);
+        emit MilestoneDisputed(milestoneIndex, raisedBy, reasonURI);
     }
 
     function _settleVerifierStakes(bool approvalMajority) internal {
@@ -935,6 +957,10 @@ contract TaskEscrow {
             if (verifierPanel[i] == candidate) return true;
         }
         return false;
+    }
+
+    function _isLifecycleParticipant(address candidate) internal view returns (bool) {
+        return candidate == buyer || candidate == activeWorker || _isQuorumVerifier(candidate);
     }
 
     function getQuorumPanel() external view returns (address[] memory panel) {

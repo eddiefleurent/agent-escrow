@@ -69,8 +69,13 @@ Escrow --> Worker: status = Submitted
 VA -> Escrow: depositVerifierStake()
 Escrow --> VA: quorum stake recorded
 
-Buyer -> Escrow: dispute(...) / disputeMilestone(...)
-Escrow --> Buyer: status = Disputed
+alt review+dispute windows still open
+  Buyer -> Escrow: dispute(...) / disputeMilestone(...)
+  Escrow --> Buyer: status = Disputed
+else review+dispute windows expired
+  Buyer -> Escrow: expireNoQuorum(...) / expireMilestoneNoQuorum(...)
+  Escrow --> Buyer: status = Disputed
+end
 
 Arbitrator -> Escrow: resolveDispute(...) / resolveMilestoneDispute(...)
 Escrow -> Escrow: refund unsettled verifier stakes

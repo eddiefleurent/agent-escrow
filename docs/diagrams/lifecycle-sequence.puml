@@ -84,6 +84,8 @@ else #FFF3E0 Verifier rejects
   verifier -> escrow : reject
 else #FFF3E0 Worker escalates silence
   worker -> escrow : escalate
+else #FFF3E0 No quorum by review+dispute expiry
+  buyer -> escrow : expireNoQuorum(reasonURI)
 end
 
 note over escrow #FFF3E0 : **Disputed**
