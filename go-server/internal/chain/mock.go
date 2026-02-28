@@ -40,30 +40,29 @@ type MockClient struct {
 
 	Delay time.Duration
 
-	CreateEscrowErr        error
-	FundErr                error
-	FundWithAuthErr        error
-	DepositStakeErr        error
-	ApproveERC20Err        error
-	SubmitErr              error
-	VerifyAndApproveErr    error
-	ApproveByBuyerErr      error
-	ApproveByVerifierErr   error
-	RejectByVerifierErr    error
-	DisputeErr             error
-	EscalateSilenceErr     error
-	ResolveDisputeErr      error
-	ClaimTimeoutRefundErr  error
-	ClaimArbitratorTimeErr error
-	StatusVal              uint8
-	StatusErr              error
+	CreateEscrowErr         error
+	FundErr                 error
+	FundWithAuthErr         error
+	DepositStakeErr         error
+	DepositVerifierStakeErr error
+	ApproveERC20Err         error
+	SubmitErr               error
+	VerifyAndApproveErr     error
+	ApproveByBuyerErr       error
+	CastVerifierVoteErr     error
+	DisputeErr              error
+	EscalateSilenceErr      error
+	ResolveDisputeErr       error
+	ClaimTimeoutRefundErr   error
+	ClaimArbitratorTimeErr  error
+	StatusVal               uint8
+	StatusErr               error
 
 	// Milestone-specific error fields
 	SubmitMilestoneErr              error
 	VerifyAndApproveMilestoneErr    error
 	ApproveMilestoneBuyerErr        error
-	ApproveMilestoneVerifierErr     error
-	RejectMilestoneVerifierErr      error
+	CastMilestoneVerifierVoteErr    error
 	DisputeMilestoneErr             error
 	EscalateMilestoneSilenceErr     error
 	ResolveMilestoneDisputeErr      error
@@ -220,6 +219,19 @@ func (m *MockClient) DepositStake(ctx context.Context, addr common.Address, stak
 	return makeFakeTx(), nil
 }
 
+func (m *MockClient) DepositVerifierStake(ctx context.Context, addr common.Address, stakeAmount *big.Int) (*types.Transaction, error) {
+	if err := m.applyDelay(ctx); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.DepositVerifierStakeErr != nil {
+		return nil, m.DepositVerifierStakeErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "depositVerifierStake", To: addr, Value: stakeAmount})
+	return makeFakeTx(), nil
+}
+
 func (m *MockClient) ApproveERC20(_ context.Context, tokenAddr common.Address, spender common.Address, amount *big.Int) (*types.Transaction, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -260,23 +272,13 @@ func (m *MockClient) ApproveByBuyer(_ context.Context, addr common.Address) (*ty
 	return makeFakeTx(), nil
 }
 
-func (m *MockClient) ApproveByVerifier(_ context.Context, addr common.Address) (*types.Transaction, error) {
+func (m *MockClient) CastVerifierVote(_ context.Context, addr common.Address, _ bool, _ string) (*types.Transaction, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.ApproveByVerifierErr != nil {
-		return nil, m.ApproveByVerifierErr
+	if m.CastVerifierVoteErr != nil {
+		return nil, m.CastVerifierVoteErr
 	}
-	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "approveByVerifier", To: addr})
-	return makeFakeTx(), nil
-}
-
-func (m *MockClient) RejectByVerifier(_ context.Context, addr common.Address, _ string) (*types.Transaction, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.RejectByVerifierErr != nil {
-		return nil, m.RejectByVerifierErr
-	}
-	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "rejectByVerifier", To: addr})
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "castVerifierVote", To: addr})
 	return makeFakeTx(), nil
 }
 
@@ -366,23 +368,13 @@ func (m *MockClient) ApproveMilestoneByBuyer(_ context.Context, addr common.Addr
 	return makeFakeTx(), nil
 }
 
-func (m *MockClient) ApproveMilestoneByVerifier(_ context.Context, addr common.Address, _ uint8) (*types.Transaction, error) {
+func (m *MockClient) CastMilestoneVerifierVote(_ context.Context, addr common.Address, _ uint8, _ bool, _ string) (*types.Transaction, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.ApproveMilestoneVerifierErr != nil {
-		return nil, m.ApproveMilestoneVerifierErr
+	if m.CastMilestoneVerifierVoteErr != nil {
+		return nil, m.CastMilestoneVerifierVoteErr
 	}
-	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "approveMilestoneByVerifier", To: addr})
-	return makeFakeTx(), nil
-}
-
-func (m *MockClient) RejectMilestoneByVerifier(_ context.Context, addr common.Address, _ uint8, _ string) (*types.Transaction, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.RejectMilestoneVerifierErr != nil {
-		return nil, m.RejectMilestoneVerifierErr
-	}
-	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "rejectMilestoneByVerifier", To: addr})
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "castMilestoneVerifierVote", To: addr})
 	return makeFakeTx(), nil
 }
 
@@ -522,10 +514,11 @@ func MakeEscrowCreatedReceipt(escrowID int64, escrowAddr, buyer common.Address) 
 	addrBytes := common.BytesToHash(escrowAddr.Bytes())
 	buyerBytes := common.BytesToHash(buyer.Bytes())
 
-	// Non-indexed: worker, verifier, arbitrator, taskSpecHash, token, serviceTier, zkVerifier, circuitId
+	// Non-indexed: worker, quorumThreshold, quorumVerifierCount, arbitrator, taskSpecHash, token, serviceTier, zkVerifier, circuitId
 	nonIndexed, err := FactoryABI.Events["EscrowCreated"].Inputs.NonIndexed().Pack(
 		common.HexToAddress("0x2222222222222222222222222222222222222222"),
-		common.HexToAddress("0x3333333333333333333333333333333333333333"),
+		uint8(1),
+		uint8(1),
 		common.HexToAddress("0x4444444444444444444444444444444444444444"),
 		[32]byte{0x01},
 		common.Address{},

@@ -31,7 +31,10 @@ contract TaskEscrowTest is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: AMOUNT,
                 workerStake: 0,
@@ -60,7 +63,10 @@ contract TaskEscrowTest is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: AMOUNT,
                 workerStake: STAKE,
@@ -153,7 +159,7 @@ contract TaskEscrowTest is Test {
         escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
 
         vm.prank(verifier);
-        escrow.rejectByVerifier("ipfs://reject");
+        escrow.castVerifierVote(false, "ipfs://reject");
 
         assertEq(uint256(escrow.status()), uint256(TaskEscrow.Status.Disputed));
     }

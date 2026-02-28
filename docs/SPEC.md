@@ -20,15 +20,15 @@ Implements ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) (Toma
 
 | Paper Concept | Section | Implementation |
 |---|---|---|
-| Transfer of authority, responsibility, accountability | §2.1 | Immutable per-escrow roles (`buyer`, `worker`, `verifier`, `arbitrator`) with signed on-chain transitions |
+| Transfer of authority, responsibility, accountability | §2.1 | Immutable per-escrow roles (`buyer`, `worker`, `verifierPanel[]`, `arbitrator`) with signed on-chain transitions |
 | Task constraints and boundaries | §2.2 | Deadlines, review/dispute windows, strict state-machine transitions |
-| Verifiability axis | §2.2(h) | On-chain submission + proof-hash commitments; explicit verifier approval path including optional on-chain proof verification |
+| Verifiability axis | §2.2(h) | On-chain submission + proof-hash commitments; quorum-based verifier voting including optional on-chain proof verification votes |
 | Reversibility axis | §2.2(i) | Refund and split-settlement outcomes for failed/disputed tasks |
-| Dynamic cognitive friction | §2.3 | `rejectByVerifier` and `escalateSilence` force explicit decisions rather than passive acceptance |
+| Dynamic cognitive friction | §2.3 | Quorum verifier votes (`castVerifierVote`) and `escalateSilence` force explicit decisions rather than passive acceptance |
 | Principal-agent alignment | §2.3 | Escrow links payment to verified outcomes, making misalignment financially costly |
 | Transaction cost economics | §2.3 | Protocol fee snapshotting; complexity floor (V2) ensures delegation overhead doesn't exceed task value |
 | Monitoring requirements | §4.5 | Canonical events for every state transition; off-chain indexer as machine-readable oversight surface |
-| Trust calibration | §4.6 | Designated verifier/arbitrator identities; financial outcomes auditable on-chain |
+| Trust calibration | §4.6 | Designated verifier panel + quorum/arbitrator identities; financial outcomes auditable on-chain |
 | Adaptive coordination | §4.4 | Milestone-based escrow with intermediate checkpoints, partial payouts, and abort-on-failure; arbitrator timeout prevents permanent fund lock |
 | Smart contract as settlement | §4.2 | Escrow holds funds; verification clause gates release |
 | Verifiable task completion | §4.8 | Submission/proof hash commitments transform provisional output into settled fact; optional on-chain proof verification gates payout |
@@ -51,7 +51,7 @@ Implements ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) (Toma
 |---|---|
 | `buyer` | Funds escrow, approves or disputes submissions, receives refund on failure |
 | `worker` | Submits delivery, deposits stake (if required), receives payout on approval |
-| `verifier` | Checks submission quality; can approve or reject within review window |
+| `verifierPanel[]` | Quorum verifiers check submission quality and cast approve/reject votes; quorum finalizes approval/dispute |
 | `arbitrator` | Final authority in disputed cases; resolves with proportional split |
 | `treasury` | Receives protocol fee from successful payouts |
 | `backupWorker` | Optional pre-designated fallback worker; activated by buyer if primary defaults (paper §4.4) |
@@ -96,9 +96,9 @@ Terminal states (Settled, Refunded, Cancelled) are mutually exclusive and irreve
 | `cancelBeforeFunding` | buyer | Created | -- |
 | `submit` | worker | Funded | Before deadline; stake deposited if required |
 | `approveByBuyer` | buyer | Submitted | Within review window |
-| `approveByVerifier` | verifier | Submitted | Within review window |
+| `depositVerifierStake` | verifier panel member | Funded/Submitted | `verifierStakePerVerifier > 0`, not already deposited |
+| `castVerifierVote(approve, reasonURI)` | verifier panel member | Submitted | Within review window; one vote per verifier; quorum threshold or reject-threshold finalizes |
 | `verifyAndApprove` | verifier | Submitted | `zkVerifier != 0`, `proofHash != 0`, `keccak256(proof) == proofHash`, verifier contract returns `true` |
-| `rejectByVerifier` | verifier | Submitted | Within review window |
 | `dispute` | buyer | Submitted | Within review + dispute window |
 | `escalateSilence` | worker | Submitted | After review window lapse without action |
 | `resolveDispute` | arbitrator | Disputed | `workerAwardBps` in [0, 10000] |
@@ -153,7 +153,7 @@ Optional escrow-level verifier wiring at creation (`zkVerifier`, `circuitId`) en
 - `verifyAndApprove(proof)` checks `keccak256(proof) == proofHash` then calls `zkVerifier.verifyProof(circuitId, proof)`.
 - `verifyAndApproveMilestone(milestoneIndex, proof)` performs the same checks against milestone-local `proofHash`.
 
-If no verifier is configured, approval remains available through the existing verifier approval path (`approveByVerifier`), with `proofHash` serving as an immutable on-chain commitment for off-chain proof validation and dispute evidence.
+When verifier quorum is configured, `verifyAndApprove` / `verifyAndApproveMilestone` contribute one approval vote toward quorum (rather than bypassing quorum), while `proofHash` remains an immutable on-chain commitment for off-chain proof validation and dispute evidence.
 
 ## 5) Settlement Math
 
@@ -227,6 +227,15 @@ stakeForfeited = workerStake - stakeReturn
 
 Cancelled/aborted milestones contribute to `total` but not `workerAwarded`, so their weight dilutes the stake return proportionally.
 
+### Verifier Stake Settlement (Quorum)
+
+When `verifierStakePerVerifier > 0`, each verifier panel member must deposit stake before voting.
+
+- On quorum finalization, verifiers who voted with the majority outcome (approval-majority or rejection-majority) receive their full verifier stake back.
+- Verifiers who voted against the majority forfeit their verifier stake to the buyer.
+- Abstainers (`quorumVote == 0`) keep stake locked until they vote or dispute flow terminates.
+- `verifyAndApprove` and `verifyAndApproveMilestone` count as approval votes for quorum and therefore participate in the same majority/minority stake settlement logic.
+
 ### Abort Refund
 
 Sum of all `Pending` milestone amounts returned to buyer. Those milestones are set to `Cancelled`.
@@ -251,6 +260,7 @@ These must hold for every escrow at all times:
 6. **Backup exclusivity**: backup activation can occur at most once per escrow; `activeWorker` replaces the original worker for all subsequent operations.
 7. **Milestone ordering**: milestones are processed sequentially; `milestoneIndex` must equal `currentMilestone`.
 8. **Milestone fund conservation**: sum of all milestone payouts + refunds + fees + remaining stake = `amount + workerStake`.
+9. **Verifier stake conservation**: on quorum finalization, each staked verifier vote path settles exactly one `verifierStakePerVerifier` amount (refund to majority voter or slash to buyer).
 
 ## 7) Emergency Response Protocol (Paper §4.9)
 
@@ -258,11 +268,11 @@ The factory owner can respond to compromised credentials or malicious behavior b
 
 ### Credential Revocation
 
-The factory owner can freeze or unfreeze individual addresses via `freezeAddress(target)` / `unfreezeAddress(target)`. Frozen addresses cannot be used as buyer, worker, verifier, or arbitrator in new escrow creation; `createEscrow` checks the `frozenAddresses` mapping and reverts if any role is frozen.
+The factory owner can freeze or unfreeze individual addresses via `freezeAddress(target)` / `unfreezeAddress(target)`. Frozen addresses cannot be used as buyer, worker, verifier panel member, or arbitrator in new escrow creation; `createEscrow` checks the `frozenAddresses` mapping and reverts if any role is frozen.
 
 ### Contract Freeze
 
-The factory owner can freeze or unfreeze individual escrows via `freezeEscrow(escrowId)` / `unfreezeEscrow(escrowId)`. A frozen escrow blocks participant-callable state-changing functions protected by `whenNotFrozen`: `fund`, `fundWithAuthorization`, `depositStake`, `submit`, `approveByBuyer`, `approveByVerifier`, `rejectByVerifier`, `dispute`, `escalateSilence`, `resolveDispute`, `activateBackup`, `submitMilestone`, `approveMilestoneByBuyer`, `approveMilestoneByVerifier`, `rejectMilestoneByVerifier`, `disputeMilestone`, `escalateMilestoneSilence`, `resolveMilestoneDispute`, and `abortRemainingMilestones`. Timeout claim paths (`claimTimeoutRefund`, `claimArbitratorTimeout`) remain callable while frozen to preserve fund-recovery liveness. `emergencyResolve` is intentionally excluded from this participant-callable list because it is owner/factory-callable emergency control.
+The factory owner can freeze or unfreeze individual escrows via `freezeEscrow(escrowId)` / `unfreezeEscrow(escrowId)`. A frozen escrow blocks participant-callable state-changing functions protected by `whenNotFrozen`: `fund`, `fundWithAuthorization`, `depositStake`, `depositVerifierStake`, `submit`, `approveByBuyer`, `castVerifierVote`, `dispute`, `escalateSilence`, `resolveDispute`, `activateBackup`, `submitMilestone`, `approveMilestoneByBuyer`, `castMilestoneVerifierVote`, `disputeMilestone`, `escalateMilestoneSilence`, `resolveMilestoneDispute`, and `abortRemainingMilestones`. Timeout claim paths (`claimTimeoutRefund`, `claimArbitratorTimeout`) remain callable while frozen to preserve fund-recovery liveness. `emergencyResolve` is intentionally excluded from this participant-callable list because it is owner/factory-callable emergency control.
 
 ### Emergency Resolution
 
@@ -334,8 +344,8 @@ Two service tiers ensure safety does not become a luxury good:
 
 | Tier | Name | Fee Source | Approval Rule |
 |------|------|-----------|---------------|
-| 0 | Low-assurance (optimistic) | `protocolFeeBps` | Buyer **or** verifier can approve |
-| 1 | High-assurance (verified) | `highAssuranceFeeBps` | Verifier **only** can approve; `approveByBuyer` / `approveMilestoneByBuyer` revert with `HighAssuranceRequiresVerifier()` |
+| 0 | Low-assurance (optimistic) | `protocolFeeBps` | Buyer **or** verifier quorum can approve |
+| 1 | High-assurance (verified) | `highAssuranceFeeBps` | Verifier quorum **only** can approve; `approveByBuyer` / `approveMilestoneByBuyer` revert with `HighAssuranceRequiresVerifier()` |
 
 **Fee snapshot**: at `createEscrow` time, the factory reads `highAssuranceFeeBps` or `protocolFeeBps` depending on `serviceTier` and writes the result into the escrow's immutable `protocolFeeBpsSnapshot`. Subsequent factory fee changes do not affect existing escrows.
 
@@ -348,7 +358,7 @@ Two service tiers ensure safety does not become a luxury good:
 
 - **Late submission**: reverts if `block.timestamp > submissionDeadline`.
 - **Approval/dispute race**: first confirmed transition wins; subsequent calls revert by status guard.
-- **Buyer inactivity after submission**: verifier can still approve within review window. Worker can escalate silence to Disputed after review window lapse; arbitrator remains final payout authority.
+- **Buyer inactivity after submission**: verifier panel can still finalize via quorum within review window. Worker can escalate silence to Disputed after review window lapse; arbitrator remains final payout authority.
 - **Arbitrator inactivity**: buyer can claim full refund via `claimArbitratorTimeout()` after the configured timeout period. This records a `disputed` outcome (not `failed`) since the arbitrator's inaction -- not the worker's performance -- caused the refund.
 - **ERC20 vs ETH**: `token == address(0)` means ETH-denominated. All settlement math is token-agnostic; the transfer mechanism differs.
 - **Zero worker stake**: `depositStake()` reverts. Submit proceeds without stake check.

@@ -39,6 +39,17 @@ func (c *Client) DepositStake(ctx context.Context, escrow common.Address, stakeA
 	return c.SendTx(ctx, escrow, data, stakeAmount)
 }
 
+// DepositVerifierStake sends the depositVerifierStake() transaction.
+// For ETH escrows, stakeAmount is sent as msg.value.
+// For ERC20 escrows, pass stakeAmount as nil/zero (the verifier must approve the token first via ApproveERC20).
+func (c *Client) DepositVerifierStake(ctx context.Context, escrow common.Address, stakeAmount *big.Int) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("depositVerifierStake")
+	if err != nil {
+		return nil, fmt.Errorf("pack depositVerifierStake: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, stakeAmount)
+}
+
 // ApproveERC20 calls the ERC20 approve(spender, amount) method on the given token contract.
 func (c *Client) ApproveERC20(ctx context.Context, token common.Address, spender common.Address, amount *big.Int) (*types.Transaction, error) {
 	data, err := ERC20ABI.Pack("approve", spender, amount)
@@ -72,18 +83,10 @@ func (c *Client) ApproveByBuyer(ctx context.Context, escrow common.Address) (*ty
 	return c.SendTx(ctx, escrow, data, nil)
 }
 
-func (c *Client) ApproveByVerifier(ctx context.Context, escrow common.Address) (*types.Transaction, error) {
-	data, err := EscrowABI.Pack("approveByVerifier")
+func (c *Client) CastVerifierVote(ctx context.Context, escrow common.Address, approve bool, reasonURI string) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("castVerifierVote", approve, reasonURI)
 	if err != nil {
-		return nil, fmt.Errorf("pack approveByVerifier: %w", err)
-	}
-	return c.SendTx(ctx, escrow, data, nil)
-}
-
-func (c *Client) RejectByVerifier(ctx context.Context, escrow common.Address, reasonURI string) (*types.Transaction, error) {
-	data, err := EscrowABI.Pack("rejectByVerifier", reasonURI)
-	if err != nil {
-		return nil, fmt.Errorf("pack rejectByVerifier: %w", err)
+		return nil, fmt.Errorf("pack castVerifierVote: %w", err)
 	}
 	return c.SendTx(ctx, escrow, data, nil)
 }
@@ -174,18 +177,10 @@ func (c *Client) ApproveMilestoneByBuyer(ctx context.Context, escrow common.Addr
 	return c.SendTx(ctx, escrow, data, nil)
 }
 
-func (c *Client) ApproveMilestoneByVerifier(ctx context.Context, escrow common.Address, milestoneIndex uint8) (*types.Transaction, error) {
-	data, err := EscrowABI.Pack("approveMilestoneByVerifier", milestoneIndex)
+func (c *Client) CastMilestoneVerifierVote(ctx context.Context, escrow common.Address, milestoneIndex uint8, approve bool, reasonURI string) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("castMilestoneVerifierVote", milestoneIndex, approve, reasonURI)
 	if err != nil {
-		return nil, fmt.Errorf("pack approveMilestoneByVerifier: %w", err)
-	}
-	return c.SendTx(ctx, escrow, data, nil)
-}
-
-func (c *Client) RejectMilestoneByVerifier(ctx context.Context, escrow common.Address, milestoneIndex uint8, reasonURI string) (*types.Transaction, error) {
-	data, err := EscrowABI.Pack("rejectMilestoneByVerifier", milestoneIndex, reasonURI)
-	if err != nil {
-		return nil, fmt.Errorf("pack rejectMilestoneByVerifier: %w", err)
+		return nil, fmt.Errorf("pack castMilestoneVerifierVote: %w", err)
 	}
 	return c.SendTx(ctx, escrow, data, nil)
 }

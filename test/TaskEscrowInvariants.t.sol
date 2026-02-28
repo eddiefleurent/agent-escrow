@@ -44,12 +44,12 @@ contract TaskEscrowHandler is Test {
 
     function approveByVerifier() external {
         vm.prank(verifier);
-        try escrow.approveByVerifier() {} catch {}
+        try escrow.castVerifierVote(true, "") {} catch {}
     }
 
     function rejectByVerifier() external {
         vm.prank(verifier);
-        try escrow.rejectByVerifier("ipfs://reject") {} catch {}
+        try escrow.castVerifierVote(false, "ipfs://reject") {} catch {}
     }
 
     function dispute() external {
@@ -114,7 +114,10 @@ contract TaskEscrowInvariantsTest is StdInvariant, Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: AMOUNT,
                 workerStake: 0,
@@ -172,13 +175,13 @@ contract TaskEscrowInvariantsTest is StdInvariant, Test {
         vm.prank(buyer);
         escrow.approveByBuyer();
 
-        vm.expectRevert(TaskEscrow.InvalidState.selector);
+        vm.expectRevert(TaskEscrow.QuorumFinalized.selector);
         vm.prank(verifier);
-        escrow.approveByVerifier();
+        escrow.castVerifierVote(true, "");
 
-        vm.expectRevert(TaskEscrow.InvalidState.selector);
+        vm.expectRevert(TaskEscrow.QuorumFinalized.selector);
         vm.prank(verifier);
-        escrow.rejectByVerifier("ipfs://reject");
+        escrow.castVerifierVote(false, "ipfs://reject");
 
         vm.expectRevert(TaskEscrow.InvalidState.selector);
         vm.prank(buyer);

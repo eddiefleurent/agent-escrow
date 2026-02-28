@@ -163,7 +163,10 @@ contract TaskEscrowERC20Test is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: AMOUNT,
                 workerStake: stake,
@@ -209,7 +212,10 @@ contract TaskEscrowERC20Test is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: 1 ether,
                 workerStake: 0,
@@ -291,7 +297,7 @@ contract TaskEscrowERC20Test is Test {
         uint256 workerBefore = usdc.balanceOf(worker);
 
         vm.prank(verifier);
-        escrow.approveByVerifier();
+        escrow.castVerifierVote(true, "");
 
         uint256 fee = (AMOUNT * FEE_BPS) / 10_000;
         assertEq(uint256(escrow.status()), uint256(TaskEscrow.Status.Settled));
@@ -408,7 +414,7 @@ contract TaskEscrowERC20Test is Test {
         _fundAndSubmit(escrow);
 
         vm.prank(verifier);
-        escrow.rejectByVerifier("ipfs://reject");
+        escrow.castVerifierVote(false, "ipfs://reject");
 
         assertEq(uint256(escrow.status()), uint256(TaskEscrow.Status.Disputed));
     }
@@ -471,7 +477,10 @@ contract TaskEscrowERC20Test is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: AMOUNT,
                 workerStake: 0,
@@ -625,7 +634,10 @@ contract TaskEscrowERC20Test is Test {
             TaskEscrowFactory.CreateParams({
                 buyer: buyer,
                 worker: worker,
-                verifier: verifier,
+                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
+                quorumThreshold: 1,
+                quorumVerifierCount: 1,
+                verifierStakePerVerifier: 0,
                 arbitrator: arbitrator,
                 amount: AMOUNT,
                 workerStake: 0,

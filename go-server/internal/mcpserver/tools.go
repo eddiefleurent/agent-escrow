@@ -36,9 +36,12 @@ type createEscrowArgs struct {
 	Title                    string         `json:"title" jsonschema:"Task title"`
 	Description              string         `json:"description" jsonschema:"Task description"`
 	Buyer                    string         `json:"buyer" jsonschema:"Buyer address (0x...)"`
-	Worker                   string         `json:"worker" jsonschema:"Worker address (0x...). Must be distinct from buyer, verifier, and arbitrator."`
-	Verifier                 string         `json:"verifier" jsonschema:"Verifier address (0x...). Must be distinct from buyer, worker, and arbitrator."`
-	Arbitrator               string         `json:"arbitrator" jsonschema:"Arbitrator address (0x...). Must be distinct from buyer, worker, and verifier."`
+	Worker                   string         `json:"worker" jsonschema:"Worker address (0x...). Must be distinct from buyer, verifier panel members, and arbitrator."`
+	VerifierPanel            []string       `json:"verifier_panel" jsonschema:"Verifier panel addresses (1-7 entries). Members must be distinct and must not overlap other roles."`
+	QuorumThreshold          FlexibleString `json:"quorum_threshold" jsonschema:"Votes required to finalize verifier decision (1..quorum_verifier_count)."`
+	QuorumVerifierCount      FlexibleString `json:"quorum_verifier_count" jsonschema:"Number of active verifier panel entries (1..7). Uses the first N entries from verifier_panel."`
+	VerifierStakePerVerifier FlexibleString `json:"verifier_stake_per_verifier,omitempty" jsonschema:"Optional Schelling stake each verifier must deposit before voting; omit or 0 for no verifier stake."`
+	Arbitrator               string         `json:"arbitrator" jsonschema:"Arbitrator address (0x...). Must be distinct from buyer, worker, and all verifier panel members."`
 	Amount                   FlexibleString `json:"amount" jsonschema:"Total amount in wei (ETH) or smallest unit (ERC20)"`
 	WorkerStake              FlexibleString `json:"worker_stake,omitempty" jsonschema:"Worker anti-Sybil stake in wei or smallest unit; omit or 0 for no stake"`
 	SubmissionDeadline       FlexibleString `json:"submission_deadline" jsonschema:"Unix timestamp for submission deadline"`
@@ -56,6 +59,13 @@ type createEscrowArgs struct {
 
 type escrowIDArgs struct {
 	EscrowID FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID (from create_escrow response), or on-chain escrow address (0x...)"`
+}
+
+type castVerifierVoteArgs struct {
+	EscrowID       FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID or on-chain escrow address (0x...)"`
+	Approve        bool           `json:"approve" jsonschema:"true = approve, false = reject"`
+	ReasonURI      string         `json:"reason_uri,omitempty" jsonschema:"Optional reason URI (recommended when approve=false)"`
+	MilestoneIndex FlexibleString `json:"milestone_index,omitempty" jsonschema:"Milestone index (required for multi-milestone escrows)"`
 }
 
 type submitArgs struct {
@@ -274,7 +284,7 @@ type emergencyListArgs struct {
 func (s *Server) registerTools(srv *mcp.Server) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "create_escrow",
-		Description: "Create a new task escrow contract via the factory. All amounts (amount, worker_stake, milestone amounts) are in wei for ETH or the smallest token unit for ERC20. All four roles (buyer, worker, verifier, arbitrator) must be distinct addresses. Returns escrow_id for subsequent calls.",
+		Description: "Create a new task escrow contract via the factory. All amounts (amount, worker_stake, verifier_stake_per_verifier, milestone amounts) are in wei for ETH or the smallest token unit for ERC20. Buyer/worker/arbitrator and verifier panel members must be distinct addresses. Returns escrow_id for subsequent calls.",
 	}, s.handleCreateEscrow)
 
 	mcp.AddTool(srv, &mcp.Tool{
@@ -288,6 +298,11 @@ func (s *Server) registerTools(srv *mcp.Server) {
 	}, s.handleDepositStake)
 
 	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "deposit_verifier_stake",
+		Description: "Deposit verifier Schelling stake into an escrow before voting. Required when verifier_stake_per_verifier > 0. Handles both ETH and ERC20 stakes automatically.",
+	}, s.handleDepositVerifierStake)
+
+	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "submit_work",
 		Description: "Submit work as the worker. Provide a URI pointing to the deliverable. For multi-milestone escrows, milestone_index is required (0-based). NOTE: The server must be running with the worker's private key (PRIVATE_KEY must match the escrow's worker address).",
 	}, s.handleSubmitWork)
@@ -296,6 +311,11 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Name:        "verify_and_approve",
 		Description: "Verify a submitted ZK proof on-chain and approve in a single transaction (verifier role). For multi-milestone escrows, milestone_index is required (0-based).",
 	}, s.handleVerifyAndApprove)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "cast_verifier_vote",
+		Description: "Cast a quorum verifier vote (approve/reject). For multi-milestone escrows, milestone_index is required (0-based).",
+	}, s.handleCastVerifierVote)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "approve_work",
@@ -546,6 +566,44 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		}
 		workerStakeVal = ws
 	}
+	verifierStakePerVerifierVal := big.NewInt(0)
+	if args.VerifierStakePerVerifier.String() != "" {
+		vsv, ok := new(big.Int).SetString(args.VerifierStakePerVerifier.String(), 10)
+		if !ok {
+			return textResult("invalid verifier_stake_per_verifier"), nil, nil
+		}
+		verifierStakePerVerifierVal = vsv
+	}
+
+	if len(args.VerifierPanel) == 0 || len(args.VerifierPanel) > 7 {
+		return textResult("verifier_panel must include between 1 and 7 addresses"), nil, nil
+	}
+	quorumVerifierCount, parseErr := strconv.ParseUint(args.QuorumVerifierCount.String(), 10, 8)
+	if parseErr != nil {
+		return textResult(fmt.Sprintf("invalid quorum_verifier_count: %v", parseErr)), nil, nil
+	}
+	if quorumVerifierCount == 0 || quorumVerifierCount > 7 {
+		return textResult("invalid quorum_verifier_count: must be 1..7"), nil, nil
+	}
+	quorumThreshold, parseErr := strconv.ParseUint(args.QuorumThreshold.String(), 10, 8)
+	if parseErr != nil {
+		return textResult(fmt.Sprintf("invalid quorum_threshold: %v", parseErr)), nil, nil
+	}
+	if quorumThreshold == 0 || quorumThreshold > quorumVerifierCount {
+		return textResult("invalid quorum_threshold: must be 1..quorum_verifier_count"), nil, nil
+	}
+	if int(quorumVerifierCount) > len(args.VerifierPanel) {
+		return textResult("quorum_verifier_count cannot exceed verifier_panel length"), nil, nil
+	}
+	var verifierPanel [7]common.Address
+	panelForJSON := make([]string, int(quorumVerifierCount))
+	for i := 0; i < int(quorumVerifierCount); i++ {
+		if !common.IsHexAddress(args.VerifierPanel[i]) {
+			return textResult(fmt.Sprintf("invalid verifier_panel[%d] address", i)), nil, nil
+		}
+		verifierPanel[i] = common.HexToAddress(args.VerifierPanel[i])
+		panelForJSON[i] = strings.ToLower(verifierPanel[i].Hex())
+	}
 
 	specHash := crypto.Keccak256Hash([]byte(args.Title + args.Description))
 
@@ -651,7 +709,10 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 	params := chain.CreateEscrowParams{
 		Buyer:                    common.HexToAddress(args.Buyer),
 		Worker:                   common.HexToAddress(args.Worker),
-		Verifier:                 common.HexToAddress(args.Verifier),
+		VerifierPanel:            verifierPanel,
+		QuorumThreshold:          uint8(quorumThreshold),
+		QuorumVerifierCount:      uint8(quorumVerifierCount),
+		VerifierStakePerVerifier: verifierStakePerVerifierVal,
 		Arbitrator:               common.HexToAddress(args.Arbitrator),
 		Amount:                   amount,
 		WorkerStake:              workerStakeVal,
@@ -688,6 +749,10 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 	if len(milestones) > 0 {
 		milestoneCount = len(milestones)
 	}
+	panelJSONBytes, err := json.Marshal(panelForJSON)
+	if err != nil {
+		return textResult(fmt.Sprintf("marshal verifier panel: %v", err)), nil, nil
+	}
 
 	escrow, err := s.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID:                   task.ID,
@@ -697,7 +762,11 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		EscrowID:                 result.EscrowID,
 		Buyer:                    args.Buyer,
 		Worker:                   args.Worker,
-		Verifier:                 args.Verifier,
+		Verifier:                 panelForJSON[0],
+		VerifierPanelJSON:        string(panelJSONBytes),
+		QuorumThreshold:          int(quorumThreshold),
+		QuorumVerifierCount:      int(quorumVerifierCount),
+		VerifierStakePerVerifier: verifierStakePerVerifierVal.String(),
 		Arbitrator:               args.Arbitrator,
 		Amount:                   args.Amount.String(),
 		WorkerStake:              workerStakeVal.String(),
@@ -845,6 +914,49 @@ func (s *Server) handleDepositStake(ctx context.Context, req *mcp.CallToolReques
 
 	_ = s.idx.RunOnce(ctx)
 	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Worker can now call submit_work."})
+}
+
+func (s *Server) handleDepositVerifierStake(ctx context.Context, req *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
+	if err != nil {
+		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
+	}
+
+	stakeAmount, ok := new(big.Int).SetString(escrow.VerifierStakePerVerifier, 10)
+	if !ok || stakeAmount.Sign() <= 0 {
+		return textResult("this escrow does not require verifier stake"), nil, nil
+	}
+
+	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
+
+	if isERC20Token(escrow.Token) {
+		tokenAddr := common.HexToAddress(escrow.Token)
+		approveTx, err := s.chain.ApproveERC20(ctx, tokenAddr, escrowAddr, stakeAmount)
+		if err != nil {
+			return textResult(fmt.Sprintf("approve error: %v", chain.HumanizeError(err))), nil, nil
+		}
+		approveReceipt, err := chain.WaitMined(ctx, s.chain, approveTx.Hash())
+		if err != nil {
+			return textResult(fmt.Sprintf("approve receipt error: %v", err)), nil, nil
+		}
+		if approveReceipt.Status != 1 {
+			return textResult("approve transaction reverted"), nil, nil
+		}
+		tx, err := s.chain.DepositVerifierStake(ctx, escrowAddr, nil)
+		if err != nil {
+			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
+		}
+		_ = s.idx.RunOnce(ctx)
+		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Verifier can now cast_verifier_vote."})
+	}
+
+	tx, err := s.chain.DepositVerifierStake(ctx, escrowAddr, stakeAmount)
+	if err != nil {
+		return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
+	}
+
+	_ = s.idx.RunOnce(ctx)
+	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Verifier can now cast_verifier_vote."})
 }
 
 func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest, args submitArgs) (*mcp.CallToolResult, any, error) {
@@ -998,7 +1110,7 @@ func (s *Server) handleApproveWork(ctx context.Context, req *mcp.CallToolRequest
 			_ = s.idx.RunOnce(ctx)
 			return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Check get_reputation to see updated counters once the indexer settles (~15s)."})
 		case "verifier":
-			tx, err := s.chain.ApproveMilestoneByVerifier(ctx, addr, msIdx)
+			tx, err := s.chain.CastMilestoneVerifierVote(ctx, addr, msIdx, true, "")
 			if err != nil {
 				return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 			}
@@ -1018,7 +1130,7 @@ func (s *Server) handleApproveWork(ctx context.Context, req *mcp.CallToolRequest
 		_ = s.idx.RunOnce(ctx)
 		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Check get_reputation to see updated counters once the indexer settles (~15s)."})
 	case "verifier":
-		tx, err := s.chain.ApproveByVerifier(ctx, addr)
+		tx, err := s.chain.CastVerifierVote(ctx, addr, true, "")
 		if err != nil {
 			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 		}
@@ -1070,6 +1182,37 @@ func (s *Server) handleVerifyAndApprove(ctx context.Context, req *mcp.CallToolRe
 	})
 }
 
+func (s *Server) handleCastVerifierVote(ctx context.Context, req *mcp.CallToolRequest, args castVerifierVoteArgs) (*mcp.CallToolResult, any, error) {
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
+	if err != nil {
+		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
+	}
+
+	addr := common.HexToAddress(escrow.EscrowAddress)
+	if escrow.MilestoneCount > 1 {
+		if args.MilestoneIndex.String() == "" {
+			return textResult("milestone_index required for multi-milestone escrow"), nil, nil
+		}
+		msIdx, err := parseMilestoneIndex(args.MilestoneIndex.String())
+		if err != nil {
+			return textResult(err.Error()), nil, nil
+		}
+		tx, err := s.chain.CastMilestoneVerifierVote(ctx, addr, msIdx, args.Approve, args.ReasonURI)
+		if err != nil {
+			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
+		}
+		_ = s.idx.RunOnce(ctx)
+		return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Poll get_escrow for quorum status updates (~15s indexer lag)."})
+	}
+
+	tx, err := s.chain.CastVerifierVote(ctx, addr, args.Approve, args.ReasonURI)
+	if err != nil {
+		return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
+	}
+	_ = s.idx.RunOnce(ctx)
+	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex(), "next_steps": "Poll get_escrow for quorum status updates (~15s indexer lag)."})
+}
+
 func (s *Server) handleDisputeWork(ctx context.Context, req *mcp.CallToolRequest, args disputeArgs) (*mcp.CallToolResult, any, error) {
 	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
 	if err != nil {
@@ -1098,7 +1241,7 @@ func (s *Server) handleDisputeWork(ctx context.Context, req *mcp.CallToolRequest
 				"next_steps": "Check get_escrow for updated status after indexer settles (~15s).",
 			})
 		case "verifier":
-			tx, err := s.chain.RejectMilestoneByVerifier(ctx, addr, msIdx, args.ReasonURI)
+			tx, err := s.chain.CastMilestoneVerifierVote(ctx, addr, msIdx, false, args.ReasonURI)
 			if err != nil {
 				return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 			}
@@ -1134,7 +1277,7 @@ func (s *Server) handleDisputeWork(ctx context.Context, req *mcp.CallToolRequest
 			"next_steps": "Check get_escrow for updated status after indexer settles (~15s).",
 		})
 	case "verifier":
-		tx, err := s.chain.RejectByVerifier(ctx, addr, args.ReasonURI)
+		tx, err := s.chain.CastVerifierVote(ctx, addr, false, args.ReasonURI)
 		if err != nil {
 			return textResult(fmt.Sprintf("chain error: %v", chain.HumanizeError(err))), nil, nil
 		}

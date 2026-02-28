@@ -76,6 +76,12 @@ contract TaskEscrow {
     error ProofHashMismatch();
     error ProofVerificationFailed();
     error InvalidVerifierConfiguration();
+    error InvalidQuorumConfiguration();
+    error NotQuorumVerifier();
+    error AlreadyVoted();
+    error QuorumStakeRequired();
+    error QuorumStakeAlreadyDeposited();
+    error QuorumFinalized();
 
     event EscrowFunded(address indexed buyer, uint256 amount);
     event WorkerStakeDeposited(address indexed worker, uint256 amount);
@@ -105,6 +111,9 @@ contract TaskEscrow {
     event EmergencyFrozen();
     event EmergencyUnfrozen();
     event EmergencyResolved(uint16 workerAwardBps);
+    event QuorumVoteCast(address indexed verifier, bool approve, uint8 approveCount, uint8 rejectCount);
+    event QuorumReached(bool approved, uint8 approveCount, uint8 rejectCount);
+    event QuorumVerifierStakeDeposited(address indexed verifier, uint256 amount);
 
     // Service tier constants (paper §5.3)
     uint8 public constant TIER_HIGH_ASSURANCE = 1;
@@ -113,7 +122,6 @@ contract TaskEscrow {
     address public immutable token;
     address public immutable buyer;
     address public immutable worker;
-    address public immutable verifier;
     address public immutable arbitrator;
     uint256 public immutable amount;
     uint256 public immutable workerStake;
@@ -135,6 +143,19 @@ contract TaskEscrow {
     bool public backupActivated;
     bool public frozen;
     uint64 public deadlineExtensionApplied;
+
+    // Verifier panel + quorum
+    address[7] public verifierPanel;
+    uint8 public quorumThreshold;
+    uint8 public quorumVerifierCount;
+    uint256 public verifierStakePerVerifier;
+
+    // Vote state (for the current submission/milestone review cycle)
+    mapping(address => uint8) public quorumVote; // 0=unvoted 1=approve 2=reject
+    mapping(address => bool) public quorumStaked;
+    uint8 public quorumApproveCount;
+    uint8 public quorumRejectCount;
+    uint8 public quorumStakeCount;
 
     uint64 public submittedAt;
     uint64 public approvedAt;
@@ -161,7 +182,10 @@ contract TaskEscrow {
         address factory;
         address buyer;
         address worker;
-        address verifier;
+        address[7] verifierPanel;
+        uint8 quorumThreshold;
+        uint8 quorumVerifierCount;
+        uint256 verifierStakePerVerifier;
         address arbitrator;
         uint256 amount;
         uint256 workerStake;
@@ -190,12 +214,21 @@ contract TaskEscrow {
     uint256 private _locked = _NOT_ENTERED;
 
     constructor(Params memory p) {
-        if (p.buyer == address(0) || p.worker == address(0) || p.verifier == address(0) || p.arbitrator == address(0)) {
+        if (p.buyer == address(0) || p.worker == address(0) || p.arbitrator == address(0)) {
             revert InvalidAddress();
         }
         if (p.treasurySnapshot == address(0)) revert InvalidAddress();
-        if (FactoryLib.rolesCollide(p.buyer, p.worker, p.verifier, p.arbitrator, p.backupWorker)) {
+        if (
+            p.quorumThreshold == 0 || p.quorumVerifierCount == 0 || p.quorumThreshold > p.quorumVerifierCount
+                || p.quorumVerifierCount > 7
+        ) revert InvalidQuorumConfiguration();
+        if (FactoryLib.rolesCollide(
+                p.buyer, p.worker, p.arbitrator, p.backupWorker, p.verifierPanel, p.quorumVerifierCount
+            )) {
             revert RolesNotDistinct();
+        }
+        for (uint8 i = 0; i < p.quorumVerifierCount; i++) {
+            if (p.verifierPanel[i] == address(0)) revert InvalidAddress();
         }
         if (p.amount == 0) revert InvalidAmount();
         if (p.submissionDeadline <= block.timestamp) revert InvalidDeadline();
@@ -208,7 +241,6 @@ contract TaskEscrow {
         factory = p.factory;
         buyer = p.buyer;
         worker = p.worker;
-        verifier = p.verifier;
         arbitrator = p.arbitrator;
         amount = p.amount;
         workerStake = p.workerStake;
@@ -227,6 +259,12 @@ contract TaskEscrow {
         circuitId = p.circuitId;
         activeWorker = p.worker;
         status = Status.Created;
+        quorumThreshold = p.quorumThreshold;
+        quorumVerifierCount = p.quorumVerifierCount;
+        verifierStakePerVerifier = p.verifierStakePerVerifier;
+        for (uint8 i = 0; i < p.quorumVerifierCount; i++) {
+            verifierPanel[i] = p.verifierPanel[i];
+        }
 
         _initMilestones(p);
     }
@@ -388,17 +426,35 @@ contract TaskEscrow {
         _syncMs0Submit(_submissionHash, _submissionURI, _proofHash);
     }
 
+    function depositVerifierStake() external payable nonReentrant whenNotFrozen {
+        if (!_isQuorumVerifier(msg.sender)) revert NotQuorumVerifier();
+        if (verifierStakePerVerifier == 0) revert InvalidAmount();
+        if (quorumStaked[msg.sender]) revert QuorumStakeAlreadyDeposited();
+
+        Status s = status;
+        if (s != Status.Funded && s != Status.Submitted) revert InvalidState();
+
+        if (token == address(0)) {
+            if (msg.value != verifierStakePerVerifier) revert InvalidAmount();
+        } else {
+            if (msg.value != 0) revert ETHNotAccepted();
+            _receiveERC20(verifierStakePerVerifier);
+        }
+
+        quorumStaked[msg.sender] = true;
+        quorumStakeCount++;
+        emit QuorumVerifierStakeDeposited(msg.sender, verifierStakePerVerifier);
+    }
+
     function verifyAndApprove(bytes calldata proof) external nonReentrant whenNotFrozen {
-        if (msg.sender != verifier) revert Unauthorized();
+        if (!_isQuorumVerifier(msg.sender)) revert NotQuorumVerifier();
         if (zkVerifier == address(0)) revert NoVerifierConfigured();
-        _requireState(Status.Submitted);
-        if (block.timestamp > _reviewWindowEnds()) revert WindowExpired();
         if (proofHash == bytes32(0)) revert NoProofSubmitted();
         if (keccak256(proof) != proofHash) revert ProofHashMismatch();
         // Trust model: zkVerifier is immutable and validated as a deployed contract in the constructor.
         bool ok = IZKVerifier(zkVerifier).verifyProof(circuitId, proof);
         if (!ok) revert ProofVerificationFailed();
-        _approve(msg.sender);
+        _castSingleVote(msg.sender, true, "", false);
     }
 
     function approveByBuyer() external nonReentrant whenNotFrozen {
@@ -407,21 +463,8 @@ contract TaskEscrow {
         _approve(msg.sender);
     }
 
-    function approveByVerifier() external nonReentrant whenNotFrozen {
-        if (msg.sender != verifier) revert Unauthorized();
-        _approve(msg.sender);
-    }
-
-    function rejectByVerifier(string calldata reasonURI) external whenNotFrozen {
-        if (msg.sender != verifier) revert Unauthorized();
-        _requireState(Status.Submitted);
-        if (block.timestamp > _reviewWindowEnds()) revert WindowExpired();
-        disputeReasonURI = reasonURI;
-        disputedAt = uint64(block.timestamp);
-        status = Status.Disputed;
-        emit Rejected(msg.sender, reasonURI, uint64(block.timestamp));
-        emit Disputed(msg.sender, reasonURI, uint64(block.timestamp));
-        if (milestoneCount == 1) _syncMs0Dispute(reasonURI);
+    function castVerifierVote(bool approve, string calldata reasonURI) external nonReentrant whenNotFrozen {
+        _castSingleVote(msg.sender, approve, reasonURI, true);
     }
 
     function dispute(string calldata reasonURI) external whenNotFrozen {
@@ -554,28 +597,21 @@ contract TaskEscrow {
 
     function verifyAndApproveMilestone(uint8 milestoneIndex, bytes calldata proof) external nonReentrant whenNotFrozen {
         _requireMultiMsFunded();
-        if (msg.sender != verifier) revert Unauthorized();
+        if (!_isQuorumVerifier(msg.sender)) revert NotQuorumVerifier();
         if (zkVerifier == address(0)) revert NoVerifierConfigured();
         if (milestoneIndex != currentMilestone) revert InvalidMilestoneIndex();
         Milestone storage ms = milestones[milestoneIndex];
-        if (ms.status != MilestoneStatus.Submitted) revert InvalidState();
-        if (block.timestamp > uint256(ms.submittedAt) + uint256(reviewPeriodSeconds)) revert WindowExpired();
         if (ms.proofHash == bytes32(0)) revert NoProofSubmitted();
         if (keccak256(proof) != ms.proofHash) revert ProofHashMismatch();
         // Trust model: zkVerifier is immutable and validated as a deployed contract in the constructor.
         bool ok = IZKVerifier(zkVerifier).verifyProof(circuitId, proof);
         if (!ok) revert ProofVerificationFailed();
-        _approveMilestone(milestoneIndex, msg.sender);
+        _castMilestoneVote(msg.sender, milestoneIndex, true, "", false);
     }
 
     function approveMilestoneByBuyer(uint8 milestoneIndex) external nonReentrant whenNotFrozen {
         _requireBuyer();
         if (serviceTier == TIER_HIGH_ASSURANCE) revert HighAssuranceRequiresVerifier();
-        _approveMilestone(milestoneIndex, msg.sender);
-    }
-
-    function approveMilestoneByVerifier(uint8 milestoneIndex) external nonReentrant whenNotFrozen {
-        if (msg.sender != verifier) revert Unauthorized();
         _approveMilestone(milestoneIndex, msg.sender);
     }
 
@@ -594,18 +630,12 @@ contract TaskEscrow {
         emit MilestoneDisputed(milestoneIndex, msg.sender, reasonURI);
     }
 
-    function rejectMilestoneByVerifier(uint8 milestoneIndex, string calldata reasonURI) external whenNotFrozen {
-        _requireMultiMsFunded();
-        if (msg.sender != verifier) revert Unauthorized();
-        if (milestoneIndex != currentMilestone) revert InvalidMilestoneIndex();
-        Milestone storage ms = milestones[milestoneIndex];
-        if (ms.status != MilestoneStatus.Submitted) revert InvalidState();
-        if (block.timestamp > uint256(ms.submittedAt) + uint256(reviewPeriodSeconds)) revert WindowExpired();
-        ms.disputeReasonURI = reasonURI;
-        ms.disputedAt = uint64(block.timestamp);
-        ms.status = MilestoneStatus.Disputed;
-        emit MilestoneRejected(milestoneIndex, msg.sender, reasonURI);
-        emit MilestoneDisputed(milestoneIndex, msg.sender, reasonURI);
+    function castMilestoneVerifierVote(uint8 milestoneIndex, bool approve, string calldata reasonURI)
+        external
+        nonReentrant
+        whenNotFrozen
+    {
+        _castMilestoneVote(msg.sender, milestoneIndex, approve, reasonURI, true);
     }
 
     function escalateMilestoneSilence(uint8 milestoneIndex, string calldata reasonURI) external whenNotFrozen {
@@ -743,10 +773,144 @@ contract TaskEscrow {
         milestones[0].status = MilestoneStatus.Submitted;
     }
 
-    function _syncMs0Dispute(string calldata reasonURI) internal {
+    function _syncMs0Dispute(string memory reasonURI) internal {
         milestones[0].disputeReasonURI = reasonURI;
         milestones[0].disputedAt = uint64(block.timestamp);
         milestones[0].status = MilestoneStatus.Disputed;
+    }
+
+    function _castSingleVote(address voter, bool approve, string memory reasonURI, bool enforceStake) internal {
+        if (!_isQuorumVerifier(voter)) revert NotQuorumVerifier();
+        Status s = status;
+        if (s != Status.Submitted) {
+            if (s > Status.Submitted) revert QuorumFinalized();
+            revert InvalidState();
+        }
+        if (block.timestamp > _reviewWindowEnds()) revert WindowExpired();
+        if (quorumVote[voter] != 0) revert AlreadyVoted();
+        if (enforceStake && verifierStakePerVerifier > 0 && !quorumStaked[voter]) revert QuorumStakeRequired();
+
+        quorumVote[voter] = approve ? 1 : 2;
+        if (approve) {
+            quorumApproveCount++;
+        } else {
+            quorumRejectCount++;
+        }
+        emit QuorumVoteCast(voter, approve, quorumApproveCount, quorumRejectCount);
+
+        if (quorumApproveCount >= quorumThreshold) {
+            _quorumApprove();
+            return;
+        }
+        if (quorumRejectCount >= _quorumRejectThreshold()) {
+            _quorumReject(reasonURI);
+        }
+    }
+
+    function _castMilestoneVote(
+        address voter,
+        uint8 milestoneIndex,
+        bool approve,
+        string memory reasonURI,
+        bool enforceStake
+    ) internal {
+        if (!_isQuorumVerifier(voter)) revert NotQuorumVerifier();
+        _requireMultiMsFunded();
+        if (milestoneIndex != currentMilestone) revert InvalidMilestoneIndex();
+        Milestone storage ms = milestones[milestoneIndex];
+        if (ms.status != MilestoneStatus.Submitted) {
+            if (uint8(ms.status) > uint8(MilestoneStatus.Submitted)) revert QuorumFinalized();
+            revert InvalidState();
+        }
+        if (block.timestamp > uint256(ms.submittedAt) + uint256(reviewPeriodSeconds)) revert WindowExpired();
+        if (quorumVote[voter] != 0) revert AlreadyVoted();
+        if (enforceStake && verifierStakePerVerifier > 0 && !quorumStaked[voter]) revert QuorumStakeRequired();
+
+        quorumVote[voter] = approve ? 1 : 2;
+        if (approve) {
+            quorumApproveCount++;
+        } else {
+            quorumRejectCount++;
+        }
+        emit QuorumVoteCast(voter, approve, quorumApproveCount, quorumRejectCount);
+
+        if (quorumApproveCount >= quorumThreshold) {
+            emit QuorumReached(true, quorumApproveCount, quorumRejectCount);
+            _settleVerifierStakes(true);
+            _approveMilestone(milestoneIndex, address(0));
+            _resetQuorumVoteState();
+            return;
+        }
+        if (quorumRejectCount >= _quorumRejectThreshold()) {
+            emit QuorumReached(false, quorumApproveCount, quorumRejectCount);
+            _settleVerifierStakes(false);
+            ms.disputeReasonURI = reasonURI;
+            ms.disputedAt = uint64(block.timestamp);
+            ms.status = MilestoneStatus.Disputed;
+            emit MilestoneDisputed(milestoneIndex, voter, reasonURI);
+            _resetQuorumVoteState();
+        }
+    }
+
+    function _quorumApprove() internal {
+        emit QuorumReached(true, quorumApproveCount, quorumRejectCount);
+        _settleVerifierStakes(true);
+        _approve(address(0));
+    }
+
+    function _quorumReject(string memory reasonURI) internal {
+        emit QuorumReached(false, quorumApproveCount, quorumRejectCount);
+        _settleVerifierStakes(false);
+        disputeReasonURI = reasonURI;
+        disputedAt = uint64(block.timestamp);
+        status = Status.Disputed;
+        emit Disputed(msg.sender, reasonURI, uint64(block.timestamp));
+        if (milestoneCount == 1) _syncMs0Dispute(reasonURI);
+    }
+
+    function _settleVerifierStakes(bool approvalMajority) internal {
+        if (verifierStakePerVerifier == 0) return;
+
+        for (uint8 i = 0; i < quorumVerifierCount; i++) {
+            address panelVerifier = verifierPanel[i];
+            if (!quorumStaked[panelVerifier]) continue;
+
+            uint8 vote = quorumVote[panelVerifier];
+            if (vote == 0) continue; // abstainers keep stake locked; no slash/no refund
+
+            bool inMajority = approvalMajority ? vote == 1 : vote == 2;
+            quorumStaked[panelVerifier] = false;
+            if (quorumStakeCount > 0) quorumStakeCount--;
+            if (inMajority) _send(panelVerifier, verifierStakePerVerifier);
+            else _send(buyer, verifierStakePerVerifier);
+        }
+    }
+
+    function _resetQuorumVoteState() internal {
+        for (uint8 i = 0; i < quorumVerifierCount; i++) {
+            address panelVerifier = verifierPanel[i];
+            if (quorumVote[panelVerifier] != 0) quorumVote[panelVerifier] = 0;
+        }
+        quorumApproveCount = 0;
+        quorumRejectCount = 0;
+    }
+
+    function _quorumRejectThreshold() internal view returns (uint8) {
+        return quorumVerifierCount - quorumThreshold + 1;
+    }
+
+    function _isQuorumVerifier(address candidate) internal view returns (bool) {
+        for (uint8 i = 0; i < quorumVerifierCount; i++) {
+            if (verifierPanel[i] == candidate) return true;
+        }
+        return false;
+    }
+
+    function getQuorumPanel() external view returns (address[] memory panel) {
+        panel = new address[](quorumVerifierCount);
+        for (uint8 i = 0; i < quorumVerifierCount; i++) {
+            panel[i] = verifierPanel[i];
+        }
     }
 
     function _approve(address approver) internal {

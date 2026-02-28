@@ -365,8 +365,8 @@ func (idx *Indexer) ProcessFactoryLog(ctx context.Context, lg types.Log) error {
 func (idx *Indexer) handleEscrowCreated(ctx context.Context, lg types.Log) error {
 	// EscrowCreated(
 	//   uint256 indexed escrowId, address indexed escrow, address indexed buyer,
-	//   address worker, address verifier, address arbitrator, bytes32 taskSpecHash,
-	//   address token, uint8 serviceTier, address zkVerifier, bytes32 circuitId
+	//   address worker, uint8 quorumThreshold, uint8 quorumVerifierCount, address arbitrator,
+	//   bytes32 taskSpecHash, address token, uint8 serviceTier, address zkVerifier, bytes32 circuitId
 	// )
 	if len(lg.Topics) < 4 {
 		return errors.New("insufficient topics")
@@ -384,46 +384,71 @@ func (idx *Indexer) handleEscrowCreated(ctx context.Context, lg types.Log) error
 	if err != nil {
 		return fmt.Errorf("unpack EscrowCreated: %w", err)
 	}
-	if len(values) < 8 {
-		return fmt.Errorf("EscrowCreated: expected 8 non-indexed values, got %d", len(values))
+	if len(values) < 9 {
+		return fmt.Errorf("EscrowCreated: expected 9 non-indexed values, got %d", len(values))
 	}
 
 	worker, ok := values[0].(common.Address)
 	if !ok {
 		return fmt.Errorf("unexpected type for worker: %T", values[0])
 	}
-	verifierAddr, ok := values[1].(common.Address)
+	quorumThreshold, ok := values[1].(uint8)
 	if !ok {
-		return fmt.Errorf("unexpected type for verifier: %T", values[1])
+		return fmt.Errorf("unexpected type for quorumThreshold: %T", values[1])
 	}
-	arbitratorAddr, ok := values[2].(common.Address)
+	quorumVerifierCount, ok := values[2].(uint8)
 	if !ok {
-		return fmt.Errorf("unexpected type for arbitrator: %T", values[2])
+		return fmt.Errorf("unexpected type for quorumVerifierCount: %T", values[2])
 	}
-	taskSpecHash, ok := values[3].([32]byte)
+	arbitratorAddr, ok := values[3].(common.Address)
 	if !ok {
-		return fmt.Errorf("unexpected type for taskSpecHash: %T", values[3])
+		return fmt.Errorf("unexpected type for arbitrator: %T", values[3])
 	}
-
-	tokenAddr, ok := values[4].(common.Address)
+	taskSpecHash, ok := values[4].([32]byte)
 	if !ok {
-		return fmt.Errorf("unexpected type for token: %T", values[4])
+		return fmt.Errorf("unexpected type for taskSpecHash: %T", values[4])
 	}
-	serviceTierRaw, ok := values[5].(uint8)
+	tokenAddr, ok := values[5].(common.Address)
 	if !ok {
-		return fmt.Errorf("unexpected type for serviceTier: %T", values[5])
+		return fmt.Errorf("unexpected type for token: %T", values[5])
+	}
+	serviceTierRaw, ok := values[6].(uint8)
+	if !ok {
+		return fmt.Errorf("unexpected type for serviceTier: %T", values[6])
 	}
 	serviceTier := int(serviceTierRaw)
-	zkVerifierAddr, ok := values[6].(common.Address)
+	zkVerifierAddr, ok := values[7].(common.Address)
 	if !ok {
-		return fmt.Errorf("unexpected type for zkVerifier: %T", values[6])
+		return fmt.Errorf("unexpected type for zkVerifier: %T", values[7])
 	}
-	circuitID, ok := values[7].([32]byte)
+	circuitID, ok := values[8].([32]byte)
 	if !ok {
-		return fmt.Errorf("unexpected type for circuitId: %T", values[7])
+		return fmt.Errorf("unexpected type for circuitId: %T", values[8])
 	}
 
 	buyer := common.BytesToAddress(lg.Topics[3].Bytes())
+	verifierPanelJSON := "[]"
+	primaryVerifier := ""
+
+	panelCallData, packErr := chain.EscrowABI.Pack("getQuorumPanel")
+	if packErr == nil {
+		if rawPanel, callErr := idx.chain.CallContract(ctx, escrowAddr, panelCallData); callErr == nil {
+			if unpacked, unpackErr := chain.EscrowABI.Unpack("getQuorumPanel", rawPanel); unpackErr == nil && len(unpacked) == 1 {
+				if panel, ok := unpacked[0].([]common.Address); ok {
+					lowerPanel := make([]string, len(panel))
+					for i, addr := range panel {
+						lowerPanel[i] = strings.ToLower(addr.Hex())
+					}
+					if len(lowerPanel) > 0 {
+						primaryVerifier = lowerPanel[0]
+					}
+					if b, marshalErr := json.Marshal(lowerPanel); marshalErr == nil {
+						verifierPanelJSON = string(b)
+					}
+				}
+			}
+		}
+	}
 
 	// Check if escrow already exists (e.g. created via API/MCP handler with on-chain fields already set)
 	_, err = idx.db.GetEscrowByAddress(ctx, escrowAddr.Hex())
@@ -440,22 +465,26 @@ func (idx *Indexer) handleEscrowCreated(ctx context.Context, lg types.Log) error
 	}
 
 	_, err = idx.db.CreateEscrow(ctx, &storage.Escrow{
-		TaskID:             task.ID,
-		ChainID:            idx.chainID,
-		FactoryAddress:     idx.factoryAddress.Hex(),
-		EscrowAddress:      escrowAddr.Hex(),
-		EscrowID:           escrowID,
-		Buyer:              buyer.Hex(),
-		Worker:             worker.Hex(),
-		Verifier:           verifierAddr.Hex(),
-		Arbitrator:         arbitratorAddr.Hex(),
-		Amount:             "0",
-		Token:              tokenAddr.Hex(),
-		Status:             "created",
-		SubmissionDeadline: 0,
-		ServiceTier:        serviceTier,
-		ZKVerifier:         zkVerifierAddr.Hex(),
-		CircuitID:          fmt.Sprintf("0x%x", circuitID),
+		TaskID:                   task.ID,
+		ChainID:                  idx.chainID,
+		FactoryAddress:           idx.factoryAddress.Hex(),
+		EscrowAddress:            escrowAddr.Hex(),
+		EscrowID:                 escrowID,
+		Buyer:                    buyer.Hex(),
+		Worker:                   worker.Hex(),
+		Verifier:                 primaryVerifier,
+		VerifierPanelJSON:        verifierPanelJSON,
+		QuorumThreshold:          int(quorumThreshold),
+		QuorumVerifierCount:      int(quorumVerifierCount),
+		VerifierStakePerVerifier: "0",
+		Arbitrator:               arbitratorAddr.Hex(),
+		Amount:                   "0",
+		Token:                    tokenAddr.Hex(),
+		Status:                   "created",
+		SubmissionDeadline:       0,
+		ServiceTier:              serviceTier,
+		ZKVerifier:               zkVerifierAddr.Hex(),
+		CircuitID:                fmt.Sprintf("0x%x", circuitID),
 	})
 	return err
 }

@@ -70,6 +70,9 @@ var migration019SQL string
 //go:embed migrations/020_add_proof_hash.sql
 var migration020SQL string
 
+//go:embed migrations/021_add_quorum_fields.sql
+var migration021SQL string
+
 type DB struct {
 	db *sql.DB
 }
@@ -120,6 +123,7 @@ func Open(dsn string) (*DB, error) {
 		{"018", migration018SQL},
 		{"019", migration019SQL},
 		{"020", migration020SQL},
+		{"021", migration021SQL},
 	}
 
 	for _, m := range migrations {
