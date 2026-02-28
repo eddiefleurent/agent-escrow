@@ -114,6 +114,7 @@ contract TaskEscrow {
     event QuorumVoteCast(address indexed verifier, bool approve, uint8 approveCount, uint8 rejectCount);
     event QuorumReached(bool approved, uint8 approveCount, uint8 rejectCount);
     event QuorumVerifierStakeDeposited(address indexed verifier, uint256 amount);
+    event QuorumVerifierStakeWithdrawn(address indexed verifier, uint256 amount);
 
     // Service tier constants (paper §5.3)
     uint8 public constant TIER_HIGH_ASSURANCE = 1;
@@ -455,6 +456,7 @@ contract TaskEscrow {
         if (owed == 0) revert InvalidAmount();
         withdrawable[msg.sender] = 0;
         _send(msg.sender, owed);
+        emit QuorumVerifierStakeWithdrawn(msg.sender, owed);
     }
 
     function verifyAndApprove(bytes calldata proof) external nonReentrant whenNotFrozen {
