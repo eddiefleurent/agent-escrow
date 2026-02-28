@@ -348,7 +348,8 @@ Roles are immutable per escrow in V1 (including `backupWorker`).
 
 ### Economics
 
-- Protocol fee: basis points on successful payout (snapshotted at escrow creation to prevent governance races). In milestone mode, the fee is applied per-milestone payout.
+- **Tiered protocol fees** (paper §5.3): two fee tiers ensure safety does not become a luxury good. `protocolFeeBps` applies to low-assurance (tier 0) escrows; `highAssuranceFeeBps` applies to high-assurance (tier 1) escrows. Both are set at the factory level and snapshotted into each escrow at creation to prevent governance races. In milestone mode, the fee is applied per-milestone payout.
+- **Service tier** (`serviceTier`): `0` = low-assurance (optimistic), `1` = high-assurance (verified). Immutable per escrow. High-assurance escrows require verifier approval -- `approveByBuyer` and `approveMilestoneByBuyer` revert. Low-assurance escrows retain the existing optimistic path where buyer or verifier can approve.
 - ETH and ERC20 (originally planned for V2, now part of the current baseline).
 - `workerStake`: optional anti-Sybil bond the worker deposits before submission (paper §4.8). Set at escrow creation; 0 means no stake required. If approved, the stake is returned to the worker in full; disputed stakes follow the same proportional split as payment; on timeout, arbitrator timeout, or backup activation, the stake is forfeited to the buyer. In milestone mode, stake is held for the full escrow duration and settled once at the end.
 - `backupWorker`: optional pre-designated fallback worker (paper §4.4). If the primary worker defaults, the buyer calls `activateBackup()` to replace the active worker, extend the deadline by `backupDeadlineExtension` seconds, and forfeit any deposited stake.

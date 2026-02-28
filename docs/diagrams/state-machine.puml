@@ -42,7 +42,7 @@ Funded --> Funded : activateBackup()
 Funded --> Submitted : submit()
 Funded --> Refunded : timeout refund
 
-Submitted --> Approved : buyer or verifier approves
+Submitted --> Approved : buyer or verifier approves\n(tier 0: either; tier 1: verifier only)
 Submitted --> Disputed : buyer disputes
 Submitted -[#FF8F00]-> Disputed : verifier rejects
 Submitted -[#FF8F00]-> Disputed : worker escalates silence
@@ -75,6 +75,9 @@ note right of Submitted
   Review window opens.
   Three paths to Disputed:
   buyer, verifier, or worker.
+  **Tier 1 (high-assurance)**:
+  buyer approval blocked;
+  verifier must approve.
 end note
 
 note right of Resolved
@@ -131,7 +134,7 @@ state "Escrow: Funded" as EscrowFunded #E3F2FD ##42A5F5 {
     Pending --> MsSubmitted : submitMilestone()
     Pending --> MsCancelled : timeout / abort
 
-    MsSubmitted --> MsApproved : buyer/verifier approves
+    MsSubmitted --> MsApproved : buyer/verifier approves\n(tier 0: either; tier 1: verifier only)
     MsSubmitted --> MsDisputed : buyer disputes
     MsSubmitted --> MsDisputed : verifier rejects
     MsSubmitted --> MsDisputed : worker escalates
