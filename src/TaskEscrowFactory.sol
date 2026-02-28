@@ -17,6 +17,11 @@ contract TaskEscrowFactory {
     error InvalidOutcome();
     error FrozenAddress();
     error EscrowNotFrozen();
+    error InvalidServiceTier();
+
+    // Service tier constants (paper §5.3: tiered service levels)
+    uint8 public constant TIER_LOW_ASSURANCE = 0;
+    uint8 public constant TIER_HIGH_ASSURANCE = 1;
 
     event EscrowCreated(
         uint256 indexed escrowId,
@@ -26,9 +31,11 @@ contract TaskEscrowFactory {
         address verifier,
         address arbitrator,
         bytes32 taskSpecHash,
-        address token
+        address token,
+        uint8 serviceTier
     );
     event ProtocolFeeUpdated(uint16 oldFeeBps, uint16 newFeeBps);
+    event HighAssuranceFeeUpdated(uint16 oldFeeBps, uint16 newFeeBps);
     event TreasuryUpdated(address oldTreasury, address newTreasury);
     event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
@@ -57,6 +64,7 @@ contract TaskEscrowFactory {
     uint256 public nextEscrowId;
     mapping(uint256 => address) public escrowById;
     uint16 public protocolFeeBps;
+    uint16 public highAssuranceFeeBps;
     uint256 public complexityFloor;
     address public treasury;
     address public owner;
@@ -71,10 +79,12 @@ contract TaskEscrowFactory {
     mapping(uint256 => address) internal escrowWorker;
     mapping(address => bool) public frozenAddresses;
 
-    constructor(uint16 _protocolFeeBps, address _treasury, address _owner) {
+    constructor(uint16 _protocolFeeBps, uint16 _highAssuranceFeeBps, address _treasury, address _owner) {
         if (_protocolFeeBps > 10_000) revert InvalidFeeBps();
+        if (_highAssuranceFeeBps > 10_000) revert InvalidFeeBps();
         if (_treasury == address(0) || _owner == address(0)) revert InvalidAddress();
         protocolFeeBps = _protocolFeeBps;
+        highAssuranceFeeBps = _highAssuranceFeeBps;
         treasury = _treasury;
         owner = _owner;
         deployer = new EscrowDeployer();
@@ -108,6 +118,7 @@ contract TaskEscrowFactory {
         bytes32 taskSpecHash;
         uint64 arbitratorTimeoutSeconds;
         address token;
+        uint8 serviceTier;
         address backupWorker;
         uint64 backupDeadlineExtension;
         CreateMilestoneParams[] milestones;
@@ -117,10 +128,13 @@ contract TaskEscrowFactory {
         if (p.amount == 0) revert InvalidAmount();
         if (complexityFloor > 0 && p.amount < complexityFloor) revert BelowComplexityFloor();
         if (p.submissionDeadline <= block.timestamp) revert InvalidDeadline();
+        if (p.serviceTier > TIER_HIGH_ASSURANCE) revert InvalidServiceTier();
         if (
             frozenAddresses[p.buyer] || frozenAddresses[p.worker] || frozenAddresses[p.verifier]
                 || frozenAddresses[p.arbitrator] || (p.backupWorker != address(0) && frozenAddresses[p.backupWorker])
         ) revert FrozenAddress();
+
+        uint16 feeSnapshot = p.serviceTier == TIER_HIGH_ASSURANCE ? highAssuranceFeeBps : protocolFeeBps;
 
         TaskEscrow.CreateMilestoneParams[] memory escrowMilestones =
             new TaskEscrow.CreateMilestoneParams[](p.milestones.length);
@@ -143,10 +157,11 @@ contract TaskEscrowFactory {
                 reviewPeriodSeconds: p.reviewPeriodSeconds,
                 disputePeriodSeconds: p.disputePeriodSeconds,
                 taskSpecHash: p.taskSpecHash,
-                protocolFeeBpsSnapshot: protocolFeeBps,
+                protocolFeeBpsSnapshot: feeSnapshot,
                 treasurySnapshot: treasury,
                 arbitratorTimeoutSeconds: p.arbitratorTimeoutSeconds,
                 token: p.token,
+                serviceTier: p.serviceTier,
                 backupWorker: p.backupWorker,
                 backupDeadlineExtension: p.backupDeadlineExtension,
                 milestones: escrowMilestones
@@ -159,7 +174,9 @@ contract TaskEscrowFactory {
         escrowBuyer[escrowId] = p.buyer;
         escrowWorker[escrowId] = p.worker;
 
-        emit EscrowCreated(escrowId, escrow, p.buyer, p.worker, p.verifier, p.arbitrator, p.taskSpecHash, p.token);
+        emit EscrowCreated(
+            escrowId, escrow, p.buyer, p.worker, p.verifier, p.arbitrator, p.taskSpecHash, p.token, p.serviceTier
+        );
 
         if (p.backupWorker != address(0)) {
             emit BackupDesignated(escrowId, p.backupWorker, p.backupDeadlineExtension);
@@ -171,6 +188,13 @@ contract TaskEscrowFactory {
         uint16 oldFee = protocolFeeBps;
         protocolFeeBps = newFeeBps;
         emit ProtocolFeeUpdated(oldFee, newFeeBps);
+    }
+
+    function setHighAssuranceFeeBps(uint16 newFeeBps) external onlyOwner {
+        if (newFeeBps > 10_000) revert InvalidFeeBps();
+        uint16 oldFee = highAssuranceFeeBps;
+        highAssuranceFeeBps = newFeeBps;
+        emit HighAssuranceFeeUpdated(oldFee, newFeeBps);
     }
 
     function setComplexityFloor(uint256 newFloor) external onlyOwner {

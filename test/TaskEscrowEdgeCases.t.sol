@@ -24,7 +24,7 @@ contract TaskEscrowEdgeCasesTest is Test {
     uint64 internal constant ARB_TIMEOUT = 7 days;
 
     function setUp() public {
-        factory = new TaskEscrowFactory(FEE_BPS, treasury, owner);
+        factory = new TaskEscrowFactory(FEE_BPS, FEE_BPS, treasury, owner);
         escrow = _createEscrow(uint64(block.timestamp + 7 days));
 
         vm.deal(buyer, 10 ether);
@@ -121,6 +121,7 @@ contract TaskEscrowEdgeCasesTest is Test {
                 taskSpecHash: keccak256("spec-2"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
@@ -191,6 +192,7 @@ contract TaskEscrowEdgeCasesTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
@@ -215,6 +217,7 @@ contract TaskEscrowEdgeCasesTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
@@ -239,6 +242,7 @@ contract TaskEscrowEdgeCasesTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
@@ -263,6 +267,7 @@ contract TaskEscrowEdgeCasesTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
@@ -287,6 +292,7 @@ contract TaskEscrowEdgeCasesTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
@@ -311,6 +317,7 @@ contract TaskEscrowEdgeCasesTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
@@ -433,6 +440,7 @@ contract TaskEscrowEdgeCasesTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: tokenAddr,
+                serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)

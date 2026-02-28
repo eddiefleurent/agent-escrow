@@ -107,7 +107,7 @@ contract TaskEscrowInvariantsTest is StdInvariant, Test {
     uint256 internal baselineSystemSum;
 
     function setUp() public {
-        factory = new TaskEscrowFactory(FEE_BPS, treasury, owner);
+        factory = new TaskEscrowFactory(FEE_BPS, FEE_BPS, treasury, owner);
 
         vm.prank(address(0xBEEF));
         (, address escrowAddr) = factory.createEscrow(
@@ -124,6 +124,7 @@ contract TaskEscrowInvariantsTest is StdInvariant, Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)

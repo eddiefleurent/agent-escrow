@@ -25,7 +25,7 @@ contract TaskEscrowBackupTest is Test {
     uint64 internal constant BACKUP_EXTENSION = 7 days;
 
     function setUp() public {
-        factory = new TaskEscrowFactory(FEE_BPS, treasury, owner);
+        factory = new TaskEscrowFactory(FEE_BPS, FEE_BPS, treasury, owner);
         vm.deal(buyer, 100 ether);
         vm.deal(worker, 10 ether);
         vm.deal(backup, 10 ether);
@@ -50,6 +50,7 @@ contract TaskEscrowBackupTest is Test {
                 taskSpecHash: keccak256("spec-backup"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                serviceTier: 0,
                 backupWorker: backup,
                 backupDeadlineExtension: BACKUP_EXTENSION,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
@@ -84,6 +85,7 @@ contract TaskEscrowBackupTest is Test {
                 taskSpecHash: keccak256("spec-backup-ms"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                serviceTier: 0,
                 backupWorker: backup,
                 backupDeadlineExtension: BACKUP_EXTENSION,
                 milestones: ms
@@ -246,6 +248,7 @@ contract TaskEscrowBackupTest is Test {
                 taskSpecHash: keccak256("spec-no-backup"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
@@ -310,6 +313,7 @@ contract TaskEscrowBackupTest is Test {
                 taskSpecHash: keccak256("spec-v1"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                serviceTier: 0,
                 backupWorker: address(0),
                 backupDeadlineExtension: 0,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
@@ -358,6 +362,7 @@ contract TaskEscrowBackupTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                serviceTier: 0,
                 backupWorker: buyer,
                 backupDeadlineExtension: BACKUP_EXTENSION,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
@@ -380,6 +385,7 @@ contract TaskEscrowBackupTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                serviceTier: 0,
                 backupWorker: worker,
                 backupDeadlineExtension: BACKUP_EXTENSION,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
@@ -402,6 +408,7 @@ contract TaskEscrowBackupTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                serviceTier: 0,
                 backupWorker: verifier,
                 backupDeadlineExtension: BACKUP_EXTENSION,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
@@ -424,6 +431,7 @@ contract TaskEscrowBackupTest is Test {
                 taskSpecHash: keccak256("spec"),
                 arbitratorTimeoutSeconds: ARB_TIMEOUT,
                 token: address(0),
+                serviceTier: 0,
                 backupWorker: arbitrator,
                 backupDeadlineExtension: BACKUP_EXTENSION,
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
