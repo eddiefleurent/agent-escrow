@@ -303,6 +303,11 @@ func (s *Server) registerTools(srv *mcp.Server) {
 	}, s.handleDepositVerifierStake)
 
 	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "withdraw_stake",
+		Description: "Withdraw verifier stake owed to the caller after quorum settlement or refund. Call this after quorum finalizes or a review cycle exits without quorum to claim your stake.",
+	}, s.handleWithdrawStake)
+
+	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "submit_work",
 		Description: "Submit work as the worker. Provide a URI pointing to the deliverable. For multi-milestone escrows, milestone_index is required (0-based). NOTE: The server must be running with the worker's private key (PRIVATE_KEY must match the escrow's worker address).",
 	}, s.handleSubmitWork)
@@ -957,6 +962,19 @@ func (s *Server) handleDepositVerifierStake(ctx context.Context, req *mcp.CallTo
 		return errResult, nil, nil
 	}
 	return jsonResult(map[string]any{"tx_hash": txHash, "next_steps": "Verifier can now cast_verifier_vote."})
+}
+
+func (s *Server) handleWithdrawStake(ctx context.Context, _ *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
+	escrow, err := s.resolveEscrowID(ctx, args.EscrowID.String())
+	if err != nil {
+		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
+	}
+	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
+	tx, err := s.chain.WithdrawStake(ctx, escrowAddr)
+	if err != nil {
+		return textResult(fmt.Sprintf("withdraw error: %v", chain.HumanizeError(err))), nil, nil
+	}
+	return jsonResult(map[string]any{"tx_hash": tx.Hash().Hex()})
 }
 
 // processStakeDeposit handles shared ERC20 approve+wait and deposit flow.

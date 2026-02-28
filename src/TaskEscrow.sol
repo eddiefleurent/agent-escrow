@@ -153,6 +153,8 @@ contract TaskEscrow {
     // Vote state (for the current submission/milestone review cycle)
     mapping(address => uint8) public quorumVote; // 0=unvoted 1=approve 2=reject
     mapping(address => bool) public quorumStaked;
+    // Pull-based stake settlement: amounts owed after quorum finalization or refund cycles.
+    mapping(address => uint256) public withdrawable;
     uint8 public quorumApproveCount;
     uint8 public quorumRejectCount;
     uint8 public quorumStakeCount;
@@ -444,6 +446,15 @@ contract TaskEscrow {
         quorumStaked[msg.sender] = true;
         quorumStakeCount++;
         emit QuorumVerifierStakeDeposited(msg.sender, verifierStakePerVerifier);
+    }
+
+    /// @notice Withdraw verifier stake owed to the caller after quorum settlement or refund.
+    /// @dev CEI ordering (zero before send) prevents reentrancy without the nonReentrant modifier.
+    function withdrawStake() external {
+        uint256 owed = withdrawable[msg.sender];
+        if (owed == 0) revert InvalidAmount();
+        withdrawable[msg.sender] = 0;
+        _send(msg.sender, owed);
     }
 
     function verifyAndApprove(bytes calldata proof) external nonReentrant whenNotFrozen {
@@ -843,7 +854,7 @@ contract TaskEscrow {
             return;
         }
         if (quorumRejectCount >= _quorumRejectThreshold()) {
-            _quorumReject(reasonURI);
+            _quorumReject(voter, reasonURI);
         }
     }
 
@@ -885,10 +896,10 @@ contract TaskEscrow {
         _approve(address(0));
     }
 
-    function _quorumReject(string memory reasonURI) internal {
+    function _quorumReject(address voter, string memory reasonURI) internal {
         emit QuorumReached(false, quorumApproveCount, quorumRejectCount);
         _settleVerifierStakes(false);
-        _setSingleDisputed(msg.sender, reasonURI, false);
+        _setSingleDisputed(voter, reasonURI, false);
     }
 
     function _setSingleDisputed(address raisedBy, string memory reasonURI, bool emitSilence) internal {
@@ -924,13 +935,13 @@ contract TaskEscrow {
 
             uint8 vote = quorumVote[panelVerifier];
             if (vote == 0) {
-                _send(panelVerifier, verifierStakePerVerifier); // refund abstainers
+                withdrawable[panelVerifier] += verifierStakePerVerifier; // refund abstainers
                 continue;
             }
 
             bool inMajority = approvalMajority ? vote == 1 : vote == 2;
-            if (inMajority) _send(panelVerifier, verifierStakePerVerifier);
-            else _send(buyer, verifierStakePerVerifier);
+            if (inMajority) withdrawable[panelVerifier] += verifierStakePerVerifier;
+            else withdrawable[buyer] += verifierStakePerVerifier;
         }
     }
 
@@ -943,7 +954,7 @@ contract TaskEscrow {
             if (!quorumStaked[panelVerifier]) continue;
             quorumStaked[panelVerifier] = false;
             if (quorumStakeCount > 0) quorumStakeCount--;
-            _send(panelVerifier, verifierStakePerVerifier);
+            withdrawable[panelVerifier] += verifierStakePerVerifier;
         }
     }
 

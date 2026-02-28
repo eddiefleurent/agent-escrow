@@ -19,6 +19,7 @@ func newEscrowCmd(opts *Options) *cobra.Command {
 	escrowCmd.AddCommand(newEscrowFundCmd(opts))
 	escrowCmd.AddCommand(newEscrowStakeCmd(opts))
 	escrowCmd.AddCommand(newEscrowVerifierStakeCmd(opts))
+	escrowCmd.AddCommand(newEscrowWithdrawStakeCmd(opts))
 	escrowCmd.AddCommand(newEscrowSubmitCmd(opts))
 	escrowCmd.AddCommand(newEscrowVerifyApproveCmd(opts))
 	escrowCmd.AddCommand(newEscrowQuorumVoteCmd(opts))

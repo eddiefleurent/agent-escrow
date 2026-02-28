@@ -109,6 +109,14 @@ contract TaskEscrowQuorumTest is Test {
         vm.prank(verifierC);
         e.castVerifierVote(true, "");
 
+        // Pull-based settlement: claim owed stakes before checking balances.
+        vm.prank(verifierB);
+        e.withdrawStake();
+        vm.prank(verifierC);
+        e.withdrawStake();
+        vm.prank(buyer);
+        e.withdrawStake();
+
         assertEq(verifierA.balance, aAfterDeposit);
         assertEq(verifierB.balance, bAfterDeposit + stake);
         assertEq(verifierC.balance, cAfterDeposit + stake);
@@ -126,6 +134,9 @@ contract TaskEscrowQuorumTest is Test {
 
         vm.prank(buyer);
         e.approveByBuyer();
+
+        vm.prank(verifierA);
+        e.withdrawStake();
 
         assertEq(uint8(e.status()), uint8(TaskEscrow.Status.Settled));
         assertEq(verifierA.balance, verifierAfterDeposit + stake);
@@ -153,6 +164,9 @@ contract TaskEscrowQuorumTest is Test {
         vm.prank(arbitrator);
         e.resolveDispute(5000, "ipfs://resolution");
 
+        vm.prank(verifierA);
+        e.withdrawStake();
+
         assertEq(uint8(e.status()), uint8(TaskEscrow.Status.Settled));
         assertEq(verifierA.balance, verifierAfterDeposit + stake);
         assertFalse(e.quorumStaked(verifierA));
@@ -174,6 +188,9 @@ contract TaskEscrowQuorumTest is Test {
         vm.warp(uint256(e.submissionDeadline()) + 1);
         vm.prank(buyer);
         e.claimTimeoutRefund();
+
+        vm.prank(verifierA);
+        e.withdrawStake();
 
         assertEq(uint8(e.status()), uint8(TaskEscrow.Status.Refunded));
         assertEq(verifierA.balance, verifierAfterDeposit + stake);
@@ -311,6 +328,9 @@ contract TaskEscrowQuorumTest is Test {
         vm.prank(owner);
         factory.emergencyResolve(escrowId, 5_000);
 
+        vm.prank(verifierA);
+        e.withdrawStake();
+
         assertEq(uint8(e.status()), uint8(TaskEscrow.Status.Settled));
         assertEq(verifierA.balance, verifierAfterDeposit + stake);
         assertEq(address(e).balance, 0);
@@ -359,6 +379,9 @@ contract TaskEscrowQuorumTest is Test {
         vm.prank(arbitrator);
         e.resolveMilestoneDispute(0, 5000, "ipfs://ms0-resolution");
 
+        vm.prank(verifierA);
+        e.withdrawStake();
+
         assertEq(e.currentMilestone(), 1);
         assertEq(verifierA.balance, verifierAfterDeposit + stake);
         assertFalse(e.quorumStaked(verifierA));
@@ -391,6 +414,9 @@ contract TaskEscrowQuorumTest is Test {
         vm.prank(buyer);
         e.expireNoQuorum("ipfs://expired-no-quorum");
 
+        vm.prank(verifierA);
+        e.withdrawStake();
+
         assertEq(uint8(e.status()), uint8(TaskEscrow.Status.Disputed));
         assertEq(uint256(e.disputedAt()), disputeEnd + 1);
         assertEq(verifierA.balance, verifierAfterDeposit + stake);
@@ -420,6 +446,9 @@ contract TaskEscrowQuorumTest is Test {
         vm.prank(buyer);
         e.expireMilestoneNoQuorum(0, "ipfs://ms-expired-no-quorum");
 
+        vm.prank(verifierA);
+        e.withdrawStake();
+
         (,,,,,,, uint64 msDisputedAt, string memory msReason, TaskEscrow.MilestoneStatus msStatus,) = e.milestones(0);
         assertEq(uint8(msStatus), uint8(TaskEscrow.MilestoneStatus.Disputed));
         assertEq(msReason, "ipfs://ms-expired-no-quorum");
@@ -443,6 +472,10 @@ contract TaskEscrowQuorumTest is Test {
 
         vm.prank(verifierA);
         e.castVerifierVote(approve, "ipfs://reason");
+
+        // In a 1-of-1 panel, verifierA is always in the majority; pull stake back.
+        vm.prank(verifierA);
+        e.withdrawStake();
 
         assertEq(verifierA.balance, verifierBefore + stake);
         assertEq(buyer.balance, buyerBefore);

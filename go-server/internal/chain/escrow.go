@@ -83,6 +83,15 @@ func (c *Client) ApproveByBuyer(ctx context.Context, escrow common.Address) (*ty
 	return c.SendTx(ctx, escrow, data, nil)
 }
 
+// WithdrawStake claims verifier stake owed to the caller after quorum settlement or refund.
+func (c *Client) WithdrawStake(ctx context.Context, escrow common.Address) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("withdrawStake")
+	if err != nil {
+		return nil, fmt.Errorf("pack withdrawStake: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, nil)
+}
+
 func (c *Client) CastVerifierVote(ctx context.Context, escrow common.Address, approve bool, reasonURI string) (*types.Transaction, error) {
 	data, err := EscrowABI.Pack("castVerifierVote", approve, reasonURI)
 	if err != nil {

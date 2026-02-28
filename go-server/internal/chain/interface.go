@@ -29,6 +29,7 @@ type ChainClient interface {
 	VerifyAndApprove(ctx context.Context, escrow common.Address, proof []byte) (*types.Transaction, error)
 	ApproveByBuyer(ctx context.Context, escrow common.Address) (*types.Transaction, error)
 	DepositVerifierStake(ctx context.Context, escrow common.Address, stakeAmount *big.Int) (*types.Transaction, error)
+	WithdrawStake(ctx context.Context, escrow common.Address) (*types.Transaction, error)
 	CastVerifierVote(ctx context.Context, escrow common.Address, approve bool, reasonURI string) (*types.Transaction, error)
 	Dispute(ctx context.Context, escrow common.Address, reasonURI string) (*types.Transaction, error)
 	EscalateSilence(ctx context.Context, escrow common.Address, reasonURI string) (*types.Transaction, error)

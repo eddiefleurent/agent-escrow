@@ -97,8 +97,8 @@ Terminal states (Settled, Refunded, Cancelled) are mutually exclusive and irreve
 | `submit` | worker | Funded | Before deadline; stake deposited if required |
 | `approveByBuyer` | buyer | Submitted | Within review window |
 | `depositVerifierStake` | verifier panel member | Funded/Submitted | `verifierStakePerVerifier > 0`, not already deposited |
-| `castVerifierVote(approve, reasonURI)` | verifier panel member | Submitted | Within review window; one vote per verifier; quorum threshold or reject-threshold finalizes |
-| `verifyAndApprove` | verifier panel member | Submitted | `zkVerifier != 0`, `proofHash != 0`, `keccak256(proof) == proofHash`, verifier contract returns `true` |
+| `castVerifierVote(approve, reasonURI)` | verifier panel member | Submitted | Within review window; one vote per verifier; `verifierStakePerVerifier == 0` or verifier has deposited stake; quorum threshold or reject-threshold finalizes |
+| `verifyAndApprove` | verifier panel member | Submitted | `zkVerifier != 0`, `proofHash != 0`, `keccak256(proof) == proofHash`, verifier contract returns `true`; `verifierStakePerVerifier == 0` or verifier has deposited stake |
 | `dispute` | buyer | Submitted | Within review + dispute window |
 | `escalateSilence` | worker | Submitted | After review window lapse without action |
 | `expireNoQuorum` | buyer / worker / verifier panel member | Submitted | After review + dispute window; transitions stale no-quorum cycle to `Disputed` |

@@ -45,6 +45,7 @@ type MockClient struct {
 	FundWithAuthErr         error
 	DepositStakeErr         error
 	DepositVerifierStakeErr error
+	WithdrawStakeErr        error
 	ApproveERC20Err         error
 	SubmitErr               error
 	VerifyAndApproveErr     error
@@ -229,6 +230,19 @@ func (m *MockClient) DepositVerifierStake(ctx context.Context, addr common.Addre
 		return nil, m.DepositVerifierStakeErr
 	}
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "depositVerifierStake", To: addr, Value: stakeAmount})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) WithdrawStake(ctx context.Context, addr common.Address) (*types.Transaction, error) {
+	if err := m.applyDelay(ctx); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.WithdrawStakeErr != nil {
+		return nil, m.WithdrawStakeErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "withdrawStake", To: addr})
 	return makeFakeTx(), nil
 }
 

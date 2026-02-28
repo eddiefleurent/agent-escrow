@@ -32,6 +32,7 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	mux.HandleFunc("POST /api/v1/escrows/{id}/fund", h.FundEscrow)
 	mux.HandleFunc("POST /api/v1/escrows/{id}/deposit-stake", h.DepositStake)
 	mux.HandleFunc("POST /api/v1/escrows/{id}/deposit-verifier-stake", h.DepositVerifierStake)
+	mux.HandleFunc("POST /api/v1/escrows/{id}/withdraw-stake", h.WithdrawStake)
 	mux.HandleFunc("POST /api/v1/escrows/{id}/submit", h.SubmitWork)
 	mux.HandleFunc("POST /api/v1/escrows/{id}/approve", h.ApproveWork)
 	mux.HandleFunc("POST /api/v1/escrows/{id}/verify-approve", h.VerifyAndApprove)

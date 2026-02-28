@@ -710,6 +710,27 @@ func (h *Handlers) DepositVerifierStake(w http.ResponseWriter, r *http.Request) 
 	h.execStakeDeposit(r.Context(), w, common.HexToAddress(escrow.EscrowAddress), stakeAmount, escrow.Token, h.chain.DepositVerifierStake)
 }
 
+// WithdrawStake claims verifier stake owed to the caller after quorum settlement or refund.
+func (h *Handlers) WithdrawStake(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	escrow, err := h.db.GetEscrow(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	tx, err := h.chain.WithdrawStake(r.Context(), common.HexToAddress(escrow.EscrowAddress))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
+		return
+	}
+	_ = h.idx.RunOnce(r.Context())
+	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+}
+
 type submitRequest struct {
 	SubmissionURI        string `json:"submission_uri"`
 	ProofHash            string `json:"proof_hash,omitempty"`
