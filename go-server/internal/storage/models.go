@@ -163,6 +163,35 @@ type RFQ struct {
 	UpdatedAt                time.Time `json:"updated_at"`
 }
 
+// Decomposition is a proposed task breakdown for contract-first delegation (paper §4.1).
+type Decomposition struct {
+	ID                   int64     `json:"id"`
+	Buyer                string    `json:"buyer"`
+	Title                string    `json:"title"`
+	Description          string    `json:"description"`
+	SpecHash             string    `json:"spec_hash"`
+	Status               string    `json:"status"` // draft | valid | finalized
+	ValidationErrorsJSON string    `json:"validation_errors_json"`
+	RFQIDsJSON           string    `json:"rfq_ids_json"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
+// DecompositionNode is one sub-task within a Decomposition.
+type DecompositionNode struct {
+	ID                           int64     `json:"id"`
+	DecompositionID              int64     `json:"decomposition_id"`
+	ParentNodeID                 *int64    `json:"parent_node_id,omitempty"`
+	Title                        string    `json:"title"`
+	Description                  string    `json:"description"`
+	VerificationType             string    `json:"verification_type"` // optimistic|quorum|zk_proof|unit_test
+	VerificationDetailsJSON      string    `json:"verification_details_json"`
+	Depth                        int       `json:"depth"`
+	RequiresFurtherDecomposition bool      `json:"requires_further_decomposition"`
+	RFQID                        *int64    `json:"rfq_id,omitempty"`
+	CreatedAt                    time.Time `json:"created_at"`
+}
+
 // Bid represents a signed Bid_Object from a worker agent (paper §6.1).
 type Bid struct {
 	ID                     int64     `json:"id"`

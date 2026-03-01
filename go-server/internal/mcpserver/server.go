@@ -5,6 +5,7 @@ import (
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/decomposition"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
@@ -38,4 +39,11 @@ func Serve(ctx context.Context, db *storage.DB, chainClient chain.ChainClient, i
 	s.registerTools(srv)
 
 	return srv.Run(ctx, &mcp.StdioTransport{})
+}
+
+func (s *Server) decompositionService() *decomposition.Service {
+	return &decomposition.Service{
+		DB:      s.db,
+		Bidding: s.biddingService(),
+	}
 }

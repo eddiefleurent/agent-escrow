@@ -36,6 +36,10 @@ participant "x402 Facilitator" as facilitator #E8EAF6
 
 == Task Creation ==
 
+note over buyer,factory #FFFDE7
+  Optional V3 pre-step (off-chain):\n  create_decomposition -> finalize_decomposition -> RFQ bidding/acceptance.\n  This sequence occurs before escrow formalization.
+end note
+
 buyer -> factory : create escrow
 factory -> "Escrow" as escrow ** : deploy
 factory --> buyer : escrow id + address

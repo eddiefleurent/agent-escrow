@@ -67,6 +67,12 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	mux.HandleFunc("GET /api/v1/rfqs/{id}/bids", h.ListBids)
 	mux.HandleFunc("POST /api/v1/rfqs/{id}/accept", h.AcceptBid)
 
+	// Contract-first decomposition endpoints (paper §4.1)
+	mux.HandleFunc("POST /api/v1/decompositions", h.CreateDecomposition)
+	mux.HandleFunc("GET /api/v1/decompositions", h.ListDecompositions)
+	mux.HandleFunc("GET /api/v1/decompositions/{id}", h.GetDecomposition)
+	mux.HandleFunc("POST /api/v1/decompositions/{id}/finalize", h.FinalizeDecomposition)
+
 	// Emergency response protocol endpoints (paper §4.9)
 	if cfg.EmergencyEnabled {
 		mux.HandleFunc("POST /api/v1/dcts/emergency-override", h.EmergencyOverrideDCT)

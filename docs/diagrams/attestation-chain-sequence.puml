@@ -48,13 +48,21 @@ Server -> Chain: Escrow.fund()
 
 == Phase 2: Sub-delegation (B delegates to C) ==
 
-B -> Server: create_rfq(sub_task,\n  parent_escrow_id=E1)
-note right of Server
-  Validates: B must be active
-  worker of parent escrow E1
-end note
-Server -> DB: insert rfq (parent_escrow_id=E1)
-Server --> B: rfq_id (sub)
+alt contract-first: B uses decomposition to plan the child task
+  B -> Server: create_decomposition(sub_task_tree)
+  Server -> DB: validate leaf verification types\n+ attach market context signals
+  B -> Server: finalize_decomposition(decomposition_id)
+  Server -> DB: create leaf RFQs from valid decomposition
+  Server --> B: rfq_ids[] (one per leaf)
+else direct RFQ: B creates a single RFQ directly
+  B -> Server: create_rfq(sub_task,\n  parent_escrow_id=E1)
+  note right of Server
+    Validates: B must be active
+    worker of parent escrow E1
+  end note
+  Server -> DB: insert rfq (parent_escrow_id=E1)
+  Server --> B: rfq_id (sub)
+end
 
 C -> Server: commit_bid + reveal_bid
 B -> Server: accept_bid(sub_rfq, bid_id)

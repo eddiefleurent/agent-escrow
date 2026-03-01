@@ -18,6 +18,7 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/bidding"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/decomposition"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/numconv"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
@@ -1450,6 +1451,213 @@ func (h *Handlers) biddingService() *bidding.Service {
 		Idx:   h.idx,
 		Cfg:   h.cfg,
 	}
+}
+
+func (h *Handlers) decompositionService() *decomposition.Service {
+	return &decomposition.Service{
+		DB:      h.db,
+		Bidding: h.biddingService(),
+	}
+}
+
+// Decomposition Handlers
+
+type createDecompositionRequest struct {
+	Title       string                       `json:"title"`
+	Description string                       `json:"description"`
+	Buyer       string                       `json:"buyer"`
+	SpecHash    string                       `json:"spec_hash,omitempty"`
+	SubTasks    []decomposition.SubTaskInput `json:"sub_tasks"`
+}
+
+func (h *Handlers) CreateDecomposition(w http.ResponseWriter, r *http.Request) {
+	var req createDecompositionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+
+	result, err := h.decompositionService().CreateDecomposition(r.Context(), decomposition.CreateDecompositionParams{
+		Buyer:       req.Buyer,
+		Title:       req.Title,
+		Description: req.Description,
+		SpecHash:    req.SpecHash,
+		SubTasks:    req.SubTasks,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	nextSteps := "Fix structural issues and resubmit."
+	if result.Valid {
+		nextSteps = "Decomposition is valid. Call finalize to create RFQs."
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"decomposition_id": result.Decomposition.ID,
+		"status":           result.Decomposition.Status,
+		"valid":            result.Valid,
+		"nodes":            result.Nodes,
+		"issues":           result.Issues,
+		"market_context":   result.MarketContext,
+		"next_steps":       nextSteps,
+	})
+}
+
+func (h *Handlers) ListDecompositions(w http.ResponseWriter, r *http.Request) {
+	buyer := r.URL.Query().Get("buyer")
+	status := r.URL.Query().Get("status")
+	items, err := h.decompositionService().ListDecompositions(r.Context(), buyer, status)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if items == nil {
+		items = []*storage.Decomposition{}
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (h *Handlers) GetDecomposition(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	decomp, nodes, err := h.decompositionService().GetDecomposition(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		} else {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return
+	}
+
+	var issues []decomposition.StructuralIssue
+	if decomp.ValidationErrorsJSON != "" && json.Valid([]byte(decomp.ValidationErrorsJSON)) {
+		if unmarshalErr := json.Unmarshal([]byte(decomp.ValidationErrorsJSON), &issues); unmarshalErr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to decode validation errors"})
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"decomposition": decomp,
+		"nodes":         nodes,
+		"suggestions": map[string]any{
+			"structural_issues": issues,
+		},
+	})
+}
+
+type finalizeDecompositionRequest struct {
+	Buyer                    string   `json:"buyer"`
+	Token                    string   `json:"token,omitempty"`
+	Deadline                 string   `json:"deadline"`
+	ReviewPeriodSeconds      string   `json:"review_period_seconds"`
+	DisputePeriodSeconds     string   `json:"dispute_period_seconds"`
+	ArbitratorTimeoutSeconds string   `json:"arbitrator_timeout_seconds"`
+	Arbitrator               string   `json:"arbitrator,omitempty"`
+	VerifierPanel            []string `json:"verifier_panel,omitempty"`
+	QuorumCount              string   `json:"quorum_count,omitempty"`
+	BudgetMin                string   `json:"budget_min"`
+	BudgetMax                string   `json:"budget_max"`
+	CommitDeadline           string   `json:"commit_deadline"`
+	RevealDeadline           string   `json:"reveal_deadline"`
+	ExpiresAt                string   `json:"expires_at"`
+}
+
+func (h *Handlers) FinalizeDecomposition(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+
+	var req finalizeDecompositionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+
+	deadline, err := strconv.ParseInt(req.Deadline, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid deadline"})
+		return
+	}
+	reviewPeriodSeconds, err := strconv.ParseInt(req.ReviewPeriodSeconds, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid review_period_seconds"})
+		return
+	}
+	disputePeriodSeconds, err := strconv.ParseInt(req.DisputePeriodSeconds, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid dispute_period_seconds"})
+		return
+	}
+	arbitratorTimeoutSeconds, err := strconv.ParseInt(req.ArbitratorTimeoutSeconds, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid arbitrator_timeout_seconds"})
+		return
+	}
+	commitDeadline, err := strconv.ParseInt(req.CommitDeadline, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid commit_deadline"})
+		return
+	}
+	revealDeadline, err := strconv.ParseInt(req.RevealDeadline, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid reveal_deadline"})
+		return
+	}
+	expiresAt, err := strconv.ParseInt(req.ExpiresAt, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid expires_at"})
+		return
+	}
+	quorumCount := 0
+	if strings.TrimSpace(req.QuorumCount) != "" {
+		quorumCount, err = strconv.Atoi(req.QuorumCount)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid quorum_count"})
+			return
+		}
+	}
+
+	decomp, rfqIDs, err := h.decompositionService().FinalizeDecomposition(r.Context(), decomposition.FinalizeParams{
+		DecompositionID:          id,
+		Buyer:                    req.Buyer,
+		Token:                    req.Token,
+		Deadline:                 deadline,
+		ReviewPeriodSeconds:      reviewPeriodSeconds,
+		DisputePeriodSeconds:     disputePeriodSeconds,
+		ArbitratorTimeoutSeconds: arbitratorTimeoutSeconds,
+		Arbitrator:               req.Arbitrator,
+		VerifierPanel:            req.VerifierPanel,
+		QuorumCount:              quorumCount,
+		BudgetMin:                req.BudgetMin,
+		BudgetMax:                req.BudgetMax,
+		CommitDeadline:           commitDeadline,
+		RevealDeadline:           revealDeadline,
+		ExpiresAt:                expiresAt,
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		} else {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"decomposition_id": decomp.ID,
+		"status":           decomp.Status,
+		"rfq_ids":          rfqIDs,
+		"rfq_count":        len(rfqIDs),
+		"next_steps":       "Workers can now discover and bid on generated RFQs.",
+	})
 }
 
 // RFQ Handlers

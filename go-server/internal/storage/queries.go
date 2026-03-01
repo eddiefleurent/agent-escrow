@@ -834,6 +834,10 @@ func (d *DB) CreateRFQ(ctx context.Context, r *RFQ) (*RFQ, error) {
 	return createRFQOn(ctx, d.db, r)
 }
 
+func (d *DB) CreateRFQTx(ctx context.Context, tx *sql.Tx, r *RFQ) (*RFQ, error) {
+	return createRFQOn(ctx, tx, r)
+}
+
 func (d *DB) GetRFQ(ctx context.Context, id int64) (*RFQ, error) {
 	row := d.db.QueryRowContext(ctx, `SELECT `+rfqColumns+` FROM rfqs WHERE id = ?`, id)
 	r, err := scanRFQ(row)
@@ -966,6 +970,411 @@ func (d *DB) UpdateRFQStatus(ctx context.Context, id int64, status string) error
 
 func (d *DB) UpdateRFQStatusTx(ctx context.Context, tx *sql.Tx, id int64, status string) error {
 	return updateRFQStatusOn(ctx, tx, id, status)
+}
+
+// Decomposition queries
+
+const decompositionColumns = `id, buyer, title, description, spec_hash, status, validation_errors_json, rfq_ids_json, created_at, updated_at`
+
+func scanDecomposition(scanner interface{ Scan(...any) error }) (*Decomposition, error) {
+	dc := &Decomposition{}
+	var createdAt, updatedAt string
+	if err := scanner.Scan(
+		&dc.ID,
+		&dc.Buyer,
+		&dc.Title,
+		&dc.Description,
+		&dc.SpecHash,
+		&dc.Status,
+		&dc.ValidationErrorsJSON,
+		&dc.RFQIDsJSON,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		return nil, err
+	}
+	var err error
+	dc.CreatedAt, err = parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse decomposition created_at: %w", err)
+	}
+	dc.UpdatedAt, err = parseSQLiteTime(updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse decomposition updated_at: %w", err)
+	}
+	return dc, nil
+}
+
+func createDecompositionOn(ctx context.Context, q dbExecer, dc *Decomposition) (*Decomposition, error) {
+	status := strings.TrimSpace(dc.Status)
+	if status == "" {
+		status = "draft"
+	}
+	validationErrorsJSON := strings.TrimSpace(dc.ValidationErrorsJSON)
+	if validationErrorsJSON == "" {
+		validationErrorsJSON = "[]"
+	}
+	if !json.Valid([]byte(validationErrorsJSON)) {
+		return nil, errors.New("invalid validation_errors_json")
+	}
+	rfqIDsJSON := strings.TrimSpace(dc.RFQIDsJSON)
+	if rfqIDsJSON == "" {
+		rfqIDsJSON = "[]"
+	}
+	if !json.Valid([]byte(rfqIDsJSON)) {
+		return nil, errors.New("invalid rfq_ids_json")
+	}
+
+	res, err := q.ExecContext(
+		ctx,
+		`INSERT INTO decompositions (buyer, title, description, spec_hash, status, validation_errors_json, rfq_ids_json)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		dc.Buyer, dc.Title, dc.Description, dc.SpecHash, status, validationErrorsJSON, rfqIDsJSON,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert decomposition: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("decomposition last insert id: %w", err)
+	}
+	out, err := scanDecomposition(q.QueryRowContext(ctx, `SELECT `+decompositionColumns+` FROM decompositions WHERE id = ?`, id))
+	if err != nil {
+		return nil, fmt.Errorf("get decomposition: %w", err)
+	}
+	return out, nil
+}
+
+func (d *DB) CreateDecomposition(ctx context.Context, dc *Decomposition) (*Decomposition, error) {
+	return createDecompositionOn(ctx, d.db, dc)
+}
+
+func (d *DB) CreateDecompositionTx(ctx context.Context, tx *sql.Tx, dc *Decomposition) (*Decomposition, error) {
+	return createDecompositionOn(ctx, tx, dc)
+}
+
+func updateDecompositionStatusOn(
+	ctx context.Context,
+	q dbExecer,
+	id int64,
+	status string,
+	validationErrorsJSON string,
+	rfqIDsJSON string,
+) error {
+	if status == "" {
+		return errors.New("status is required")
+	}
+	if validationErrorsJSON == "" {
+		validationErrorsJSON = "[]"
+	}
+	if !json.Valid([]byte(validationErrorsJSON)) {
+		return errors.New("invalid validation_errors_json")
+	}
+	if rfqIDsJSON == "" {
+		rfqIDsJSON = "[]"
+	}
+	if !json.Valid([]byte(rfqIDsJSON)) {
+		return errors.New("invalid rfq_ids_json")
+	}
+	res, err := q.ExecContext(
+		ctx,
+		`UPDATE decompositions
+         SET status = ?, validation_errors_json = ?, rfq_ids_json = ?, updated_at = datetime('now')
+         WHERE id = ?`,
+		status, validationErrorsJSON, rfqIDsJSON, id,
+	)
+	if err != nil {
+		return fmt.Errorf("update decomposition status: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update decomposition status rows affected: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("update decomposition status id=%d: %w", id, sql.ErrNoRows)
+	}
+	return nil
+}
+
+func updateDecompositionStatusIfCurrentOn(
+	ctx context.Context,
+	q dbExecer,
+	id int64,
+	expectedStatus string,
+	status string,
+	validationErrorsJSON string,
+	rfqIDsJSON string,
+) error {
+	if strings.TrimSpace(expectedStatus) == "" {
+		return errors.New("expectedStatus is required")
+	}
+	if status == "" {
+		return errors.New("status is required")
+	}
+	if validationErrorsJSON == "" {
+		validationErrorsJSON = "[]"
+	}
+	if !json.Valid([]byte(validationErrorsJSON)) {
+		return errors.New("invalid validation_errors_json")
+	}
+	if rfqIDsJSON == "" {
+		rfqIDsJSON = "[]"
+	}
+	if !json.Valid([]byte(rfqIDsJSON)) {
+		return errors.New("invalid rfq_ids_json")
+	}
+	res, err := q.ExecContext(
+		ctx,
+		`UPDATE decompositions
+         SET status = ?, validation_errors_json = ?, rfq_ids_json = ?, updated_at = datetime('now')
+         WHERE id = ? AND status = ?`,
+		status, validationErrorsJSON, rfqIDsJSON, id, expectedStatus,
+	)
+	if err != nil {
+		return fmt.Errorf("update decomposition status conditionally: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update decomposition status conditionally rows affected: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("update decomposition status id=%d expected_status=%s: %w", id, expectedStatus, sql.ErrNoRows)
+	}
+	return nil
+}
+
+func (d *DB) UpdateDecompositionStatus(
+	ctx context.Context,
+	id int64,
+	status string,
+	validationErrorsJSON string,
+	rfqIDsJSON string,
+) error {
+	return updateDecompositionStatusOn(ctx, d.db, id, status, validationErrorsJSON, rfqIDsJSON)
+}
+
+func (d *DB) UpdateDecompositionStatusTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	id int64,
+	status string,
+	validationErrorsJSON string,
+	rfqIDsJSON string,
+) error {
+	return updateDecompositionStatusOn(ctx, tx, id, status, validationErrorsJSON, rfqIDsJSON)
+}
+
+func (d *DB) UpdateDecompositionStatusIfCurrent(
+	ctx context.Context,
+	id int64,
+	expectedStatus string,
+	status string,
+	validationErrorsJSON string,
+	rfqIDsJSON string,
+) error {
+	return updateDecompositionStatusIfCurrentOn(
+		ctx,
+		d.db,
+		id,
+		expectedStatus,
+		status,
+		validationErrorsJSON,
+		rfqIDsJSON,
+	)
+}
+
+func (d *DB) UpdateDecompositionStatusIfCurrentTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	id int64,
+	expectedStatus string,
+	status string,
+	validationErrorsJSON string,
+	rfqIDsJSON string,
+) error {
+	return updateDecompositionStatusIfCurrentOn(
+		ctx,
+		tx,
+		id,
+		expectedStatus,
+		status,
+		validationErrorsJSON,
+		rfqIDsJSON,
+	)
+}
+
+func (d *DB) GetDecomposition(ctx context.Context, id int64) (*Decomposition, error) {
+	dc, err := scanDecomposition(d.db.QueryRowContext(ctx, `SELECT `+decompositionColumns+` FROM decompositions WHERE id = ?`, id))
+	if err != nil {
+		return nil, fmt.Errorf("get decomposition: %w", err)
+	}
+	return dc, nil
+}
+
+func (d *DB) ListDecompositions(ctx context.Context, buyer, status string) ([]*Decomposition, error) {
+	query := `SELECT ` + decompositionColumns + ` FROM decompositions WHERE 1=1`
+	args := make([]any, 0, 2)
+	if buyer := strings.TrimSpace(buyer); buyer != "" {
+		query += ` AND lower(buyer) = lower(?)`
+		args = append(args, buyer)
+	}
+	if status := strings.TrimSpace(status); status != "" {
+		query += ` AND status = ?`
+		args = append(args, status)
+	}
+	query += ` ORDER BY id DESC`
+
+	rows, err := d.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list decompositions: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*Decomposition
+	for rows.Next() {
+		dc, scanErr := scanDecomposition(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan decomposition: %w", scanErr)
+		}
+		out = append(out, dc)
+	}
+	return out, rows.Err()
+}
+
+const decompositionNodeColumns = `id, decomposition_id, parent_node_id, title, description, verification_type, verification_details_json, depth, requires_further_decomposition, rfq_id, created_at`
+
+func scanDecompositionNode(scanner interface{ Scan(...any) error }) (*DecompositionNode, error) {
+	n := &DecompositionNode{}
+	var parentNodeID sql.NullInt64
+	var requiresFurtherInt int
+	var rfqID sql.NullInt64
+	var createdAt string
+	if err := scanner.Scan(
+		&n.ID,
+		&n.DecompositionID,
+		&parentNodeID,
+		&n.Title,
+		&n.Description,
+		&n.VerificationType,
+		&n.VerificationDetailsJSON,
+		&n.Depth,
+		&requiresFurtherInt,
+		&rfqID,
+		&createdAt,
+	); err != nil {
+		return nil, err
+	}
+	if parentNodeID.Valid {
+		v := parentNodeID.Int64
+		n.ParentNodeID = &v
+	}
+	n.RequiresFurtherDecomposition = requiresFurtherInt != 0
+	if rfqID.Valid {
+		v := rfqID.Int64
+		n.RFQID = &v
+	}
+	var err error
+	n.CreatedAt, err = parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse decomposition_node created_at: %w", err)
+	}
+	return n, nil
+}
+
+func createDecompositionNodeOn(ctx context.Context, q dbExecer, node *DecompositionNode) (*DecompositionNode, error) {
+	verificationDetailsJSON := strings.TrimSpace(node.VerificationDetailsJSON)
+	if verificationDetailsJSON == "" {
+		verificationDetailsJSON = "{}"
+	}
+	if !json.Valid([]byte(verificationDetailsJSON)) {
+		return nil, errors.New("invalid verification_details_json")
+	}
+	res, err := q.ExecContext(
+		ctx,
+		`INSERT INTO decomposition_nodes
+         (decomposition_id, parent_node_id, title, description, verification_type, verification_details_json, depth, requires_further_decomposition, rfq_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		node.DecompositionID,
+		node.ParentNodeID,
+		node.Title,
+		node.Description,
+		node.VerificationType,
+		verificationDetailsJSON,
+		node.Depth,
+		boolToInt(node.RequiresFurtherDecomposition),
+		node.RFQID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert decomposition_node: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("decomposition_node last insert id: %w", err)
+	}
+	out, err := scanDecompositionNode(
+		q.QueryRowContext(ctx, `SELECT `+decompositionNodeColumns+` FROM decomposition_nodes WHERE id = ?`, id),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get decomposition_node: %w", err)
+	}
+	return out, nil
+}
+
+func (d *DB) CreateDecompositionNode(ctx context.Context, node *DecompositionNode) (*DecompositionNode, error) {
+	return createDecompositionNodeOn(ctx, d.db, node)
+}
+
+func (d *DB) CreateDecompositionNodeTx(ctx context.Context, tx *sql.Tx, node *DecompositionNode) (*DecompositionNode, error) {
+	return createDecompositionNodeOn(ctx, tx, node)
+}
+
+func (d *DB) ListDecompositionNodes(ctx context.Context, decompositionID int64) ([]*DecompositionNode, error) {
+	rows, err := d.db.QueryContext(
+		ctx,
+		`SELECT `+decompositionNodeColumns+` FROM decomposition_nodes WHERE decomposition_id = ? ORDER BY depth, id`,
+		decompositionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list decomposition_nodes: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*DecompositionNode
+	for rows.Next() {
+		node, scanErr := scanDecompositionNode(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan decomposition_node: %w", scanErr)
+		}
+		out = append(out, node)
+	}
+	return out, rows.Err()
+}
+
+func updateDecompositionNodeRFQOn(ctx context.Context, q dbExecer, nodeID, rfqID int64) error {
+	res, err := q.ExecContext(
+		ctx,
+		`UPDATE decomposition_nodes SET rfq_id = ? WHERE id = ? AND rfq_id IS NULL`,
+		rfqID, nodeID,
+	)
+	if err != nil {
+		return fmt.Errorf("update decomposition_node rfq_id: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update decomposition_node rfq_id rows affected: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("update decomposition_node rfq_id id=%d: already linked or not found", nodeID)
+	}
+	return nil
+}
+
+func (d *DB) UpdateDecompositionNodeRFQ(ctx context.Context, nodeID, rfqID int64) error {
+	return updateDecompositionNodeRFQOn(ctx, d.db, nodeID, rfqID)
+}
+
+func (d *DB) UpdateDecompositionNodeRFQTx(ctx context.Context, tx *sql.Tx, nodeID, rfqID int64) error {
+	return updateDecompositionNodeRFQOn(ctx, tx, nodeID, rfqID)
 }
 
 // Bid queries

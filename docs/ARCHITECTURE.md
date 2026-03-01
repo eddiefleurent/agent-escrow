@@ -450,6 +450,8 @@ SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 | `reputation_events` | Append-only outcome event log (`tx_hash` + `log_index` keyed) used to compute damped reputation overlays while preserving immutable raw counters |
 | `rfqs` | Task Request for Quote broadcasts (paper §6.1: Task_RFQ); optional `required_credentials_json` for credential-gated bidding |
 | `bids` | Signed Bid_Objects from worker agents (paper §6.1: Bid_Object); optional `stake_mandate_id` for Sybil resistance; `credentials_json` (attestation-v1 payloads), `credential_verified` when RFQ has requirements |
+| `decompositions` | Contract-first decomposition proposals (paper §4.1): buyer, task spec metadata, lifecycle status (`draft`/`valid`/`finalized`), structural validation errors JSON, linked RFQ IDs JSON |
+| `decomposition_nodes` | Tree nodes for each decomposition: parent linkage, depth, verification type/details, decomposition-required flag, and optional linked RFQ |
 | `ap2_mandates` | AP2 mandate records for gasless escrow funding via x402 facilitator |
 | `a2a_tasks` | A2A protocol tasks linked to escrows (paper §6: A2A Task object extension) |
 | `chain_logs` | Raw chain event log (idempotent by tx_hash + log_index) |
@@ -539,9 +541,31 @@ The bidding protocol implements the paper's decentralized market mechanism (§4.
 4. Buyer evaluates bids (cost, reputation, capability) and accepts one
 5. Acceptance atomically creates an on-chain escrow, closes the RFQ, and rejects remaining bids
 
-**Data model:** Two new tables (`rfqs`, `bids`) with status-based lifecycle management. RFQs have budget ranges enabling competitive bidding within buyer constraints. Both RFQs and bids have expiry timestamps checked at read time (no background cleanup needed).
+**Data model:** Two new tables (`rfqs`, `bids`) with status-based lifecycle management. RFQs have budget ranges enabling competitive bidding within buyer constraints and carry a `bidding_mode` (`sealed` default; decomposition finalization can assign `open` for low-assurance leaves). Both RFQs and bids have expiry timestamps checked at read time (no background cleanup needed).
 
 **Verifiable bid credentials (attestation-v1).** RFQ buyers can specify `required_credentials_json` with domain/capability/trusted-issuer selectors (paper §4.6 Table 3: Web of Trust; §6.1: Bid_Object). Workers present signed attestation-v1 payloads during bid reveal. The server verifies secp256k1 signatures, subject binding (bidder must match attestation subject_address), expiry, and matches attestations against requirements. Accept is gated on `credential_verified` when requirements are present — bids that fail credential verification cannot be accepted. Bazaar-compatible discovery metadata at `GET /api/v1/bazaar/discovery` exposes credential schemas and endpoint documentation. The attestation format includes an optional `issuer_did` field, forward-compatible with DID methods for V4.
+
+### Contract-First Decomposition Tooling (Paper §4.1)
+
+Contract-first decomposition operationalizes the paper's requirement that delegation be contingent on precise verifiability. The decomposition service is an off-chain planning and validation layer exposed through MCP, HTTP, and CLI.
+
+**Flow:**
+1. Caller submits a decomposition proposal (tree of sub-tasks with `temp_id` / `parent_temp_id` linkage)
+2. Service persists decomposition + nodes and identifies leaf nodes
+3. Structural validation enforces leaf verifiability constraints:
+   - `verification_type` required for leaves
+   - `requires_further_decomposition` must be false for leaves
+   - `zk_proof` leaves require `circuit_id` in `verification_details`
+4. Service computes per-leaf market context (market depth, verifier count, `proven`/`emerging`/`untested` signal) from historical DB data
+5. `finalize_decomposition` converts valid leaves into RFQs with verification-type-aware service tiers and bidding modes
+
+**Design choice: market context is advisory, not gating.** Decomposition validity is based on structural verifiability, not incumbent market depth. This avoids blocking first-mover capability markets (for example, the first `zk_proof` RFQ in a new deployment).
+
+**Verification type mapping at finalize-time:**
+- `optimistic` -> tier 0, open bidding
+- `unit_test` -> tier 0, open bidding (requirements include unit-test artifact expectations)
+- `quorum` -> tier 1, sealed bidding (uses finalize-time verifier panel/quorum params)
+- `zk_proof` -> tier 1, sealed bidding (uses node-level circuit metadata plus finalize-time verifier config)
 
 ### A2A Settlement Adapter (Paper §6)
 
@@ -659,6 +683,10 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 | `emergency_override_dct` | escrow_id, operation, caller_address, reason, owner | Emergency DCT override (factory owner only) |
 | `list_dct_audit` | escrow_id (optional), limit, offset | List DCT authorization audit entries |
 | `create_rfq` | title, description, buyer, budget_min/max, commit_deadline, reveal_deadline, expires_at, deadline, etc. | DB write (off-chain) with optional parent-linked re-bid cooldown gate |
+| `create_decomposition` | buyer, title, description, spec_hash (optional), `sub_tasks_json` | DB write + structural validation + market context generation (off-chain) |
+| `list_decompositions` | buyer, status (optional) | DB query |
+| `get_decomposition` | decomposition_id | DB read (decomposition + nodes) |
+| `finalize_decomposition` | decomposition_id + RFQ defaults (budgets, deadlines, arbitrator, verifier panel/quorum) | DB read/write + per-leaf RFQ creation |
 | `commit_bid` | rfq_id, bidder, commitment, nonce | DB write (off-chain) |
 | `reveal_bid` | rfq_id, bidder, nonce, salt, amount, estimated_duration, expires_at, etc. | DB write (off-chain) |
 | `list_bids` | rfq_id or bidder | DB query |
@@ -712,6 +740,10 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 | GET | `/api/v1/rfqs` | List RFQs (query: status, buyer) |
 | GET | `/api/v1/rfqs/{id}` | Get RFQ details with bids |
 | POST | `/api/v1/rfqs/{id}/cancel` | Cancel an open RFQ (buyer only) |
+| POST | `/api/v1/decompositions` | Create decomposition proposal (structural validation + market context) |
+| GET | `/api/v1/decompositions` | List decompositions (query: buyer, status) |
+| GET | `/api/v1/decompositions/{id}` | Get decomposition details with nodes |
+| POST | `/api/v1/decompositions/{id}/finalize` | Finalize valid decomposition into RFQs |
 | POST | `/api/v1/rfqs/{id}/bids/commit` | Commit sealed bid during commit phase |
 | POST | `/api/v1/rfqs/{id}/bids/reveal` | Reveal sealed bid during reveal phase |
 | GET | `/api/v1/rfqs/{id}/bids` | List bids for RFQ |
