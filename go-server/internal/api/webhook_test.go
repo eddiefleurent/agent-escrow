@@ -42,11 +42,12 @@ func setupWebhookTest(t *testing.T) *webhookTestEnv {
 
 	mock := chain.NewMockClient()
 	cfg := &config.Config{
-		ChainID:          84532,
-		FactoryAddress:   "0x0000000000000000000000000000000000000F01",
-		RequestTimeout:   10 * time.Second,
-		TxTimeout:        90 * time.Second,
-		CDPWebhookSecret: testWebhookSecret,
+		ChainID:                 84532,
+		FactoryAddress:          "0x0000000000000000000000000000000000000F01",
+		RequestTimeout:          10 * time.Second,
+		TxTimeout:               90 * time.Second,
+		CDPWebhookSecret:        testWebhookSecret,
+		ReputationDampingFactor: 0.9,
 	}
 
 	idx := indexer.New(db, mock, cfg.FactoryAddress)
@@ -285,6 +286,37 @@ func TestWebhook_OutcomeRecorded_Processed(t *testing.T) {
 	}
 	if rep.Completed != 1 {
 		t.Fatalf("expected 1 completed, got %d", rep.Completed)
+	}
+
+	events, err := env.db.ListReputationEvents(
+		context.Background(),
+		strings.ToLower("0x1000000000000000000000000000000000000001"),
+		"worker",
+		100,
+	)
+	if err != nil {
+		t.Fatalf("list reputation events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 reputation event, got %d", len(events))
+	}
+	if events[0].Role != "worker" {
+		t.Errorf("unexpected role: got %v want worker", events[0].Role)
+	}
+	if events[0].Outcome != "completed" {
+		t.Errorf("unexpected outcome: got %v want completed", events[0].Outcome)
+	}
+	if events[0].TxHash != "0xoutcome456" {
+		t.Errorf("unexpected tx_hash: got %v want 0xoutcome456", events[0].TxHash)
+	}
+	if events[0].LogIndex != 0 {
+		t.Errorf("unexpected log_index: got %v want 0", events[0].LogIndex)
+	}
+	if events[0].Address != strings.ToLower("0x1000000000000000000000000000000000000001") {
+		t.Errorf("unexpected address: got %v want %v", events[0].Address, strings.ToLower("0x1000000000000000000000000000000000000001"))
+	}
+	if events[0].BlockNumber != 100 {
+		t.Errorf("unexpected block_number: got %v want 100", events[0].BlockNumber)
 	}
 }
 

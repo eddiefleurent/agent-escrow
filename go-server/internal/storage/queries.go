@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -426,7 +427,7 @@ func (d *DB) GetReputation(ctx context.Context, address, role string) (*Reputati
 	var updatedAt string
 	err := d.db.QueryRowContext(ctx,
 		`SELECT id, address, role, completed, disputed, failed, updated_at FROM reputation WHERE address = ? AND role = ?`,
-		address, role,
+		strings.ToLower(strings.TrimSpace(address)), role,
 	).Scan(&r.ID, &r.Address, &r.Role, &r.Completed, &r.Disputed, &r.Failed, &updatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("get reputation: %w", err)
@@ -441,7 +442,7 @@ func (d *DB) GetReputation(ctx context.Context, address, role string) (*Reputati
 func (d *DB) GetReputationByAddress(ctx context.Context, address string) ([]*Reputation, error) {
 	rows, err := d.db.QueryContext(ctx,
 		`SELECT id, address, role, completed, disputed, failed, updated_at FROM reputation WHERE address = ?`,
-		address,
+		strings.ToLower(strings.TrimSpace(address)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get reputation by address: %w", err)
@@ -465,7 +466,7 @@ func (d *DB) GetReputationByAddress(ctx context.Context, address string) ([]*Rep
 	return reps, rows.Err()
 }
 
-func (d *DB) UpsertReputation(ctx context.Context, address, role, outcome string) error {
+func upsertReputationOn(ctx context.Context, q dbExecer, address, role, outcome string) error {
 	var col string
 	switch outcome {
 	case "completed":
@@ -478,17 +479,248 @@ func (d *DB) UpsertReputation(ctx context.Context, address, role, outcome string
 		return fmt.Errorf("invalid outcome: %s", outcome)
 	}
 
-	query := fmt.Sprintf( //nolint:gosec // col is from a hardcoded switch, not user input
+	query := fmt.Sprintf(
 		`INSERT INTO reputation (address, role, %s) VALUES (?, ?, 1)
 		 ON CONFLICT(address, role)
 		 DO UPDATE SET %s = %s + 1, updated_at = datetime('now')`,
 		col, col, col,
 	)
-	_, err := d.db.ExecContext(ctx, query, address, role)
+	_, err := q.ExecContext(ctx, query, address, role)
 	if err != nil {
 		return fmt.Errorf("upsert reputation: %w", err)
 	}
 	return nil
+}
+
+func (d *DB) UpsertReputation(ctx context.Context, address, role, outcome string) error {
+	address = strings.ToLower(strings.TrimSpace(address))
+	if address == "" {
+		return errors.New("address is required")
+	}
+	if err := validateReputationRole(role); err != nil {
+		return err
+	}
+	return upsertReputationOn(ctx, d.db, address, role, outcome)
+}
+
+func validateReputationRole(role string) error {
+	switch role {
+	case "worker", "buyer":
+		return nil
+	default:
+		return fmt.Errorf("invalid role: %s", role)
+	}
+}
+
+func validateReputationOutcome(outcome string) error {
+	switch outcome {
+	case "completed", "disputed", "failed":
+		return nil
+	default:
+		return fmt.Errorf("invalid outcome: %s", outcome)
+	}
+}
+
+func insertReputationEventOn(ctx context.Context, q dbExecer, e *ReputationEvent) (bool, error) {
+	if e == nil {
+		return false, errors.New("reputation event is required")
+	}
+	if err := validateReputationRole(e.Role); err != nil {
+		return false, err
+	}
+	if err := validateReputationOutcome(e.Outcome); err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(e.Address) == "" {
+		return false, errors.New("reputation event address is required")
+	}
+	if strings.TrimSpace(e.TxHash) == "" {
+		return false, errors.New("reputation event tx_hash is required")
+	}
+
+	occurredAt := e.OccurredAt.UTC()
+	if occurredAt.IsZero() {
+		occurredAt = time.Now().UTC()
+	}
+	address := strings.ToLower(strings.TrimSpace(e.Address))
+	txHash := strings.ToLower(strings.TrimSpace(e.TxHash))
+
+	res, err := q.ExecContext(
+		ctx,
+		`INSERT OR IGNORE INTO reputation_events
+         (address, role, outcome, tx_hash, log_index, block_number, occurred_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		address, e.Role, e.Outcome, txHash, e.LogIndex, e.BlockNumber, occurredAt.Format("2006-01-02 15:04:05"),
+	)
+	if err != nil {
+		return false, fmt.Errorf("insert reputation_event: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("reputation_event rows affected: %w", err)
+	}
+	return rows > 0, nil
+}
+
+func (d *DB) RecordReputationEvent(ctx context.Context, e *ReputationEvent) (bool, error) {
+	return insertReputationEventOn(ctx, d.db, e)
+}
+
+// RecordReputationOutcome appends an immutable event and updates raw counters
+// exactly once per unique tx/log/address/role identity.
+func (d *DB) RecordReputationOutcome(ctx context.Context, e *ReputationEvent) error {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin reputation outcome tx: %w", err)
+	}
+	inserted, err := insertReputationEventOn(ctx, tx, e)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	if inserted {
+		normalizedAddr := strings.ToLower(strings.TrimSpace(e.Address))
+		if err := upsertReputationOn(ctx, tx, normalizedAddr, e.Role, e.Outcome); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit reputation outcome tx: %w", err)
+	}
+	return nil
+}
+
+const maxReputationEvents = 10_000
+
+// ListReputationEvents returns up to limit reputation events for the given
+// address and role, ordered oldest-first. limit must be between 1 and
+// maxReputationEvents (10 000); values outside that range are clamped.
+func (d *DB) ListReputationEvents(ctx context.Context, address, role string, limit int) ([]*ReputationEvent, error) {
+	if err := validateReputationRole(role); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 1
+	} else if limit > maxReputationEvents {
+		limit = maxReputationEvents
+	}
+	rows, err := d.db.QueryContext(
+		ctx,
+		`SELECT id, address, role, outcome, tx_hash, log_index, block_number, occurred_at, created_at
+         FROM reputation_events
+         WHERE address = ? AND role = ?
+         ORDER BY occurred_at DESC, id DESC
+         LIMIT ?`,
+		strings.ToLower(strings.TrimSpace(address)), role, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list reputation events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []*ReputationEvent
+	for rows.Next() {
+		ev := &ReputationEvent{}
+		var occurredAt, createdAt string
+		if err := rows.Scan(
+			&ev.ID, &ev.Address, &ev.Role, &ev.Outcome, &ev.TxHash, &ev.LogIndex, &ev.BlockNumber, &occurredAt, &createdAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan reputation event: %w", err)
+		}
+		ev.OccurredAt, err = parseSQLiteTime(occurredAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse reputation event occurred_at: %w", err)
+		}
+		ev.CreatedAt, err = parseSQLiteTime(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse reputation event created_at: %w", err)
+		}
+		events = append(events, ev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Reverse so callers always receive events oldest→newest.
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
+	}
+	return events, nil
+}
+
+func computeDampedCounts(outcomes []string, dampingFactor float64) DampedReputation {
+	var damped DampedReputation
+	if dampingFactor <= 0 || len(outcomes) == 0 {
+		return damped
+	}
+	n := len(outcomes)
+	for i, outcome := range outcomes {
+		weight := math.Pow(dampingFactor, float64(n-1-i))
+		switch outcome {
+		case "completed":
+			damped.Completed += weight
+		case "disputed":
+			damped.Disputed += weight
+		case "failed":
+			damped.Failed += weight
+		}
+	}
+	return damped
+}
+
+func (d *DB) GetReputationView(ctx context.Context, address, role string, dampingFactor float64) (*ReputationView, error) {
+	if err := validateReputationRole(role); err != nil {
+		return nil, err
+	}
+	if dampingFactor <= 0 || dampingFactor > 1 {
+		return nil, fmt.Errorf("invalid damping factor %.6f: must be > 0 and <= 1", dampingFactor)
+	}
+
+	address = strings.ToLower(strings.TrimSpace(address))
+	view := &ReputationView{
+		Address: address,
+		Role:    role,
+	}
+
+	rep, err := d.GetReputation(ctx, address, role)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+	} else {
+		view.Completed = rep.Completed
+		view.Disputed = rep.Disputed
+		view.Failed = rep.Failed
+		view.UpdatedAt = rep.UpdatedAt
+	}
+	view.Raw = ReputationCounts{
+		Completed: view.Completed,
+		Disputed:  view.Disputed,
+		Failed:    view.Failed,
+	}
+
+	events, err := d.ListReputationEvents(ctx, address, role, maxReputationEvents)
+	if err != nil {
+		return nil, err
+	}
+	outcomes := make([]string, 0, len(events))
+	for _, ev := range events {
+		outcomes = append(outcomes, ev.Outcome)
+	}
+	view.Damped = computeDampedCounts(outcomes, dampingFactor)
+	return view, nil
+}
+
+func (d *DB) GetReputationViewsByAddress(ctx context.Context, address string, dampingFactor float64) ([]*ReputationView, error) {
+	workerView, err := d.GetReputationView(ctx, address, "worker", dampingFactor)
+	if err != nil {
+		return nil, err
+	}
+	buyerView, err := d.GetReputationView(ctx, address, "buyer", dampingFactor)
+	if err != nil {
+		return nil, err
+	}
+	return []*ReputationView{workerView, buyerView}, nil
 }
 
 func (d *DB) ListReputations(ctx context.Context, minCompleted int) ([]*Reputation, error) {
@@ -526,6 +758,20 @@ const rfqColumns = `id, title, description, spec_hash, buyer, token, budget_min,
 	bidding_mode, commit_deadline, reveal_deadline, service_tier, parent_escrow_id,
 	status, expires_at, created_at, updated_at`
 
+type ParentRFQCooldownError struct {
+	ParentEscrowID  int64
+	LatestCreatedAt time.Time
+	CooldownSeconds int64
+}
+
+func (e *ParentRFQCooldownError) Error() string {
+	return fmt.Sprintf(
+		"parent rfq cooldown active for parent_escrow_id %d (cooldown_seconds=%d)",
+		e.ParentEscrowID,
+		e.CooldownSeconds,
+	)
+}
+
 func scanRFQ(scanner interface{ Scan(...any) error }) (*RFQ, error) {
 	r := &RFQ{}
 	var createdAt, updatedAt string
@@ -556,8 +802,8 @@ func scanRFQ(scanner interface{ Scan(...any) error }) (*RFQ, error) {
 	return r, nil
 }
 
-func (d *DB) CreateRFQ(ctx context.Context, r *RFQ) (*RFQ, error) {
-	res, err := d.db.ExecContext(ctx,
+func createRFQOn(ctx context.Context, q dbExecer, r *RFQ) (*RFQ, error) {
+	res, err := q.ExecContext(ctx,
 		`INSERT INTO rfqs (title, description, spec_hash, buyer, token, budget_min, budget_max,
 			deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds,
 			verifier, arbitrator, worker_stake, milestones_json, requirements_json, required_credentials_json,
@@ -576,7 +822,16 @@ func (d *DB) CreateRFQ(ctx context.Context, r *RFQ) (*RFQ, error) {
 	if err != nil {
 		return nil, fmt.Errorf("last insert id: %w", err)
 	}
-	return d.GetRFQ(ctx, id)
+	row := q.QueryRowContext(ctx, `SELECT `+rfqColumns+` FROM rfqs WHERE id = ?`, id)
+	out, err := scanRFQ(row)
+	if err != nil {
+		return nil, fmt.Errorf("get rfq: %w", err)
+	}
+	return out, nil
+}
+
+func (d *DB) CreateRFQ(ctx context.Context, r *RFQ) (*RFQ, error) {
+	return createRFQOn(ctx, d.db, r)
 }
 
 func (d *DB) GetRFQ(ctx context.Context, id int64) (*RFQ, error) {
@@ -586,6 +841,73 @@ func (d *DB) GetRFQ(ctx context.Context, id int64) (*RFQ, error) {
 		return nil, fmt.Errorf("get rfq: %w", err)
 	}
 	return r, nil
+}
+
+func getLatestRFQByParentEscrowOn(ctx context.Context, q dbExecer, parentEscrowID int64) (*RFQ, error) {
+	row := q.QueryRowContext(
+		ctx,
+		`SELECT `+rfqColumns+` FROM rfqs WHERE parent_escrow_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+		parentEscrowID,
+	)
+	return scanRFQ(row)
+}
+
+func (d *DB) GetLatestRFQByParentEscrow(ctx context.Context, parentEscrowID int64) (*RFQ, error) {
+	r, err := getLatestRFQByParentEscrowOn(ctx, d.db, parentEscrowID)
+	if err != nil {
+		return nil, fmt.Errorf("get latest rfq by parent escrow: %w", err)
+	}
+	return r, nil
+}
+
+func (d *DB) CreateRFQWithParentCooldown(ctx context.Context, rfq *RFQ, cooldownSeconds int64) (*RFQ, error) {
+	if rfq.ParentEscrowID == nil || cooldownSeconds <= 0 {
+		return d.CreateRFQ(ctx, rfq)
+	}
+
+	conn, err := d.db.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire db conn: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return nil, fmt.Errorf("begin immediate tx: %w", err)
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		}
+	}()
+
+	latestRFQ, err := getLatestRFQByParentEscrowOn(ctx, conn, *rfq.ParentEscrowID)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("get latest rfq by parent escrow: %w", err)
+		}
+	} else {
+		retryAt := latestRFQ.CreatedAt.Add(time.Duration(cooldownSeconds) * time.Second)
+		if time.Now().UTC().Before(retryAt) {
+			return nil, &ParentRFQCooldownError{
+				ParentEscrowID:  *rfq.ParentEscrowID,
+				LatestCreatedAt: latestRFQ.CreatedAt,
+				CooldownSeconds: cooldownSeconds,
+			}
+		}
+	}
+
+	created, err := createRFQOn(ctx, conn, rfq)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return nil, fmt.Errorf("commit immediate tx: %w", err)
+	}
+	committed = true
+	return created, nil
 }
 
 func (d *DB) ListRFQs(ctx context.Context, status, buyer string) ([]*RFQ, error) {

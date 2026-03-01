@@ -41,6 +41,8 @@ type MockClient struct {
 	Delay time.Duration
 
 	CreateEscrowErr         error
+	LastCreateEscrowFactory common.Address
+	LastCreateEscrowParams  *CreateEscrowParams
 	FundErr                 error
 	FundWithAuthErr         error
 	DepositStakeErr         error
@@ -171,12 +173,15 @@ func (m *MockClient) TransactionReceipt(_ context.Context, _ common.Hash) (*type
 	return nil, errors.New("receipt not found")
 }
 
-func (m *MockClient) CreateEscrow(_ context.Context, _ common.Address, _ CreateEscrowParams) (*types.Transaction, error) {
+func (m *MockClient) CreateEscrow(_ context.Context, factory common.Address, p CreateEscrowParams) (*types.Transaction, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.CreateEscrowErr != nil {
 		return nil, m.CreateEscrowErr
 	}
+	paramsCopy := p
+	m.LastCreateEscrowFactory = factory
+	m.LastCreateEscrowParams = &paramsCopy
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "createEscrow"})
 	return makeFakeTx(), nil
 }

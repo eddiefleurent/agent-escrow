@@ -20,6 +20,7 @@ contract TaskEscrowFactory {
     error EscrowNotFrozen();
     error InvalidServiceTier();
     error InvalidQuorumConfiguration();
+    error InvalidConfig();
 
     // Service tier constants (paper §5.3: tiered service levels)
     uint8 public constant TIER_LOW_ASSURANCE = 0;
@@ -41,6 +42,14 @@ contract TaskEscrowFactory {
     );
     event ProtocolFeeUpdated(uint16 oldFeeBps, uint16 newFeeBps);
     event HighAssuranceFeeUpdated(uint16 oldFeeBps, uint16 newFeeBps);
+    event RedelegationSurchargePolicyUpdated(
+        uint16 oldSurchargeStepBps,
+        uint16 newSurchargeStepBps,
+        uint16 oldMaxSurchargeBps,
+        uint16 newMaxSurchargeBps,
+        uint64 oldFrequencyWindowSeconds,
+        uint64 newFrequencyWindowSeconds
+    );
     event TreasuryUpdated(address oldTreasury, address newTreasury);
     event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
@@ -54,6 +63,14 @@ contract TaskEscrowFactory {
     event EscrowFrozen(uint256 indexed escrowId);
     event EscrowUnfrozen(uint256 indexed escrowId);
     event EmergencyResolved(uint256 indexed escrowId, uint16 workerAwardBps);
+    event MarketStabilityFeeApplied(
+        uint256 indexed escrowId,
+        address indexed parentEscrow,
+        uint16 baseFeeBps,
+        uint16 surchargeBps,
+        uint16 feeSnapshotBps,
+        uint16 redelegationStreak
+    );
 
     // Outcome enum values passed by escrow contracts via recordOutcome().
     uint8 public constant OUTCOME_COMPLETED = 1;
@@ -66,10 +83,25 @@ contract TaskEscrowFactory {
         uint32 failed;
     }
 
+    struct RedelegationFeeState {
+        uint64 lastRedelegationAt;
+        uint16 streak;
+    }
+
+    struct FeeComputation {
+        uint16 baseFeeBps;
+        uint16 surchargeBps;
+        uint16 feeSnapshotBps;
+        uint16 redelegationStreak;
+    }
+
     uint256 public nextEscrowId;
     mapping(uint256 => address) public escrowById;
     uint16 public protocolFeeBps;
     uint16 public highAssuranceFeeBps;
+    uint16 public redelegationSurchargeStepBps;
+    uint16 public redelegationMaxSurchargeBps;
+    uint64 public redelegationFrequencyWindowSeconds;
     uint256 public complexityFloor;
     address public treasury;
     address public owner;
@@ -83,6 +115,7 @@ contract TaskEscrowFactory {
     mapping(uint256 => address) internal escrowBuyer;
     mapping(uint256 => address) internal escrowWorker;
     mapping(address => bool) public frozenAddresses;
+    mapping(address => RedelegationFeeState) public redelegationFeeState;
 
     constructor(uint16 _protocolFeeBps, uint16 _highAssuranceFeeBps, address _treasury, address _owner) {
         if (_protocolFeeBps > 10_000) revert InvalidFeeBps();
@@ -132,6 +165,7 @@ contract TaskEscrowFactory {
         uint64 backupDeadlineExtension;
         address zkVerifier;
         bytes32 circuitId;
+        address parentEscrow;
         CreateMilestoneParams[] milestones;
     }
 
@@ -156,16 +190,14 @@ contract TaskEscrowFactory {
         if (FactoryLib.rolesCollide(
                 p.buyer, p.worker, p.arbitrator, p.backupWorker, p.verifierPanel, p.quorumVerifierCount
             )) revert TaskEscrow.RolesNotDistinct();
-
-        uint16 feeSnapshot = p.serviceTier == TIER_HIGH_ASSURANCE ? highAssuranceFeeBps : protocolFeeBps;
-
-        TaskEscrow.CreateMilestoneParams[] memory escrowMilestones =
-            new TaskEscrow.CreateMilestoneParams[](p.milestones.length);
-        for (uint256 i = 0; i < p.milestones.length; i++) {
-            escrowMilestones[i] = TaskEscrow.CreateMilestoneParams({
-                amount: p.milestones[i].amount, submissionDeadline: p.milestones[i].submissionDeadline
-            });
+        if (p.parentEscrow != address(0)) {
+            if (escrowToId[p.parentEscrow] == 0) revert NotRegisteredEscrow();
+            if (p.buyer != TaskEscrow(p.parentEscrow).activeWorker()) revert Unauthorized();
         }
+
+        FeeComputation memory fee = _computeFeeSnapshot(p.serviceTier, p.parentEscrow);
+
+        TaskEscrow.CreateMilestoneParams[] memory escrowMilestones = _toEscrowMilestones(p.milestones);
 
         escrow = deployer.deploy(
             TaskEscrow.Params({
@@ -183,7 +215,7 @@ contract TaskEscrowFactory {
                 reviewPeriodSeconds: p.reviewPeriodSeconds,
                 disputePeriodSeconds: p.disputePeriodSeconds,
                 taskSpecHash: p.taskSpecHash,
-                protocolFeeBpsSnapshot: feeSnapshot,
+                protocolFeeBpsSnapshot: fee.feeSnapshotBps,
                 treasurySnapshot: treasury,
                 arbitratorTimeoutSeconds: p.arbitratorTimeoutSeconds,
                 token: p.token,
@@ -217,6 +249,12 @@ contract TaskEscrowFactory {
             p.circuitId
         );
 
+        if (p.parentEscrow != address(0)) {
+            emit MarketStabilityFeeApplied(
+                escrowId, p.parentEscrow, fee.baseFeeBps, fee.surchargeBps, fee.feeSnapshotBps, fee.redelegationStreak
+            );
+        }
+
         if (p.backupWorker != address(0)) {
             emit BackupDesignated(escrowId, p.backupWorker, p.backupDeadlineExtension);
         }
@@ -225,6 +263,7 @@ contract TaskEscrowFactory {
     function setProtocolFeeBps(uint16 newFeeBps) external onlyOwner {
         if (newFeeBps > 10_000) revert InvalidFeeBps();
         if (newFeeBps > highAssuranceFeeBps) revert InvalidFeeBps();
+        if (uint256(newFeeBps) + uint256(redelegationMaxSurchargeBps) > 10_000) revert InvalidFeeBps();
         uint16 oldFee = protocolFeeBps;
         protocolFeeBps = newFeeBps;
         emit ProtocolFeeUpdated(oldFee, newFeeBps);
@@ -233,9 +272,41 @@ contract TaskEscrowFactory {
     function setHighAssuranceFeeBps(uint16 newFeeBps) external onlyOwner {
         if (newFeeBps > 10_000) revert InvalidFeeBps();
         if (newFeeBps < protocolFeeBps) revert InvalidFeeBps();
+        if (uint256(newFeeBps) + uint256(redelegationMaxSurchargeBps) > 10_000) revert InvalidFeeBps();
         uint16 oldFee = highAssuranceFeeBps;
         highAssuranceFeeBps = newFeeBps;
         emit HighAssuranceFeeUpdated(oldFee, newFeeBps);
+    }
+
+    function setRedelegationSurchargePolicy(
+        uint16 newSurchargeStepBps,
+        uint16 newMaxSurchargeBps,
+        uint64 newFrequencyWindowSeconds
+    ) external onlyOwner {
+        if (newSurchargeStepBps > 10_000 || newMaxSurchargeBps > 10_000) {
+            revert InvalidFeeBps();
+        }
+        if (uint256(highAssuranceFeeBps) + uint256(newMaxSurchargeBps) > 10_000) revert InvalidFeeBps();
+        if (newFrequencyWindowSeconds == 0 && (newSurchargeStepBps != 0 || newMaxSurchargeBps != 0)) {
+            revert InvalidConfig();
+        }
+
+        uint16 oldSurchargeStepBps = redelegationSurchargeStepBps;
+        uint16 oldMaxSurchargeBps = redelegationMaxSurchargeBps;
+        uint64 oldFrequencyWindowSeconds = redelegationFrequencyWindowSeconds;
+
+        redelegationSurchargeStepBps = newSurchargeStepBps;
+        redelegationMaxSurchargeBps = newMaxSurchargeBps;
+        redelegationFrequencyWindowSeconds = newFrequencyWindowSeconds;
+
+        emit RedelegationSurchargePolicyUpdated(
+            oldSurchargeStepBps,
+            newSurchargeStepBps,
+            oldMaxSurchargeBps,
+            newMaxSurchargeBps,
+            oldFrequencyWindowSeconds,
+            newFrequencyWindowSeconds
+        );
     }
 
     function setComplexityFloor(uint256 newFloor) external onlyOwner {
@@ -347,6 +418,58 @@ contract TaskEscrowFactory {
         if (!TaskEscrow(escrow).frozen()) revert EscrowNotFrozen();
         TaskEscrow(escrow).emergencyResolve(workerAwardBps);
         emit EmergencyResolved(escrowId, workerAwardBps);
+    }
+
+    function _toEscrowMilestones(CreateMilestoneParams[] calldata milestones)
+        internal
+        pure
+        returns (TaskEscrow.CreateMilestoneParams[] memory escrowMilestones)
+    {
+        escrowMilestones = new TaskEscrow.CreateMilestoneParams[](milestones.length);
+        for (uint256 i = 0; i < milestones.length; i++) {
+            escrowMilestones[i] = TaskEscrow.CreateMilestoneParams({
+                amount: milestones[i].amount, submissionDeadline: milestones[i].submissionDeadline
+            });
+        }
+    }
+
+    function _computeFeeSnapshot(uint8 serviceTier, address parentEscrow) internal returns (FeeComputation memory fee) {
+        fee.baseFeeBps = serviceTier == TIER_HIGH_ASSURANCE ? highAssuranceFeeBps : protocolFeeBps;
+        (fee.surchargeBps, fee.redelegationStreak) = _computeRedelegationSurcharge(parentEscrow);
+        uint256 feeSnapshotRaw = uint256(fee.baseFeeBps) + uint256(fee.surchargeBps);
+        if (feeSnapshotRaw > 10_000) revert InvalidFeeBps();
+        fee.feeSnapshotBps = uint16(feeSnapshotRaw);
+    }
+
+    function _computeRedelegationSurcharge(address parentEscrow) internal returns (uint16 surchargeBps, uint16 streak) {
+        if (parentEscrow == address(0)) {
+            return (0, 0);
+        }
+
+        if (redelegationSurchargeStepBps == 0 || redelegationMaxSurchargeBps == 0) {
+            return (0, 0);
+        }
+
+        RedelegationFeeState storage state = redelegationFeeState[parentEscrow];
+        bool isFrequent = state.lastRedelegationAt != 0 && redelegationFrequencyWindowSeconds > 0
+            && block.timestamp <= uint256(state.lastRedelegationAt) + uint256(redelegationFrequencyWindowSeconds);
+
+        if (isFrequent && state.streak < type(uint16).max) {
+            streak = state.streak + 1;
+        } else if (isFrequent) {
+            streak = type(uint16).max;
+        } else {
+            streak = 0;
+        }
+
+        state.lastRedelegationAt = uint64(block.timestamp);
+        state.streak = streak;
+
+        uint256 rawSurcharge = uint256(streak) * uint256(redelegationSurchargeStepBps);
+        if (rawSurcharge > redelegationMaxSurchargeBps) {
+            rawSurcharge = redelegationMaxSurchargeBps;
+        }
+        surchargeBps = uint16(rawSurcharge);
     }
 
     function getWorkerReputation(address addr)

@@ -39,6 +39,9 @@ participant "Base L2\n(Contracts)" as Chain
 == RFQ Broadcast ==
 
 Buyer -> Server : create_rfq / POST /api/v1/rfqs\n(title, budget_min/max, deadline, commit_deadline, reveal_deadline,\noptional required_credentials_json)
+Server -> DB : If parent_escrow_id set:\nvalidate buyer == parent active_worker
+Server -> DB : Fetch latest parent-linked RFQ activity
+Server -> Server : Enforce re-bid cooldown window\n(reject with retry timing when active)
 Server -> DB : INSERT rfq (status=open, bidding_mode=sealed)
 Server --> Buyer : rfq_id, status=open
 
@@ -86,7 +89,8 @@ Buyer -> Server : accept_bid / POST /api/v1/rfqs/{id}/accept\n(bid_id=bid_A)
 
 group Atomic acceptance
   Server -> Server : If required_credentials present:\nreject unless bid.credential_verified
-  Server -> Chain : createEscrow(buyer, worker_A,\namount=200, verifier, arbitrator, deadline)
+  Server -> Chain : createEscrow(buyer, worker_A,\namount=200, verifier, arbitrator, deadline,\noptional parentEscrow)
+  Chain -> Chain : Snapshot fee = base tier fee +\nparent-linked re-delegation surcharge (if any)
   Chain --> Server : tx_hash, escrow_address, escrow_id
 
   Server -> DB : INSERT task + escrow (status=created)
@@ -102,5 +106,14 @@ note over WorkerB : Bid rejected;\nfree to bid on other RFQs
 == Post-Acceptance: Standard Escrow Lifecycle ==
 
 note over Buyer, Chain : Buyer funds escrow (fund or fund_via_mandate) → Worker submits → Verifier approves → Settlement\n(See lifecycle-sequence diagram)
+
+== Reputation Update + Damping ==
+
+Chain -> Server : OutcomeRecorded(participant, role, outcome)
+Server -> DB : Upsert raw counters in reputation
+Server -> DB : Append immutable reputation_events\n(unique by tx_hash + log_index + address + role)
+Server -> Server : Compute damped metrics\n(configurable decay factor)
+Buyer -> Server : get_reputation / GET /api/v1/reputation/{address}
+Server --> Buyer : raw counters + damped metrics
 
 @enduml

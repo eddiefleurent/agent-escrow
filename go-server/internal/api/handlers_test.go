@@ -38,10 +38,11 @@ func setup(t *testing.T) *testEnv {
 
 	mock := chain.NewMockClient()
 	cfg := &config.Config{
-		ChainID:        84532,
-		FactoryAddress: "0xFactoryAddr",
-		RequestTimeout: 10 * time.Second,
-		TxTimeout:      90 * time.Second,
+		ChainID:                 84532,
+		FactoryAddress:          "0x0000000000000000000000000000000000000001",
+		RequestTimeout:          10 * time.Second,
+		TxTimeout:               90 * time.Second,
+		ReputationDampingFactor: 0.9,
 	}
 
 	idx := indexer.New(db, mock, cfg.FactoryAddress)
@@ -963,6 +964,110 @@ func TestCreateRFQ_Success(t *testing.T) {
 	}
 	if resp["title"] != "Build a widget" {
 		t.Fatalf("expected title 'Build a widget', got %v", resp["title"])
+	}
+}
+
+func TestCreateRFQ_ParentCooldownReturns429(t *testing.T) {
+	env := setup(t)
+	env.cfg.RebidCooldownSeconds = 300
+	ctx := context.Background()
+
+	task, err := env.db.CreateTask(ctx, "Parent", "", "0xparent")
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	parent, err := env.db.CreateEscrow(ctx, &storage.Escrow{
+		TaskID:                   task.ID,
+		ChainID:                  env.cfg.ChainID,
+		FactoryAddress:           env.cfg.FactoryAddress,
+		EscrowAddress:            "0x7000000000000000000000000000000000000007",
+		EscrowID:                 10,
+		Buyer:                    "0x1000000000000000000000000000000000000001",
+		Worker:                   "0x2000000000000000000000000000000000000002",
+		Verifier:                 "0x3000000000000000000000000000000000000003",
+		Arbitrator:               "0x4000000000000000000000000000000000000004",
+		Amount:                   "100",
+		WorkerStake:              "0",
+		Token:                    "",
+		Status:                   "created",
+		SubmissionDeadline:       time.Now().Add(24 * time.Hour).Unix(),
+		ReviewPeriodSeconds:      60,
+		DisputePeriodSeconds:     60,
+		ArbitratorTimeoutSeconds: 60,
+		ActiveWorker:             "0x1000000000000000000000000000000000000001",
+	})
+	if err != nil {
+		t.Fatalf("create parent escrow: %v", err)
+	}
+
+	now := time.Now().Unix()
+	_, err = env.db.CreateRFQ(ctx, &storage.RFQ{
+		Title:                    "existing",
+		Description:              "desc",
+		SpecHash:                 "0x1",
+		Buyer:                    "0x1000000000000000000000000000000000000001",
+		BudgetMin:                "100",
+		BudgetMax:                "500",
+		Deadline:                 now + 3600,
+		ReviewPeriodSeconds:      60,
+		DisputePeriodSeconds:     60,
+		ArbitratorTimeoutSeconds: 60,
+		Verifier:                 "0x3000000000000000000000000000000000000003",
+		Arbitrator:               "0x4000000000000000000000000000000000000004",
+		WorkerStake:              "0",
+		MilestonesJSON:           "[]",
+		RequirementsJSON:         "{}",
+		RequiredCredentialsJSON:  "[]",
+		BiddingMode:              "sealed",
+		CommitDeadline:           now + 600,
+		RevealDeadline:           now + 1200,
+		ServiceTier:              0,
+		ParentEscrowID:           &parent.ID,
+		Status:                   "open",
+		ExpiresAt:                now + 1800,
+	})
+	if err != nil {
+		t.Fatalf("create existing rfq: %v", err)
+	}
+
+	body := fmt.Sprintf(`{
+		"title": "new-rfq",
+		"description": "desc",
+		"buyer": "0x1000000000000000000000000000000000000001",
+		"budget_min": "100",
+		"budget_max": "500",
+		"deadline": "%d",
+		"review_period_seconds": "60",
+		"dispute_period_seconds": "60",
+		"arbitrator_timeout_seconds": "60",
+		"verifier": "0x3000000000000000000000000000000000000003",
+		"arbitrator": "0x4000000000000000000000000000000000000004",
+		"commit_deadline": "%d",
+		"reveal_deadline": "%d",
+		"expires_at": "%d",
+		"parent_escrow_id": %d
+	}`, now+3600, now+600, now+1200, now+1800, parent.ID)
+
+	rr := env.request(t, "POST", "/api/v1/rfqs", body)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp := decodeJSON(t, rr)
+	retryAfterRaw, ok := resp["retry_after_seconds"]
+	if !ok || retryAfterRaw == nil {
+		t.Fatalf("expected retry_after_seconds in cooldown response, got %v", resp)
+	}
+	retryAfterSecs, ok := retryAfterRaw.(float64)
+	if !ok || retryAfterSecs <= 0 {
+		t.Fatalf("expected retry_after_seconds to be a positive number, got %v", retryAfterRaw)
+	}
+	retryAfter := rr.Header().Get("Retry-After")
+	if retryAfter == "" {
+		t.Fatalf("expected Retry-After header to be present, got empty")
+	}
+	parsed, parseErr := strconv.ParseFloat(retryAfter, 64)
+	if parseErr != nil || parsed < retryAfterSecs {
+		t.Errorf("Retry-After header %q should be >= retry_after_seconds %.2f", retryAfter, retryAfterSecs)
 	}
 }
 

@@ -113,6 +113,7 @@ const (
 	EventMilestoneCancelled        = "milestone.cancelled"
 	EventMilestoneAborted          = "milestone.aborted"
 	EventOutcomeRecorded           = "reputation.outcome_recorded"
+	EventMarketStabilityFeeApplied = "market_stability.fee_applied"
 	EventWorkerStakeDeposited      = "escrow.stake_deposited"
 	EventAttestationChainSubmitted = "attestation.chain_submitted"
 	EventAttestationChainVerified  = "attestation.chain_verified"
@@ -146,6 +147,7 @@ var OnChainEventName = map[string]string{
 	"MilestoneCancelled":         EventMilestoneCancelled,
 	"RemainingMilestonesAborted": EventMilestoneAborted,
 	"OutcomeRecorded":            EventOutcomeRecorded,
+	"MarketStabilityFeeApplied":  EventMarketStabilityFeeApplied,
 	"WorkerStakeDeposited":       EventWorkerStakeDeposited,
 	"ArbitratorTimeoutClaimed":   EventEscrowRefunded,
 	"AddressFrozen":              EventAddressFrozen,

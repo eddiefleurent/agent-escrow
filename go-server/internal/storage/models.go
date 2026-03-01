@@ -97,6 +97,41 @@ type Reputation struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type ReputationCounts struct {
+	Completed int `json:"completed"`
+	Disputed  int `json:"disputed"`
+	Failed    int `json:"failed"`
+}
+
+type DampedReputation struct {
+	Completed float64 `json:"completed"`
+	Disputed  float64 `json:"disputed"`
+	Failed    float64 `json:"failed"`
+}
+
+type ReputationView struct {
+	Address   string           `json:"address"`
+	Role      string           `json:"role"`
+	Completed int              `json:"completed"`
+	Disputed  int              `json:"disputed"`
+	Failed    int              `json:"failed"`
+	Raw       ReputationCounts `json:"raw"`
+	Damped    DampedReputation `json:"damped"`
+	UpdatedAt time.Time        `json:"updated_at,omitempty"`
+}
+
+type ReputationEvent struct {
+	ID          int64
+	Address     string
+	Role        string
+	Outcome     string
+	TxHash      string
+	LogIndex    int
+	BlockNumber int64
+	OccurredAt  time.Time
+	CreatedAt   time.Time
+}
+
 // RFQ represents a Task Request for Quote broadcast (paper §6.1).
 type RFQ struct {
 	ID                       int64     `json:"id"`

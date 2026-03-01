@@ -34,6 +34,32 @@ const (
 	commitRateLimitWindowSeconds    = 60
 )
 
+type RebidCooldownError struct {
+	ParentEscrowID int64
+	RetryAt        time.Time
+	RetryAfter     time.Duration
+}
+
+func (e *RebidCooldownError) RetryAfterSeconds() int64 {
+	seconds := int64(e.RetryAfter / time.Second)
+	if e.RetryAfter%time.Second != 0 {
+		seconds++
+	}
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
+}
+
+func (e *RebidCooldownError) Error() string {
+	return fmt.Sprintf(
+		"re-bid cooldown active for parent_escrow_id %d: retry in %d seconds (at %s)",
+		e.ParentEscrowID,
+		e.RetryAfterSeconds(),
+		e.RetryAt.UTC().Format(time.RFC3339),
+	)
+}
+
 // parseMilestonesJSON parses the milestones_json string from an RFQ or bid into chain params.
 func parseMilestonesJSON(raw string) ([]chain.MilestoneParam, error) {
 	if raw == "" || raw == "[]" {
@@ -250,6 +276,11 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 		return nil, fmt.Errorf("invalid required_credentials_json: %w", err)
 	}
 
+	cooldownSeconds := int64(0)
+	if s.Cfg != nil {
+		cooldownSeconds = s.Cfg.RebidCooldownSeconds
+	}
+
 	// Validate parent_escrow_id when sub-delegating: the buyer of the child RFQ
 	// must be the active worker of the parent escrow (paper §4.8).
 	if p.ParentEscrowID != nil {
@@ -269,7 +300,7 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 
 	specHash := crypto.Keccak256Hash([]byte(p.Title + p.Description))
 
-	rfq, err := s.DB.CreateRFQ(ctx, &storage.RFQ{
+	rfqRecord := &storage.RFQ{
 		Title:                    p.Title,
 		Description:              p.Description,
 		SpecHash:                 specHash.Hex(),
@@ -294,9 +325,33 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 		ParentEscrowID:           p.ParentEscrowID,
 		Status:                   "open",
 		ExpiresAt:                p.ExpiresAt,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create rfq: %w", err)
+	}
+
+	var rfq *storage.RFQ
+	if p.ParentEscrowID != nil && cooldownSeconds > 0 {
+		rfq, err = s.DB.CreateRFQWithParentCooldown(ctx, rfqRecord, cooldownSeconds)
+		if err != nil {
+			var cooldownErr *storage.ParentRFQCooldownError
+			if errors.As(err, &cooldownErr) {
+				retryAt := cooldownErr.LatestCreatedAt.Add(time.Duration(cooldownErr.CooldownSeconds) * time.Second)
+				nowUTC := time.Now().UTC()
+				retryAfter := retryAt.Sub(nowUTC)
+				if retryAfter < 0 {
+					retryAfter = 0
+				}
+				return nil, &RebidCooldownError{
+					ParentEscrowID: cooldownErr.ParentEscrowID,
+					RetryAt:        retryAt,
+					RetryAfter:     retryAfter,
+				}
+			}
+			return nil, fmt.Errorf("create rfq: %w", err)
+		}
+	} else {
+		rfq, err = s.DB.CreateRFQ(ctx, rfqRecord)
+		if err != nil {
+			return nil, fmt.Errorf("create rfq: %w", err)
+		}
 	}
 	return rfq, nil
 }
@@ -715,6 +770,18 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 	var verifierPanel [7]common.Address
 	verifierPanel[0] = common.HexToAddress(rfq.Verifier)
 
+	var parentEscrowAddr common.Address
+	if rfq.ParentEscrowID != nil {
+		parentEscrow, err := s.DB.GetEscrow(ctx, *rfq.ParentEscrowID)
+		if err != nil {
+			return nil, fmt.Errorf("parent escrow lookup failed: %w", err)
+		}
+		if !common.IsHexAddress(parentEscrow.EscrowAddress) {
+			return nil, fmt.Errorf("parent escrow %d has invalid on-chain address %q", *rfq.ParentEscrowID, parentEscrow.EscrowAddress)
+		}
+		parentEscrowAddr = common.HexToAddress(parentEscrow.EscrowAddress)
+	}
+
 	// Use bid milestones if provided, fall back to RFQ milestones.
 	milestonesRaw := bid.MilestonesJSON
 	if milestonesRaw == "" || milestonesRaw == "[]" {
@@ -759,6 +826,7 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 		ArbitratorTimeoutSeconds: arbitratorTimeoutSeconds,
 		Token:                    tokenAddr,
 		ServiceTier:              uint8(rfq.ServiceTier), //nolint:gosec // validated 0-1 at RFQ creation
+		ParentEscrow:             parentEscrowAddr,
 		Milestones:               milestones,
 	}
 

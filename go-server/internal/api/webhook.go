@@ -178,7 +178,7 @@ func (wh *WebhookHandler) processWebhookEvent(ctx context.Context, payload cdpWe
 	case "EscrowCreated":
 		handlerErr = wh.handleEscrowCreated(ctx, data)
 	case "OutcomeRecorded":
-		handlerErr = wh.handleOutcomeRecorded(ctx, data)
+		handlerErr = wh.handleOutcomeRecorded(ctx, data, blockNum, logIdx)
 	default:
 		slog.Info("webhook: ignoring unhandled factory event", "event_name", data.EventName)
 	}
@@ -307,7 +307,7 @@ func (wh *WebhookHandler) handleEscrowCreated(ctx context.Context, data cdpWebho
 
 // handleOutcomeRecorded processes an OutcomeRecorded event from the CDP webhook.
 // Mirrors the logic in indexer.handleOutcomeRecorded.
-func (wh *WebhookHandler) handleOutcomeRecorded(ctx context.Context, data cdpWebhookEventData) error {
+func (wh *WebhookHandler) handleOutcomeRecorded(ctx context.Context, data cdpWebhookEventData, blockNum int64, logIndex int) error {
 	if !common.IsHexAddress(data.Participant) {
 		return fmt.Errorf("OutcomeRecorded: invalid participant address: %q", data.Participant)
 	}
@@ -320,7 +320,14 @@ func (wh *WebhookHandler) handleOutcomeRecorded(ctx context.Context, data cdpWeb
 		"outcome", data.Outcome,
 	)
 
-	return wh.idx.DB().UpsertReputation(ctx, participant, data.Role, data.Outcome)
+	return wh.idx.DB().RecordReputationOutcome(ctx, &storage.ReputationEvent{
+		Address:     participant,
+		Role:        data.Role,
+		Outcome:     data.Outcome,
+		TxHash:      data.TransactionHash,
+		LogIndex:    logIndex,
+		BlockNumber: blockNum,
+	})
 }
 
 // verifyCDPSignature verifies the HMAC-SHA256 signature from a CDP webhook.
