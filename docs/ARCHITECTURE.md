@@ -13,6 +13,8 @@ Settlement Kernel (V1)  →  Market Primitives (V2)  →  Delegation Intelligenc
 
 Blockchain handles settlement guarantees, auditability, and cryptoeconomic enforcement. Execution, intelligence, matching, and orchestration remain off-chain for speed and flexibility.
 
+Paper coverage status, gap tracking, and per-item design decisions are maintained in `docs/paper-feature-map.json`, with sequencing and delivery checklists in `docs/ROADMAP.md`.
+
 ### Problem Statement
 
 The paper identifies a critical gap: as AI agents become more capable, the *delegation problem* becomes primary. Not "can the agent do the task" but "how do we trust it did the task correctly, pay it fairly, and hold it accountable?" Current AI delegation flows are fragile and trust-heavy. No existing agent protocol provides conditional settlement, verifiable task completion, or dispute resolution.
@@ -43,7 +45,7 @@ The paper defines intelligent delegation across five pillars (Section 4), nine t
 |---|---|---|---|
 | **Dynamic Assessment** | 4.1, 4.2 | Task decomposition, capability matching, smart-contract formalization | Settlement kernel (V1) → Bidding marketplace (V2) → Decomposition tooling + advisory human/AI allocation intent (V3) |
 | **Adaptive Execution** | 4.4 | Runtime re-delegation, failure recovery, checkpoint-based re-allocation | Timeout/escalation (V1) → Milestones + backup agents (V2) → Checkpoint/resume (V3) |
-| **Structural Transparency** | 4.5, 4.8 | Monitoring (outcome + process), verifiable task completion, attestation chains | Events + hash commitments (V1) → Milestones + L0-L3 subscriptions (V2) → Attestation chains + ZK verification (V3) |
+| **Structural Transparency** | 4.5, 4.8 | Monitoring (outcome + process), verifiable task completion, attestation chains | Events + hash commitments (V1) → Milestones + L0/L1 subscriptions (V2, with L2/L3 staged) → Attestation chains + ZK verification (V3) |
 | **Scalable Market Coordination** | 4.3, 4.6 | Multi-objective optimization, reputation, trust calibration, Web of Trust | Designated trust (V1) → Reputation + complexity floor + RFQ bidding (V2) → Verifiable credentials (attestation-v1) + market stability (V3) |
 | **Systemic Resilience** | 4.7, 4.9 | Permission handling, privilege attenuation, security defense-in-depth | Role gates + reentrancy guard (V1) → Emergency response + stake-based Sybil resistance (V2) → DCT attenuation + principal authorization layer + tiered assurance (V3) |
 
@@ -54,7 +56,8 @@ The paper also defines ethical dimensions (Section 5):
 | Meaningful human control | 5.1 | Buyer/verifier approval gates; cognitive friction via reject + escalation paths |
 | Accountability in long chains | 5.2 | Immutable provenance via on-chain event logs; liability firebreaks per escrow |
 | Reliability vs efficiency | 5.3 | Tiered service levels (V3): low-assurance (optimistic) vs high-assurance (verified) |
-| Social intelligence | 5.4 | Human-compatible interfaces; MCP + HTTP dual surface; structured dispute resolution |
+| Social intelligence | 5.4 | V4 planned: explicit social-intelligence safeguards for human/AI teamwork (anti-micromanagement, authority-gradient handling) |
+| User training | 5.5 | V4 planned: operator training/certification tracks for delegators, delegatees, and overseers |
 | Risk of de-skilling | 5.6 | Advisory per-leaf human/AI allocation intent in decomposition (V3); curriculum-aware task routing (V4) |
 
 ### V1 Paper Coverage
@@ -94,7 +97,7 @@ The paper's insight (Section 6): extend existing agent protocols rather than com
 
 | Protocol | Gap Identified by Paper | Settlement Layer Integration | Phase |
 |---|---|---|---|
-| **MCP** (Anthropic) | Liability, reputation, trust, conditional settlement | MCP server with escrow tools; future: monitoring stream, DCT-scoped permissions | V1 (complete) |
+| **MCP** (Anthropic) | Liability, reputation, trust, conditional settlement | MCP server with escrow lifecycle, bidding/decomposition, DCT authorization tooling, and event subscription surfaces | V1-V3 |
 | **[x402](https://docs.cdp.coinbase.com/x402/welcome)** (Coinbase) | Stateless payment; no conditionality, dispute resolution, or verification | Gasless escrow funding rail (EIP-3009 via facilitator); AP2 mandate funding mechanism; complexity floor calibration | V2 |
 | **[x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar)** (Coinbase) | Discovery only; no bidding, negotiation, or capability matching | Service discovery substrate for Task_RFQ; credential metadata via `GET /api/v1/bazaar/discovery` (attestation-v1 profile, endpoint docs) | V2-V3 |
 | **A2A** (Google) | Verification, escrow, conditional settlement | Settlement adapter agent card with `verification_policy` + `escrow_trigger`; Bazaar-discoverable | V2 |
@@ -102,7 +105,7 @@ The paper's insight (Section 6): extend existing agent protocols rather than com
 | **UCP** | Delegation-specific settlement for computational tasks | UCP fulfillment provider exposing escrow lifecycle | V3 |
 | **[AgentKit](https://docs.cdp.coinbase.com/agent-kit/welcome)** (Coinbase) | Wallet management and on-chain actions for agents; no delegation lifecycle | Agent wallet provider for multi-tenant signing; escrow actions as custom action provider | V2-V3 |
 
-x402 is an open payment protocol that enables instant stablecoin payments over HTTP by reviving the HTTP 402 status code. Its Bazaar layer provides machine-readable service discovery for payable API endpoints. Both operate on Base in the same ecosystem as this project. x402 provides a stateless, single-interaction payment flow; this project provides a stateful, multi-party delegation lifecycle with conditional settlement. The two are complementary: x402 serves as a payment rail and discovery layer, while the escrow contract governs conditional custody, verification, dispute resolution, and settlement. See the [Roadmap](ROADMAP.md#relationship-to-x402) for a detailed analysis.
+x402 is an open payment protocol that enables instant stablecoin payments over HTTP by reviving the HTTP 402 status code. Its Bazaar layer provides machine-readable service discovery for payable API endpoints. Both operate on Base in the same ecosystem as this project. x402 provides a stateless, single-interaction payment flow; this project provides a stateful, multi-party delegation lifecycle with conditional settlement. The two are complementary: x402 serves as a payment rail and discovery layer, while the escrow contract governs conditional custody, verification, dispute resolution, and settlement. See the [Roadmap](ROADMAP.md#protocol-integration-principles) for integration principles and sequencing.
 
 [AgentKit](https://docs.cdp.coinbase.com/agent-kit/welcome) is a toolkit that gives AI agents secure wallet management and on-chain capabilities (transfers, swaps, contract interactions) across any AI framework (LangChain, Vercel AI SDK, MCP). It addresses the paper's permission handling requirements (§4.7): agents need their own cryptographic identity to sign transactions, and permissions must be scoped to the immediate task rather than shared via a single server-held key. In V1, the Go server holds one private key and signs all transactions on behalf of every participant. AgentKit provides the migration path: each agent manages its own wallet, signs its own escrow transactions (fund, submit, approve, dispute), and the server shifts to an indexing-only role. The escrow lifecycle could also be packaged as a custom AgentKit action provider, making delegation tools available alongside an agent's existing on-chain capabilities. [Payments MCP](https://docs.cdp.coinbase.com/payments-mcp/welcome) -- Coinbase's MCP server combining AgentKit wallets with x402 payments -- represents the natural client-side complement: agents already running Payments MCP have a wallet and USDC balance ready to fund escrows.
 
@@ -110,7 +113,7 @@ The paper proposes specific protocol extensions (§6.1) that map to the roadmap:
 
 ### Integration Paths
 
-Four integration paths, in priority order:
+Five integration paths, in priority order:
 
 **Path A: Skills + CLI for shell agents (V2).** Shell-capable agents discover `skills/escrow-cli/SKILL.md` and execute `escrow-cli`, a thin HTTP client over the existing API. This keeps business logic centralized in the Go server while enabling low-friction agent workflows.
 
@@ -504,8 +507,8 @@ The event bus provides client-facing real-time streaming of escrow lifecycle eve
 
 - **L0** (`IS_OPERATIONAL`): heartbeat/liveness signals at configurable intervals
 - **L1** (`HIGH_LEVEL_PLAN_UPDATES`): on-chain state transitions (funded, submitted, approved, disputed, etc.)
-- **L2** (`COT_TRACE`): chain-of-thought reasoning traces (future, V3)
-- **L3** (`FULL_STATE`): complete state snapshots (future, V3)
+- **L2** (`COT_TRACE`): chain-of-thought reasoning traces (future, staged)
+- **L3** (`FULL_STATE`): complete state snapshots (future, staged)
 
 **Architecture:** An in-process `EventBus` (`internal/events/`) receives events from three sources:
 
