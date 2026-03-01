@@ -359,7 +359,7 @@ func TestRecordReputationOutcome_DeduplicatesAndUpdatesRaw(t *testing.T) {
 		t.Fatalf("unexpected raw counters: %+v", rep)
 	}
 
-	events, err := db.ListReputationEvents(ctx, "0xworker", "worker")
+	events, err := db.ListReputationEvents(ctx, "0xworker", "worker", 100)
 	if err != nil {
 		t.Fatalf("list reputation events: %v", err)
 	}

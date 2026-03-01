@@ -292,6 +292,7 @@ func TestWebhook_OutcomeRecorded_Processed(t *testing.T) {
 		context.Background(),
 		strings.ToLower("0x1000000000000000000000000000000000000001"),
 		"worker",
+		100,
 	)
 	if err != nil {
 		t.Fatalf("list reputation events: %v", err)

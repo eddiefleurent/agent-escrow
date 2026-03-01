@@ -493,7 +493,14 @@ func upsertReputationOn(ctx context.Context, q dbExecer, address, role, outcome 
 }
 
 func (d *DB) UpsertReputation(ctx context.Context, address, role, outcome string) error {
-	return upsertReputationOn(ctx, d.db, strings.ToLower(strings.TrimSpace(address)), role, outcome)
+	address = strings.ToLower(strings.TrimSpace(address))
+	if address == "" {
+		return errors.New("address is required")
+	}
+	if err := validateReputationRole(role); err != nil {
+		return err
+	}
+	return upsertReputationOn(ctx, d.db, address, role, outcome)
 }
 
 func validateReputationRole(role string) error {
@@ -584,17 +591,26 @@ func (d *DB) RecordReputationOutcome(ctx context.Context, e *ReputationEvent) er
 	return nil
 }
 
-func (d *DB) ListReputationEvents(ctx context.Context, address, role string) ([]*ReputationEvent, error) {
+const maxReputationEvents = 10_000
+
+// ListReputationEvents returns up to limit reputation events for the given
+// address and role, ordered oldest-first. limit must be between 1 and
+// maxReputationEvents (10 000); values outside that range are clamped.
+func (d *DB) ListReputationEvents(ctx context.Context, address, role string, limit int) ([]*ReputationEvent, error) {
 	if err := validateReputationRole(role); err != nil {
 		return nil, err
+	}
+	if limit <= 0 || limit > maxReputationEvents {
+		limit = maxReputationEvents
 	}
 	rows, err := d.db.QueryContext(
 		ctx,
 		`SELECT id, address, role, outcome, tx_hash, log_index, block_number, occurred_at, created_at
          FROM reputation_events
          WHERE address = ? AND role = ?
-         ORDER BY occurred_at ASC, id ASC`,
-		strings.ToLower(strings.TrimSpace(address)), role,
+         ORDER BY occurred_at ASC, id ASC
+         LIMIT ?`,
+		strings.ToLower(strings.TrimSpace(address)), role, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list reputation events: %w", err)
@@ -674,7 +690,7 @@ func (d *DB) GetReputationView(ctx context.Context, address, role string, dampin
 		Failed:    view.Failed,
 	}
 
-	events, err := d.ListReputationEvents(ctx, address, role)
+	events, err := d.ListReputationEvents(ctx, address, role, maxReputationEvents)
 	if err != nil {
 		return nil, err
 	}
