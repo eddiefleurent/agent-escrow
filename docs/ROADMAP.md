@@ -8,7 +8,7 @@ Implementation roadmap for the ["Intelligent AI Delegation"](https://arxiv.org/a
 
 ## How To Read This Roadmap
 
-- **Canonical mapping file:** `docs/paper-feature-map.json` is the machine-readable source of truth for paper coverage, gap tracking, and per-item design decisions.
+- **Canonical mapping file:** `docs/paper-feature-map.json` is the canonical, machine-readable source of truth for paper coverage, gap tracking, and per-item design decisions. The **Item Register** tables below are human-readable summaries that must be kept in sync with that JSON.
 - **Status legend:** `done` = implemented, `in_progress` = currently being delivered, `planned` = scoped but not implemented.
 - **Alignment legend:**
   - `direct` = closely follows paper prescription.
@@ -98,7 +98,7 @@ Recommended near-term order: `22 -> R1 -> R2 -> R3 -> R4 -> 25 -> 29 -> 30 -> 23
 
 - [ ] **Domain model mapping:** map escrow lifecycle states to UCP fulfillment state machine.
 - [ ] **Protocol adapter:** implement UCP ingestion/response paths without duplicating business logic.
-- [ ] **Interface parity:** expose functionality through MCP, HTTP, and `escrow-cli`.
+- [ ] **Interface parity:** evaluate transport exposure (MCP, HTTP, `escrow-cli`) case by case per the transport compatibility principle; expose only on transports where it adds value.
 - [ ] **Settlement semantics:** preserve escrow conditionality (verification, dispute, refund) through UCP mappings.
 - [ ] **Tests and docs:** end-to-end tests plus request/response examples for integrators.
 
@@ -115,7 +115,7 @@ Recommended near-term order: `22 -> R1 -> R2 -> R3 -> R4 -> 25 -> 29 -> 30 -> 23
 
 - [ ] Add anti-grief controls for commit-without-reveal behavior.
 - [ ] Define deterministic fallback rules when top commits are not revealed.
-- [ ] Evaluate transport compatibility across MCP, HTTP, and CLI case by case; avoid compatibility shims unless explicitly requested.
+- [ ] Ensure sealed-bid commit/reveal semantics are consistent across transports that surface sealed-bidding operations.
 
 #### R2 (item 15): Attestation-chain anchoring
 
@@ -210,7 +210,7 @@ Long-horizon items that remain important but are not V3/V4 blockers:
 - Bid-to-task ratio, time-to-match, and re-delegation frequency.
 - Human-safeguard metrics (manual intervention quality, false-alarm rate, oversight load).
 - Skill-preservation metrics for curriculum-aware routing.
-- Cross-interface parity incidents (target: zero feature skew across MCP/HTTP/CLI).
+- Cross-interface parity incidents (target: zero feature skew for features designated as multi-transport across MCP/HTTP/CLI; intentionally single-transport features are exempt per the case-by-case transport compatibility principle).
 
 ## Key Risks
 
