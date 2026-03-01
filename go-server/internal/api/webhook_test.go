@@ -312,6 +312,12 @@ func TestWebhook_OutcomeRecorded_Processed(t *testing.T) {
 	if events[0].LogIndex != 0 {
 		t.Errorf("unexpected log_index: got %v want 0", events[0].LogIndex)
 	}
+	if events[0].Address != strings.ToLower("0x1000000000000000000000000000000000000001") {
+		t.Errorf("unexpected address: got %v want %v", events[0].Address, strings.ToLower("0x1000000000000000000000000000000000000001"))
+	}
+	if events[0].BlockNumber != 100 {
+		t.Errorf("unexpected block_number: got %v want 100", events[0].BlockNumber)
+	}
 }
 
 func TestWebhook_DuplicateEvent_Idempotent(t *testing.T) {

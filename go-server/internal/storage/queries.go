@@ -608,7 +608,7 @@ func (d *DB) ListReputationEvents(ctx context.Context, address, role string, lim
 		`SELECT id, address, role, outcome, tx_hash, log_index, block_number, occurred_at, created_at
          FROM reputation_events
          WHERE address = ? AND role = ?
-         ORDER BY occurred_at ASC, id ASC
+         ORDER BY occurred_at DESC, id DESC
          LIMIT ?`,
 		strings.ToLower(strings.TrimSpace(address)), role, limit,
 	)
@@ -636,7 +636,14 @@ func (d *DB) ListReputationEvents(ctx context.Context, address, role string, lim
 		}
 		events = append(events, ev)
 	}
-	return events, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Reverse so callers always receive events oldest→newest.
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
+	}
+	return events, nil
 }
 
 func computeDampedCounts(outcomes []string, dampingFactor float64) DampedReputation {
