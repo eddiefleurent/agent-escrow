@@ -251,7 +251,7 @@ func (s *Service) CreateDecomposition(ctx context.Context, p CreateDecomposition
 	for _, leaf := range leafNodes {
 		ctxItem, ctxErr := s.marketContextForLeaf(ctx, leaf)
 		if ctxErr != nil {
-			return nil, ctxErr
+			continue
 		}
 		ctxItem.TempID = tempIDByNodeID[leaf.ID]
 		marketContext = append(marketContext, *ctxItem)

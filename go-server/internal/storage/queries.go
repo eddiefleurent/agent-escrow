@@ -1128,7 +1128,7 @@ func (d *DB) GetDecomposition(ctx context.Context, id int64) (*Decomposition, er
 func (d *DB) ListDecompositions(ctx context.Context, buyer, status string) ([]*Decomposition, error) {
 	query := `SELECT ` + decompositionColumns + ` FROM decompositions WHERE 1=1`
 	args := make([]any, 0, 2)
-	if strings.TrimSpace(buyer) != "" {
+	if buyer := strings.TrimSpace(buyer); buyer != "" {
 		query += ` AND lower(buyer) = lower(?)`
 		args = append(args, buyer)
 	}
@@ -1267,7 +1267,7 @@ func (d *DB) ListDecompositionNodes(ctx context.Context, decompositionID int64) 
 func updateDecompositionNodeRFQOn(ctx context.Context, q dbExecer, nodeID, rfqID int64) error {
 	res, err := q.ExecContext(
 		ctx,
-		`UPDATE decomposition_nodes SET rfq_id = ? WHERE id = ?`,
+		`UPDATE decomposition_nodes SET rfq_id = ? WHERE id = ? AND rfq_id IS NULL`,
 		rfqID, nodeID,
 	)
 	if err != nil {
@@ -1278,7 +1278,7 @@ func updateDecompositionNodeRFQOn(ctx context.Context, q dbExecer, nodeID, rfqID
 		return fmt.Errorf("update decomposition_node rfq_id rows affected: %w", err)
 	}
 	if affected == 0 {
-		return fmt.Errorf("update decomposition_node rfq_id id=%d: %w", nodeID, sql.ErrNoRows)
+		return fmt.Errorf("update decomposition_node rfq_id id=%d: already linked or not found", nodeID)
 	}
 	return nil
 }

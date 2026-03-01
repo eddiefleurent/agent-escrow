@@ -23,8 +23,9 @@ CREATE TABLE IF NOT EXISTS decomposition_nodes (
     verification_type TEXT NOT NULL DEFAULT ''
         CHECK(verification_type IN ('', 'optimistic', 'quorum', 'zk_proof', 'unit_test')),
     verification_details_json TEXT NOT NULL DEFAULT '{}',
-    depth INTEGER NOT NULL DEFAULT 0,
-    requires_further_decomposition INTEGER NOT NULL DEFAULT 0,
+    depth INTEGER NOT NULL DEFAULT 0 CHECK(depth >= 0),
+    requires_further_decomposition INTEGER NOT NULL DEFAULT 0
+        CHECK(requires_further_decomposition IN (0, 1)),
     rfq_id INTEGER REFERENCES rfqs(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
