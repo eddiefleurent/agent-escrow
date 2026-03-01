@@ -215,7 +215,7 @@ Long-horizon items that remain important but are not V3/V4 blockers:
 ## Key Risks
 
 - V3 closeout delay if UCP mapping overreaches into protocol redesign.
-- Human-participant safeguards lag technical feature velocity.
+- Human-participant safeguards lag behind technical feature velocity.
 - Safety controls becoming cost-prohibitive without governance floor enforcement.
 - Reputation and monitoring signals being overfit or gamed without periodic calibration.
 - Privacy expectations outpacing current on-chain transparency model.
