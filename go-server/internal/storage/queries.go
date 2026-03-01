@@ -515,6 +515,9 @@ func validateReputationOutcome(outcome string) error {
 }
 
 func insertReputationEventOn(ctx context.Context, q dbExecer, e *ReputationEvent) (bool, error) {
+	if e == nil {
+		return false, errors.New("reputation event is required")
+	}
 	if err := validateReputationRole(e.Role); err != nil {
 		return false, err
 	}

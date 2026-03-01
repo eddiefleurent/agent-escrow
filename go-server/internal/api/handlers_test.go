@@ -1061,11 +1061,13 @@ func TestCreateRFQ_ParentCooldownReturns429(t *testing.T) {
 	if !ok || retryAfterSecs <= 0 {
 		t.Fatalf("expected retry_after_seconds to be a positive number, got %v", retryAfterRaw)
 	}
-	if retryAfter := rr.Header().Get("Retry-After"); retryAfter != "" {
-		parsed, parseErr := strconv.ParseFloat(retryAfter, 64)
-		if parseErr != nil || parsed < retryAfterSecs {
-			t.Errorf("Retry-After header %q should be >= retry_after_seconds %.0f", retryAfter, retryAfterSecs)
-		}
+	retryAfter := rr.Header().Get("Retry-After")
+	if retryAfter == "" {
+		t.Fatalf("expected Retry-After header to be present, got empty")
+	}
+	parsed, parseErr := strconv.ParseFloat(retryAfter, 64)
+	if parseErr != nil || parsed < retryAfterSecs {
+		t.Errorf("Retry-After header %q should be >= retry_after_seconds %.2f", retryAfter, retryAfterSecs)
 	}
 }
 

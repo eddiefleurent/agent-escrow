@@ -289,7 +289,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid parent_escrow_id: %v", err)})
 			return
 		}
-		if !common.IsHexAddress(parentEscrow.EscrowAddress) {
+		if !isValidAddress(parentEscrow.EscrowAddress) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("parent escrow %d has invalid on-chain address", *req.ParentEscrowID)})
 			return
 		}
