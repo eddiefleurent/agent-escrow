@@ -41,7 +41,7 @@ The paper defines intelligent delegation across five pillars (Section 4), nine t
 
 | Pillar | Paper Sections | Core Requirement | Implementation Layer |
 |---|---|---|---|
-| **Dynamic Assessment** | 4.1, 4.2 | Task decomposition, capability matching, smart-contract formalization | Settlement kernel (V1) → Bidding marketplace (V2) → Decomposition tooling (V3) |
+| **Dynamic Assessment** | 4.1, 4.2 | Task decomposition, capability matching, smart-contract formalization | Settlement kernel (V1) → Bidding marketplace (V2) → Decomposition tooling + advisory human/AI allocation intent (V3) |
 | **Adaptive Execution** | 4.4 | Runtime re-delegation, failure recovery, checkpoint-based re-allocation | Timeout/escalation (V1) → Milestones + backup agents (V2) → Checkpoint/resume (V3) |
 | **Structural Transparency** | 4.5, 4.8 | Monitoring (outcome + process), verifiable task completion, attestation chains | Events + hash commitments (V1) → Milestones + L0-L3 subscriptions (V2) → Attestation chains + ZK verification (V3) |
 | **Scalable Market Coordination** | 4.3, 4.6 | Multi-objective optimization, reputation, trust calibration, Web of Trust | Designated trust (V1) → Reputation + complexity floor + RFQ bidding (V2) → Verifiable credentials (attestation-v1) + market stability (V3) |
@@ -55,7 +55,7 @@ The paper also defines ethical dimensions (Section 5):
 | Accountability in long chains | 5.2 | Immutable provenance via on-chain event logs; liability firebreaks per escrow |
 | Reliability vs efficiency | 5.3 | Tiered service levels (V3): low-assurance (optimistic) vs high-assurance (verified) |
 | Social intelligence | 5.4 | Human-compatible interfaces; MCP + HTTP dual surface; structured dispute resolution |
-| Risk of de-skilling | 5.6 | Curriculum-aware task routing (V4); hybrid human-AI market support |
+| Risk of de-skilling | 5.6 | Advisory per-leaf human/AI allocation intent in decomposition (V3); curriculum-aware task routing (V4) |
 
 ### V1 Paper Coverage
 
@@ -558,6 +558,10 @@ Contract-first decomposition operationalizes the paper's requirement that delega
    - `zk_proof` leaves require `circuit_id` in `verification_details`
 4. Service computes per-leaf market context (market depth, verifier count, `proven`/`emerging`/`untested` signal) from historical DB data
 5. `finalize_decomposition` converts valid leaves into RFQs with verification-type-aware service tiers and bidding modes
+
+**Hybrid human/AI intent (advisory in V3).** Leaf nodes can include optional `delegate_preference` metadata (`human`, `ai`, `any`). This captures decomposition-time intent for hybrid markets (for example, explicitly marking nodes that require human judgment) but does not hard-gate validation, bidding, or acceptance in V3.
+
+**Staged rollout.** V3 stores and surfaces this preference for planning transparency across MCP/HTTP/CLI. Full optimization and policy enforcement (speed/cost routing, stronger human-in-the-loop controls, and governance-linked constraints) remain V4 scope.
 
 **Design choice: market context is advisory, not gating.** Decomposition validity is based on structural verifiability, not incumbent market depth. This avoids blocking first-mover capability markets (for example, the first `zk_proof` RFQ in a new deployment).
 
