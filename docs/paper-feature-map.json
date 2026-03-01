@@ -657,7 +657,7 @@
       "tasks": [
         "Add anti-grief controls for commit-without-reveal behavior.",
         "Define deterministic fallback rules when top commits are not revealed.",
-        "Preserve interface parity across MCP, HTTP, and CLI."
+        "Evaluate transport compatibility across MCP, HTTP, and CLI case by case; avoid compatibility shims unless explicitly requested."
       ],
       "status": "planned"
     },
