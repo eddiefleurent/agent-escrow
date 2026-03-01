@@ -1132,7 +1132,7 @@ func (d *DB) ListDecompositions(ctx context.Context, buyer, status string) ([]*D
 		query += ` AND lower(buyer) = lower(?)`
 		args = append(args, buyer)
 	}
-	if strings.TrimSpace(status) != "" {
+	if status := strings.TrimSpace(status); status != "" {
 		query += ` AND status = ?`
 		args = append(args, status)
 	}
