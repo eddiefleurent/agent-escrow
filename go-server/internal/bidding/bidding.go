@@ -276,6 +276,11 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 		return nil, fmt.Errorf("invalid required_credentials_json: %w", err)
 	}
 
+	cooldownSeconds := int64(0)
+	if s.Cfg != nil {
+		cooldownSeconds = s.Cfg.RebidCooldownSeconds
+	}
+
 	// Validate parent_escrow_id when sub-delegating: the buyer of the child RFQ
 	// must be the active worker of the parent escrow (paper §4.8).
 	if p.ParentEscrowID != nil {
@@ -291,33 +296,11 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 			return nil, fmt.Errorf("sub-delegation RFQ buyer (%s) must be the active worker of parent escrow %d (%s)",
 				p.Buyer, *p.ParentEscrowID, activeWorker)
 		}
-
-		cooldownSeconds := int64(0)
-		if s.Cfg != nil {
-			cooldownSeconds = s.Cfg.RebidCooldownSeconds
-		}
-		if cooldownSeconds > 0 {
-			latestRFQ, err := s.DB.GetLatestRFQByParentEscrow(ctx, *p.ParentEscrowID)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return nil, fmt.Errorf("latest parent-linked rfq lookup failed: %w", err)
-			}
-			if err == nil {
-				retryAt := latestRFQ.CreatedAt.Add(time.Duration(cooldownSeconds) * time.Second)
-				nowUTC := time.Now().UTC()
-				if nowUTC.Before(retryAt) {
-					return nil, &RebidCooldownError{
-						ParentEscrowID: *p.ParentEscrowID,
-						RetryAt:        retryAt,
-						RetryAfter:     retryAt.Sub(nowUTC),
-					}
-				}
-			}
-		}
 	}
 
 	specHash := crypto.Keccak256Hash([]byte(p.Title + p.Description))
 
-	rfq, err := s.DB.CreateRFQ(ctx, &storage.RFQ{
+	rfqRecord := &storage.RFQ{
 		Title:                    p.Title,
 		Description:              p.Description,
 		SpecHash:                 specHash.Hex(),
@@ -342,9 +325,33 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 		ParentEscrowID:           p.ParentEscrowID,
 		Status:                   "open",
 		ExpiresAt:                p.ExpiresAt,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create rfq: %w", err)
+	}
+
+	var rfq *storage.RFQ
+	if p.ParentEscrowID != nil && cooldownSeconds > 0 {
+		rfq, err = s.DB.CreateRFQWithParentCooldown(ctx, rfqRecord, cooldownSeconds)
+		if err != nil {
+			var cooldownErr *storage.ParentRFQCooldownError
+			if errors.As(err, &cooldownErr) {
+				retryAt := cooldownErr.LatestCreatedAt.Add(time.Duration(cooldownErr.CooldownSeconds) * time.Second)
+				nowUTC := time.Now().UTC()
+				retryAfter := retryAt.Sub(nowUTC)
+				if retryAfter < 0 {
+					retryAfter = 0
+				}
+				return nil, &RebidCooldownError{
+					ParentEscrowID: cooldownErr.ParentEscrowID,
+					RetryAt:        retryAt,
+					RetryAfter:     retryAfter,
+				}
+			}
+			return nil, fmt.Errorf("create rfq: %w", err)
+		}
+	} else {
+		rfq, err = s.DB.CreateRFQ(ctx, rfqRecord)
+		if err != nil {
+			return nil, fmt.Errorf("create rfq: %w", err)
+		}
 	}
 	return rfq, nil
 }

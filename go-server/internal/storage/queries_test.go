@@ -450,6 +450,135 @@ func TestGetLatestRFQByParentEscrow(t *testing.T) {
 	}
 }
 
+func TestCreateRFQWithParentCooldown_Enforced(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	task, err := db.CreateTask(ctx, "Parent", "", "0xparent")
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	parent, err := db.CreateEscrow(ctx, &Escrow{
+		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xf", EscrowAddress: "0xe-parent",
+		EscrowID: 1, Buyer: "0xb", Worker: "0xw", Verifier: "0xv", Arbitrator: "0xa",
+		Amount: "100", Status: "created", SubmissionDeadline: 1700000000, ReviewPeriodSeconds: 60, DisputePeriodSeconds: 60, ArbitratorTimeoutSeconds: 60,
+	})
+	if err != nil {
+		t.Fatalf("create parent escrow: %v", err)
+	}
+
+	now := time.Now().Unix()
+	newRFQ := func(title string) *RFQ {
+		return &RFQ{
+			Title:                    title,
+			Description:              "desc",
+			SpecHash:                 "0xspec",
+			Buyer:                    "0xbuyer",
+			Token:                    "",
+			BudgetMin:                "10",
+			BudgetMax:                "20",
+			Deadline:                 now + 3600,
+			ReviewPeriodSeconds:      60,
+			DisputePeriodSeconds:     60,
+			ArbitratorTimeoutSeconds: 60,
+			Verifier:                 "0xv",
+			Arbitrator:               "0xa",
+			WorkerStake:              "0",
+			MilestonesJSON:           "[]",
+			RequirementsJSON:         "{}",
+			RequiredCredentialsJSON:  "[]",
+			BiddingMode:              "sealed",
+			CommitDeadline:           now + 600,
+			RevealDeadline:           now + 1200,
+			ServiceTier:              0,
+			ParentEscrowID:           &parent.ID,
+			Status:                   "open",
+			ExpiresAt:                now + 1800,
+		}
+	}
+
+	first, err := db.CreateRFQWithParentCooldown(ctx, newRFQ("rfq-cooldown-1"), 120)
+	if err != nil {
+		t.Fatalf("create first rfq with cooldown: %v", err)
+	}
+	if first.ID == 0 {
+		t.Fatal("expected non-zero rfq ID")
+	}
+
+	_, err = db.CreateRFQWithParentCooldown(ctx, newRFQ("rfq-cooldown-2"), 120)
+	if err == nil {
+		t.Fatal("expected cooldown error on immediate second rfq")
+	}
+	var cooldownErr *ParentRFQCooldownError
+	if !errors.As(err, &cooldownErr) {
+		t.Fatalf("expected ParentRFQCooldownError, got %v", err)
+	}
+	if cooldownErr.ParentEscrowID != parent.ID {
+		t.Fatalf("expected parent_escrow_id=%d, got %d", parent.ID, cooldownErr.ParentEscrowID)
+	}
+	if cooldownErr.CooldownSeconds != 120 {
+		t.Fatalf("expected cooldown_seconds=120, got %d", cooldownErr.CooldownSeconds)
+	}
+	if cooldownErr.LatestCreatedAt.IsZero() {
+		t.Fatal("expected latest created_at to be populated")
+	}
+}
+
+func TestCreateRFQWithParentCooldown_Disabled(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	task, err := db.CreateTask(ctx, "Parent", "", "0xparent")
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	parent, err := db.CreateEscrow(ctx, &Escrow{
+		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xf", EscrowAddress: "0xe-parent",
+		EscrowID: 1, Buyer: "0xb", Worker: "0xw", Verifier: "0xv", Arbitrator: "0xa",
+		Amount: "100", Status: "created", SubmissionDeadline: 1700000000, ReviewPeriodSeconds: 60, DisputePeriodSeconds: 60, ArbitratorTimeoutSeconds: 60,
+	})
+	if err != nil {
+		t.Fatalf("create parent escrow: %v", err)
+	}
+
+	now := time.Now().Unix()
+	newRFQ := func(title string) *RFQ {
+		return &RFQ{
+			Title:                    title,
+			Description:              "desc",
+			SpecHash:                 "0xspec",
+			Buyer:                    "0xbuyer",
+			Token:                    "",
+			BudgetMin:                "10",
+			BudgetMax:                "20",
+			Deadline:                 now + 3600,
+			ReviewPeriodSeconds:      60,
+			DisputePeriodSeconds:     60,
+			ArbitratorTimeoutSeconds: 60,
+			Verifier:                 "0xv",
+			Arbitrator:               "0xa",
+			WorkerStake:              "0",
+			MilestonesJSON:           "[]",
+			RequirementsJSON:         "{}",
+			RequiredCredentialsJSON:  "[]",
+			BiddingMode:              "sealed",
+			CommitDeadline:           now + 600,
+			RevealDeadline:           now + 1200,
+			ServiceTier:              0,
+			ParentEscrowID:           &parent.ID,
+			Status:                   "open",
+			ExpiresAt:                now + 1800,
+		}
+	}
+
+	if _, err := db.CreateRFQWithParentCooldown(ctx, newRFQ("rfq-disabled-1"), 0); err != nil {
+		t.Fatalf("create first rfq with cooldown disabled: %v", err)
+	}
+	if _, err := db.CreateRFQWithParentCooldown(ctx, newRFQ("rfq-disabled-2"), 0); err != nil {
+		t.Fatalf("create second rfq with cooldown disabled: %v", err)
+	}
+}
+
 // RFQ and Bid tests
 
 func TestCreateAndGetRFQ(t *testing.T) {

@@ -758,6 +758,20 @@ const rfqColumns = `id, title, description, spec_hash, buyer, token, budget_min,
 	bidding_mode, commit_deadline, reveal_deadline, service_tier, parent_escrow_id,
 	status, expires_at, created_at, updated_at`
 
+type ParentRFQCooldownError struct {
+	ParentEscrowID  int64
+	LatestCreatedAt time.Time
+	CooldownSeconds int64
+}
+
+func (e *ParentRFQCooldownError) Error() string {
+	return fmt.Sprintf(
+		"parent rfq cooldown active for parent_escrow_id %d (cooldown_seconds=%d)",
+		e.ParentEscrowID,
+		e.CooldownSeconds,
+	)
+}
+
 func scanRFQ(scanner interface{ Scan(...any) error }) (*RFQ, error) {
 	r := &RFQ{}
 	var createdAt, updatedAt string
@@ -788,8 +802,8 @@ func scanRFQ(scanner interface{ Scan(...any) error }) (*RFQ, error) {
 	return r, nil
 }
 
-func (d *DB) CreateRFQ(ctx context.Context, r *RFQ) (*RFQ, error) {
-	res, err := d.db.ExecContext(ctx,
+func createRFQOn(ctx context.Context, q dbExecer, r *RFQ) (*RFQ, error) {
+	res, err := q.ExecContext(ctx,
 		`INSERT INTO rfqs (title, description, spec_hash, buyer, token, budget_min, budget_max,
 			deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds,
 			verifier, arbitrator, worker_stake, milestones_json, requirements_json, required_credentials_json,
@@ -808,7 +822,16 @@ func (d *DB) CreateRFQ(ctx context.Context, r *RFQ) (*RFQ, error) {
 	if err != nil {
 		return nil, fmt.Errorf("last insert id: %w", err)
 	}
-	return d.GetRFQ(ctx, id)
+	row := q.QueryRowContext(ctx, `SELECT `+rfqColumns+` FROM rfqs WHERE id = ?`, id)
+	out, err := scanRFQ(row)
+	if err != nil {
+		return nil, fmt.Errorf("get rfq: %w", err)
+	}
+	return out, nil
+}
+
+func (d *DB) CreateRFQ(ctx context.Context, r *RFQ) (*RFQ, error) {
+	return createRFQOn(ctx, d.db, r)
 }
 
 func (d *DB) GetRFQ(ctx context.Context, id int64) (*RFQ, error) {
@@ -820,17 +843,71 @@ func (d *DB) GetRFQ(ctx context.Context, id int64) (*RFQ, error) {
 	return r, nil
 }
 
-func (d *DB) GetLatestRFQByParentEscrow(ctx context.Context, parentEscrowID int64) (*RFQ, error) {
-	row := d.db.QueryRowContext(
+func getLatestRFQByParentEscrowOn(ctx context.Context, q dbExecer, parentEscrowID int64) (*RFQ, error) {
+	row := q.QueryRowContext(
 		ctx,
 		`SELECT `+rfqColumns+` FROM rfqs WHERE parent_escrow_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
 		parentEscrowID,
 	)
-	r, err := scanRFQ(row)
+	return scanRFQ(row)
+}
+
+func (d *DB) GetLatestRFQByParentEscrow(ctx context.Context, parentEscrowID int64) (*RFQ, error) {
+	r, err := getLatestRFQByParentEscrowOn(ctx, d.db, parentEscrowID)
 	if err != nil {
 		return nil, fmt.Errorf("get latest rfq by parent escrow: %w", err)
 	}
 	return r, nil
+}
+
+func (d *DB) CreateRFQWithParentCooldown(ctx context.Context, rfq *RFQ, cooldownSeconds int64) (*RFQ, error) {
+	if rfq.ParentEscrowID == nil || cooldownSeconds <= 0 {
+		return d.CreateRFQ(ctx, rfq)
+	}
+
+	conn, err := d.db.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire db conn: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return nil, fmt.Errorf("begin immediate tx: %w", err)
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		}
+	}()
+
+	latestRFQ, err := getLatestRFQByParentEscrowOn(ctx, conn, *rfq.ParentEscrowID)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("get latest rfq by parent escrow: %w", err)
+		}
+	} else {
+		retryAt := latestRFQ.CreatedAt.Add(time.Duration(cooldownSeconds) * time.Second)
+		if time.Now().UTC().Before(retryAt) {
+			return nil, &ParentRFQCooldownError{
+				ParentEscrowID:  *rfq.ParentEscrowID,
+				LatestCreatedAt: latestRFQ.CreatedAt,
+				CooldownSeconds: cooldownSeconds,
+			}
+		}
+	}
+
+	created, err := createRFQOn(ctx, conn, rfq)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return nil, fmt.Errorf("commit immediate tx: %w", err)
+	}
+	committed = true
+	return created, nil
 }
 
 func (d *DB) ListRFQs(ctx context.Context, status, buyer string) ([]*RFQ, error) {
