@@ -45,7 +45,7 @@ Server --> Buyer : status=draft|valid,\nissues[], market_context[]
 
 alt Draft (structural blockers found)
   Buyer -> Server : create_decomposition (revised)
-  Server -> DB : update with corrected leaves
+  Server -> DB : insert revised decomposition + nodes
   Server --> Buyer : status=valid
 else Valid
   Buyer -> Server : finalize_decomposition / POST /api/v1/decompositions/{id}/finalize

@@ -323,28 +323,49 @@ func (s *Service) FinalizeDecomposition(ctx context.Context, p FinalizeParams) (
 		return leafNodes[i].Depth < leafNodes[j].Depth
 	})
 
-	rfqIDs := make([]int64, 0, len(leafNodes))
+	// Validate all leaf params before opening the transaction to surface errors cheaply.
+	leafParams := make([]bidding.CreateRFQParams, 0, len(leafNodes))
 	for _, leaf := range leafNodes {
 		params, paramsErr := buildRFQParamsForLeaf(leaf, p)
 		if paramsErr != nil {
 			return nil, nil, paramsErr
 		}
-		rfq, createErr := s.Bidding.CreateRFQ(ctx, params)
+		leafParams = append(leafParams, params)
+	}
+
+	// Create RFQs and update node/decomposition records atomically so a partial
+	// failure cannot leave orphaned RFQs linked to no node, or nodes with no RFQ.
+	tx, err := s.DB.BeginTx(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("begin finalize tx: %w", err)
+	}
+
+	rfqIDs := make([]int64, 0, len(leafNodes))
+	for i, leaf := range leafNodes {
+		rfq, createErr := s.Bidding.CreateRFQTx(ctx, tx, leafParams[i])
 		if createErr != nil {
+			_ = tx.Rollback()
 			return nil, nil, createErr
 		}
-		if err := s.DB.UpdateDecompositionNodeRFQ(ctx, leaf.ID, rfq.ID); err != nil {
-			return nil, nil, err
+		if updateErr := s.DB.UpdateDecompositionNodeRFQTx(ctx, tx, leaf.ID, rfq.ID); updateErr != nil {
+			_ = tx.Rollback()
+			return nil, nil, updateErr
 		}
 		rfqIDs = append(rfqIDs, rfq.ID)
 	}
 
 	rfqIDsJSON, err := json.Marshal(rfqIDs)
 	if err != nil {
+		_ = tx.Rollback()
 		return nil, nil, fmt.Errorf("marshal rfq ids: %w", err)
 	}
-	if err := s.DB.UpdateDecompositionStatus(ctx, decomp.ID, "finalized", decomp.ValidationErrorsJSON, string(rfqIDsJSON)); err != nil {
+	if err := s.DB.UpdateDecompositionStatusTx(ctx, tx, decomp.ID, "finalized", decomp.ValidationErrorsJSON, string(rfqIDsJSON)); err != nil {
+		_ = tx.Rollback()
 		return nil, nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		_ = tx.Rollback()
+		return nil, nil, fmt.Errorf("commit finalize tx: %w", err)
 	}
 	updated, err := s.DB.GetDecomposition(ctx, decomp.ID)
 	if err != nil {
@@ -573,6 +594,8 @@ func buildRFQParamsForLeaf(node *storage.DecompositionNode, p FinalizeParams) (b
 	if err != nil {
 		return bidding.CreateRFQParams{}, fmt.Errorf("marshal requirements_json: %w", err)
 	}
+	// Decomposition-derived RFQs require no worker stake: the anti-Sybil bond
+	// applies to individual negotiated contracts, not to planning-phase RFQs.
 	return bidding.CreateRFQParams{
 		Title:                    node.Title,
 		Description:              node.Description,

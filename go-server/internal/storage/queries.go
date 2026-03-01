@@ -834,6 +834,10 @@ func (d *DB) CreateRFQ(ctx context.Context, r *RFQ) (*RFQ, error) {
 	return createRFQOn(ctx, d.db, r)
 }
 
+func (d *DB) CreateRFQTx(ctx context.Context, tx *sql.Tx, r *RFQ) (*RFQ, error) {
+	return createRFQOn(ctx, tx, r)
+}
+
 func (d *DB) GetRFQ(ctx context.Context, id int64) (*RFQ, error) {
 	row := d.db.QueryRowContext(ctx, `SELECT `+rfqColumns+` FROM rfqs WHERE id = ?`, id)
 	r, err := scanRFQ(row)

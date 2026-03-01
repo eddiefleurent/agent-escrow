@@ -16,8 +16,8 @@ CREATE INDEX IF NOT EXISTS idx_decompositions_buyer ON decompositions(lower(buye
 
 CREATE TABLE IF NOT EXISTS decomposition_nodes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    decomposition_id INTEGER NOT NULL REFERENCES decompositions(id),
-    parent_node_id INTEGER REFERENCES decomposition_nodes(id),
+    decomposition_id INTEGER NOT NULL REFERENCES decompositions(id) ON DELETE CASCADE,
+    parent_node_id INTEGER REFERENCES decomposition_nodes(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     description TEXT NOT NULL,
     verification_type TEXT NOT NULL DEFAULT ''
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS decomposition_nodes (
     verification_details_json TEXT NOT NULL DEFAULT '{}',
     depth INTEGER NOT NULL DEFAULT 0,
     requires_further_decomposition INTEGER NOT NULL DEFAULT 0,
-    rfq_id INTEGER REFERENCES rfqs(id),
+    rfq_id INTEGER REFERENCES rfqs(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

@@ -156,7 +156,10 @@ type AcceptBidResult struct {
 	TxHash string
 }
 
-func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RFQ, error) {
+// prepareRFQRecord validates p, normalises defaults, enforces parent_escrow_id
+// authorization (paper §4.8), and returns a ready-to-insert RFQ record.
+// It does not write to the database; the caller is responsible for the write.
+func (s *Service) prepareRFQRecord(ctx context.Context, p CreateRFQParams) (*storage.RFQ, error) {
 	budgetMin, ok := new(big.Int).SetString(p.BudgetMin, 10)
 	if !ok || budgetMin.Sign() < 0 {
 		return nil, errors.New("invalid budget_min")
@@ -284,11 +287,6 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 		return nil, fmt.Errorf("invalid required_credentials_json: %w", err)
 	}
 
-	cooldownSeconds := int64(0)
-	if s.Cfg != nil {
-		cooldownSeconds = s.Cfg.RebidCooldownSeconds
-	}
-
 	// Validate parent_escrow_id when sub-delegating: the buyer of the child RFQ
 	// must be the active worker of the parent escrow (paper §4.8).
 	if p.ParentEscrowID != nil {
@@ -308,7 +306,7 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 
 	specHash := crypto.Keccak256Hash([]byte(p.Title + p.Description))
 
-	rfqRecord := &storage.RFQ{
+	return &storage.RFQ{
 		Title:                    p.Title,
 		Description:              p.Description,
 		SpecHash:                 specHash.Hex(),
@@ -333,11 +331,22 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 		ParentEscrowID:           p.ParentEscrowID,
 		Status:                   "open",
 		ExpiresAt:                p.ExpiresAt,
+	}, nil
+}
+
+func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RFQ, error) {
+	rfqRecord, err := s.prepareRFQRecord(ctx, p)
+	if err != nil {
+		return nil, err
 	}
 
-	var rfq *storage.RFQ
-	if p.ParentEscrowID != nil && cooldownSeconds > 0 {
-		rfq, err = s.DB.CreateRFQWithParentCooldown(ctx, rfqRecord, cooldownSeconds)
+	cooldownSeconds := int64(0)
+	if s.Cfg != nil {
+		cooldownSeconds = s.Cfg.RebidCooldownSeconds
+	}
+
+	if rfqRecord.ParentEscrowID != nil && cooldownSeconds > 0 {
+		rfq, err := s.DB.CreateRFQWithParentCooldown(ctx, rfqRecord, cooldownSeconds)
 		if err != nil {
 			var cooldownErr *storage.ParentRFQCooldownError
 			if errors.As(err, &cooldownErr) {
@@ -355,11 +364,26 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 			}
 			return nil, fmt.Errorf("create rfq: %w", err)
 		}
-	} else {
-		rfq, err = s.DB.CreateRFQ(ctx, rfqRecord)
-		if err != nil {
-			return nil, fmt.Errorf("create rfq: %w", err)
-		}
+		return rfq, nil
+	}
+	rfq, err := s.DB.CreateRFQ(ctx, rfqRecord)
+	if err != nil {
+		return nil, fmt.Errorf("create rfq: %w", err)
+	}
+	return rfq, nil
+}
+
+// CreateRFQTx validates p and inserts the RFQ within the provided transaction.
+// The rebid cooldown window is not enforced; use CreateRFQ for the standard
+// sub-delegation path where cooldown applies.
+func (s *Service) CreateRFQTx(ctx context.Context, tx *sql.Tx, p CreateRFQParams) (*storage.RFQ, error) {
+	rfqRecord, err := s.prepareRFQRecord(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	rfq, err := s.DB.CreateRFQTx(ctx, tx, rfqRecord)
+	if err != nil {
+		return nil, fmt.Errorf("create rfq: %w", err)
 	}
 	return rfq, nil
 }
