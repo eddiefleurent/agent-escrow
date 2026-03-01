@@ -58,15 +58,15 @@ Factory: [`0x798830e2d3C25cF9296fe06a46D808CFB550e880`](https://sepolia.basescan
 
 Each design decision traces to the paper. The settlement kernel (V1) covers the foundational layer; subsequent versions build toward the paper's full vision.
 
-| Paper Pillar | V1 (Settlement) | V2 (Market) | V3 (Intelligence) |
-|---|---|---|---|
-| Dynamic Assessment (§4.1-4.2) | Fixed roles + task spec hash | Bidding (Task_RFQ + Bid_Object) | Contract-first decomposition tooling |
-| Adaptive Execution (§4.4) | Timeouts + escalation paths | Milestones + backup agents | Checkpoint/resume for agent swaps |
-| Structural Transparency (§4.5, 4.8) | Events + hash commitments | Attestation chains | ZK verification |
-| Scalable Market Coordination (§4.3, 4.6) | Designated verifier/arbitrator | Reputation + credentials | Market stability mechanisms |
-| Systemic Resilience (§4.7, 4.9) | Role gates + reentrancy guard | Emergency response + Sybil resistance | DCTs + tiered service levels |
+| Paper Pillar | V1 (Settlement) | V2 (Market) | V3 (Intelligence) | V4 (Ethics/Governance) |
+|---|---|---|---|---|
+| Dynamic Assessment (§4.1-4.2) | Fixed roles + task spec hash | RFQ + Bid_Object marketplace | Contract-first decomposition tooling | Curriculum-aware routing (planned) |
+| Adaptive Execution (§4.4) | Timeouts + escalation paths | Milestones + backup agents | Checkpoint/resume + stability controls | Liability firebreaks (planned) |
+| Structural Transparency (§4.5, 4.8) | Events + hash commitments | Milestone checkpoints + live events | Attestation chains + ZK slot + quorum | Higher-fidelity monitoring policy (planned) |
+| Scalable Market Coordination (§4.3, 4.6) | Designated verifier/arbitrator | Reputation seed + complexity floor | Credentials + sealed bidding + market controls | DID trust layer + governance floors (planned) |
+| Systemic Resilience (§4.7, 4.9) | Role gates + reentrancy guard | Emergency controls + stake-based Sybil friction | DCT attenuation + principal authz + service tiers | Insurance and governance hardening (planned) |
 
-Full mapping with paper section references: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/ROADMAP.md`](docs/ROADMAP.md).
+Canonical paper coverage + decision log: [`docs/paper-feature-map.json`](docs/paper-feature-map.json). Narrative mapping and sequencing: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Agent Integration
 
@@ -84,71 +84,48 @@ The CLI is a thin HTTP client over the existing API; business logic stays in the
 
 MCP remains first-class for MCP-native clients. Any MCP-compatible client (Claude, GPT, custom agents) can use escrow without Solidity or wallet libraries -- the server handles chain interaction.
 
-Default configuration (`EMERGENCY_ENABLED=true`, `EVENTS_ENABLED=true`, `A2A_ENABLED=true`) exposes:
+Default configuration (`EMERGENCY_ENABLED=true`, `EVENTS_ENABLED=true`, `A2A_ENABLED=true`) exposes tools for:
 
-- Core escrow: `create_escrow`, `fund_escrow`, `deposit_stake`, `submit_work`, `approve_work`, `dispute_work`, `resolve_dispute`, `abort_remaining_milestones`, `activate_backup`
-- Querying: `get_escrow`, `list_escrows`, `get_reputation`
-- Bidding: `create_rfq`, `place_bid`, `list_bids`, `accept_bid`
-- AP2/x402 bridge: `fund_via_mandate`
-- Emergency protocol: `freeze_address`, `unfreeze_address`, `freeze_escrow`, `unfreeze_escrow`, `emergency_resolve`, `list_frozen_addresses`, `list_emergency_actions`
-- Event stream: `subscribe_events`
-- A2A adapter: `get_agent_card`
+- Escrow lifecycle and dispute resolution (single-shot + milestone flows)
+- Verifier quorum + ZK-assisted approval paths
+- Bidding and decomposition (`Task_RFQ`, sealed bids, decomposition finalize)
+- Attestation chains and checkpoint/resume handoffs
+- DCT mint/delegate/revoke/introspect + authorization audit views
+- AP2/x402 mandate funding, event subscriptions, A2A discovery, and emergency controls
+
+For the full up-to-date MCP tool list, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ### HTTP API
 
 ```text
-GET  /api/v1/health               Health check
+GET  /api/v1/health
 
-# Core escrow lifecycle
-POST /api/v1/escrows              Create escrow
-GET  /api/v1/escrows              List (query: role, address, status)
-GET  /api/v1/escrows/{id}         Get escrow details
-POST /api/v1/escrows/{id}/fund    Fund escrow
-POST /api/v1/escrows/{id}/deposit-stake Deposit worker stake
-POST /api/v1/escrows/{id}/submit  Submit work
-POST /api/v1/escrows/{id}/approve Approve submission
-POST /api/v1/escrows/{id}/dispute Dispute submission
-POST /api/v1/escrows/{id}/resolve Resolve dispute
-POST /api/v1/escrows/{id}/abort-milestones Abort remaining milestones
-POST /api/v1/escrows/{id}/activate-backup Activate backup worker
-GET  /api/v1/reputation/{address} Read on-chain outcome counters
+# Escrow lifecycle
+POST /api/v1/escrows
+GET  /api/v1/escrows
+GET  /api/v1/escrows/{id}
+POST /api/v1/escrows/{id}/fund
+POST /api/v1/escrows/{id}/submit
+POST /api/v1/escrows/{id}/approve
+POST /api/v1/escrows/{id}/dispute
+POST /api/v1/escrows/{id}/resolve
 
-# Bazaar discovery
-GET  /api/v1/bazaar/discovery   Credential schema metadata
-
-# RFQ/bidding
+# Bidding + decomposition
 POST /api/v1/rfqs
-GET  /api/v1/rfqs
-GET  /api/v1/rfqs/{id}
-POST /api/v1/rfqs/{id}/cancel
-POST /api/v1/rfqs/{id}/bids
-GET  /api/v1/rfqs/{id}/bids
+POST /api/v1/rfqs/{id}/bids/commit
+POST /api/v1/rfqs/{id}/bids/reveal
 POST /api/v1/rfqs/{id}/accept
+POST /api/v1/decompositions
+POST /api/v1/decompositions/{id}/finalize
 
-# AP2 bridge
+# Advanced flows
+POST /api/v1/dcts/mint
 POST /api/v1/ap2/fund
-POST /api/v1/ap2/validate
-GET  /api/v1/ap2/mandates/{id}
-
-# Real-time events (when enabled)
 GET  /api/v1/events
-GET  /api/v1/escrows/{id}/events
-GET  /api/v1/events/ws
-POST /webhooks/cdp
-
-# Emergency protocol (when enabled)
-POST /api/v1/emergency/freeze-address
-POST /api/v1/emergency/unfreeze-address
-POST /api/v1/emergency/freeze-escrow
-POST /api/v1/emergency/unfreeze-escrow
-POST /api/v1/emergency/resolve
-GET  /api/v1/emergency/frozen-addresses
-GET  /api/v1/emergency/actions
-
-# A2A adapter (when enabled)
 GET  /.well-known/agent.json
-POST /a2a
 ```
+
+For the full endpoint catalog (including verifier quorum, ZK verify/approve, checkpoints, attestation chains, emergency, and A2A JSON-RPC), see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Implementation Status
 
@@ -156,11 +133,11 @@ POST /a2a
 
 **V2 -- Market Primitives**: Complete (11/11 items). ERC20/USDC payments, worker stake, milestone-based escrow, backup agent clause, on-chain reputation, complexity floor, bidding protocol (Task_RFQ + Bid_Object), A2A settlement adapter, AP2 mandate-to-escrow bridge, real-time event subscriptions (SSE/WebSocket + MCP polling), and emergency response protocol.
 
-**V3 -- Delegation Intelligence**: In progress. DCTs (Delegation Capability Tokens) now enforce strict canonical profile `dct-profile-v1` (breaking dev-only, no legacy compatibility), deterministic caveat encoding, strict attenuation, full chain validation, revoke, and automatic invalidation on terminal escrow/emergency states across HTTP + MCP + `escrow-cli`. Verifiable bid credentials (attestation-v1 profile): buyers specify credential requirements on RFQs, workers present signed attestations during bid reveal, server verifies signatures and matches requirements, accept gated on credential match. Bazaar-compatible discovery metadata at `GET /api/v1/bazaar/discovery`. Remaining V3 items include ZK verification, checkpoint/resume, tiered service levels, multi-verifier quorum, and attestation chains.
+**V3 -- Delegation Intelligence**: Closeout in progress. Items `12`-`21` are complete (sealed bidding, DCT/authz, verifiable credentials, attestation chains, checkpoints, service tiers, ZK slot, quorum, stability controls, decomposition tooling). Remaining V3 item: `22` UCP fulfillment provider.
 
-**V4 -- Ethical Safeguards**: Planned. Curriculum-aware task routing, liability firebreaks, governance safety floors.
+**V4 -- Ethical Safeguards and Ecosystem Maturity**: Planned. Items `23`-`30` include curriculum routing, liability firebreaks, cognitive friction calibration, DID identity layer, insurance framework, governance safety floors, and newly explicit social-intelligence and user-training tracks.
 
-Full roadmap with paper traceability: [`docs/ROADMAP.md`](docs/ROADMAP.md).
+Full roadmap sequencing: [`docs/ROADMAP.md`](docs/ROADMAP.md). Canonical machine-readable paper mapping and per-item design decisions: [`docs/paper-feature-map.json`](docs/paper-feature-map.json).
 
 ## Project Structure
 
@@ -176,7 +153,8 @@ Full roadmap with paper traceability: [`docs/ROADMAP.md`](docs/ROADMAP.md).
 |---|---|
 | [`docs/SPEC.md`](docs/SPEC.md) | Contract design intent: lifecycle, settlement math, invariants |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System architecture, integrations, and scaling model |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Delivery phases and current roadmap status |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Delivery phases, execution order, and actionable checklists |
+| [`docs/paper-feature-map.json`](docs/paper-feature-map.json) | Machine-readable paper feature coverage + per-item design decisions |
 | [`docs/SETUP.md`](docs/SETUP.md) | Local setup and configuration |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | Deployment workflow |
 | [`docs/DEPLOYMENTS.md`](docs/DEPLOYMENTS.md) | Live deployed addresses |

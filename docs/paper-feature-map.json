@@ -1,0 +1,714 @@
+{
+  "schema_version": "1.0.0",
+  "generated_on": "2026-03-01",
+  "sources": [
+    "docs/intelligent-ai-delegation.md",
+    "docs/ROADMAP.md",
+    "docs/ARCHITECTURE.md"
+  ],
+  "status_legend": {
+    "implemented": "Built and exposed through core interfaces where applicable.",
+    "partial": "Substantial implementation exists, but paper-prescribed scope is not complete.",
+    "planned": "Explicit roadmap item exists, not implemented yet.",
+    "missing": "Paper-prescribed capability had no explicit roadmap item before this review."
+  },
+  "paper_system_features": {
+    "technical_protocols": [
+      {
+        "id": "P4.1",
+        "section": "4.1",
+        "name": "Task Decomposition",
+        "status": "partial",
+        "coverage_notes": "Contract-first decomposition exists. Human vs AI allocation is currently advisory metadata only.",
+        "roadmap_items": [
+          "21",
+          "23"
+        ]
+      },
+      {
+        "id": "P4.2",
+        "section": "4.2",
+        "name": "Task Assignment",
+        "status": "implemented",
+        "coverage_notes": "RFQ + bid + acceptance into escrow implemented across MCP, HTTP, and CLI.",
+        "roadmap_items": [
+          "7",
+          "12",
+          "14"
+        ]
+      },
+      {
+        "id": "P4.3",
+        "section": "4.3",
+        "name": "Multi-objective Optimization",
+        "status": "partial",
+        "coverage_notes": "Complexity floor and tiered service levels implemented; full dynamic Pareto optimization and trust-adaptive autonomy remain open.",
+        "roadmap_items": [
+          "6",
+          "17",
+          "20",
+          "28"
+        ]
+      },
+      {
+        "id": "P4.4",
+        "section": "4.4",
+        "name": "Adaptive Coordination",
+        "status": "implemented",
+        "coverage_notes": "Milestones, backup worker, checkpoints, and stability controls are implemented.",
+        "roadmap_items": [
+          "3",
+          "4",
+          "16",
+          "20"
+        ]
+      },
+      {
+        "id": "P4.5",
+        "section": "4.5",
+        "name": "Monitoring",
+        "status": "partial",
+        "coverage_notes": "Outcome and process checkpoints with L0/L1 streams are live; richer L2/L3 monitoring and policy negotiation are not complete.",
+        "roadmap_items": [
+          "3",
+          "10",
+          "15",
+          "16"
+        ]
+      },
+      {
+        "id": "P4.6",
+        "section": "4.6",
+        "name": "Trust and Reputation",
+        "status": "partial",
+        "coverage_notes": "Immutable ledger seed, verifiable credentials, and damped metrics exist; DID-native trust portfolio and stronger human-facing trust tooling remain open.",
+        "roadmap_items": [
+          "5",
+          "14",
+          "20",
+          "26"
+        ]
+      },
+      {
+        "id": "P4.7",
+        "section": "4.7",
+        "name": "Permission Handling",
+        "status": "partial",
+        "coverage_notes": "DCT attenuation and principal authz are implemented; deeper policy-as-code validation and adaptive revocation policies remain open.",
+        "roadmap_items": [
+          "13",
+          "13a",
+          "13b",
+          "25",
+          "28"
+        ]
+      },
+      {
+        "id": "P4.8",
+        "section": "4.8",
+        "name": "Verifiable Task Completion",
+        "status": "implemented",
+        "coverage_notes": "Verification paths include buyer/verifier, arbitrator, ZK slot, attestation chains, and multi-verifier quorum.",
+        "roadmap_items": [
+          "2",
+          "15",
+          "18",
+          "19"
+        ]
+      },
+      {
+        "id": "P4.9",
+        "section": "4.9",
+        "name": "Security",
+        "status": "partial",
+        "coverage_notes": "Emergency controls, stake mechanisms, and signed artifacts are implemented; stronger identity, prompt-security, TEE, and transport hardening remain open.",
+        "roadmap_items": [
+          "2",
+          "11",
+          "13b",
+          "26",
+          "27",
+          "28"
+        ]
+      }
+    ],
+    "ethical_dimensions": [
+      {
+        "id": "E5.1",
+        "section": "5.1",
+        "name": "Meaningful Human Control",
+        "status": "partial",
+        "coverage_notes": "Approval and escalation gates exist, but explicit consent/withdrawal and irreversible-action UX controls are not fully productized.",
+        "roadmap_items": [
+          "25",
+          "28"
+        ]
+      },
+      {
+        "id": "E5.2",
+        "section": "5.2",
+        "name": "Accountability in Long Delegation Chains",
+        "status": "partial",
+        "coverage_notes": "Attestation chains and transitive liability are implemented; explicit liability firebreak contracts are planned.",
+        "roadmap_items": [
+          "15",
+          "24"
+        ]
+      },
+      {
+        "id": "E5.3",
+        "section": "5.3",
+        "name": "Reliability and Efficiency",
+        "status": "implemented",
+        "coverage_notes": "Tiered service levels and fee snapshots are implemented.",
+        "roadmap_items": [
+          "17",
+          "28"
+        ]
+      },
+      {
+        "id": "E5.4",
+        "section": "5.4",
+        "name": "Social Intelligence",
+        "status": "missing",
+        "coverage_notes": "No explicit item previously tracked AI-as-delegator behavior in human teams.",
+        "roadmap_items": [
+          "29"
+        ]
+      },
+      {
+        "id": "E5.5",
+        "section": "5.5",
+        "name": "User Training",
+        "status": "missing",
+        "coverage_notes": "No explicit item previously tracked operator training/certification readiness.",
+        "roadmap_items": [
+          "30"
+        ]
+      },
+      {
+        "id": "E5.6",
+        "section": "5.6",
+        "name": "Risk of De-skilling",
+        "status": "partial",
+        "coverage_notes": "Delegate preference metadata exists; curriculum-aware routing is planned.",
+        "roadmap_items": [
+          "21",
+          "23"
+        ]
+      }
+    ],
+    "protocol_integrations": [
+      {
+        "id": "S6-MCP",
+        "status": "implemented",
+        "notes": "Escrow lifecycle and extension tooling integrated; deeper monitoring semantics remain future work.",
+        "roadmap_items": [
+          "10",
+          "13",
+          "21"
+        ]
+      },
+      {
+        "id": "S6-A2A",
+        "status": "implemented",
+        "notes": "Adapter with verification_policy and escrow trigger fields implemented.",
+        "roadmap_items": [
+          "8"
+        ]
+      },
+      {
+        "id": "S6-AP2",
+        "status": "implemented",
+        "notes": "Mandate-to-escrow bridge implemented with x402 facilitator path.",
+        "roadmap_items": [
+          "9"
+        ]
+      },
+      {
+        "id": "S6-UCP",
+        "status": "planned",
+        "notes": "UCP fulfillment provider remains the main V3 closeout item.",
+        "roadmap_items": [
+          "22"
+        ]
+      },
+      {
+        "id": "S6-x402",
+        "status": "implemented",
+        "notes": "Used as payment rail and complexity-floor anchor.",
+        "roadmap_items": [
+          "9"
+        ]
+      },
+      {
+        "id": "S6-AgentKit",
+        "status": "planned",
+        "notes": "Migration to agent-owned wallets remains architecture direction.",
+        "roadmap_items": [
+          "26"
+        ]
+      }
+    ]
+  },
+  "roadmap_item_decisions": [
+    {
+      "item_id": "1",
+      "phase": "V2",
+      "title": "ERC20/USDC payment support",
+      "status": "implemented",
+      "paper_refs": [
+        "4.2",
+        "6"
+      ],
+      "decision_vs_paper": "Implemented token support natively in escrow contracts instead of relying solely on external payment protocols.",
+      "residual_gap": "None material."
+    },
+    {
+      "item_id": "2",
+      "phase": "V2",
+      "title": "Worker stake activation",
+      "status": "implemented",
+      "paper_refs": [
+        "4.8"
+      ],
+      "decision_vs_paper": "Made stake optional and escrow-level configurable to avoid forcing one risk model on all tasks.",
+      "residual_gap": "Adaptive stake sizing remains open."
+    },
+    {
+      "item_id": "3",
+      "phase": "V2",
+      "title": "Milestone-based escrow",
+      "status": "implemented",
+      "paper_refs": [
+        "4.4",
+        "4.5",
+        "6.1"
+      ],
+      "decision_vs_paper": "Implemented fixed sequential milestones (max 16) for deterministic settlement and bounded gas/runtime complexity.",
+      "residual_gap": "Richer non-linear execution graphs remain open."
+    },
+    {
+      "item_id": "4",
+      "phase": "V2",
+      "title": "Backup agent clause",
+      "status": "implemented",
+      "paper_refs": [
+        "4.4"
+      ],
+      "decision_vs_paper": "Used pre-designated backup worker and explicit activation instead of automatic market rematching.",
+      "residual_gap": "Automated backup discovery remains open."
+    },
+    {
+      "item_id": "5",
+      "phase": "V2",
+      "title": "On-chain reputation seed",
+      "status": "implemented",
+      "paper_refs": [
+        "4.6"
+      ],
+      "decision_vs_paper": "Started with immutable counters and outcome events as a conservative substrate before richer trust models.",
+      "residual_gap": "Portfolio-style DID trust claims remain open."
+    },
+    {
+      "item_id": "6",
+      "phase": "V2",
+      "title": "Complexity floor parameter",
+      "status": "implemented",
+      "paper_refs": [
+        "4.3"
+      ],
+      "decision_vs_paper": "Implemented a single configurable floor instead of dynamic per-task optimization to keep enforcement simple.",
+      "residual_gap": "Context-aware floor tuning remains open."
+    },
+    {
+      "item_id": "7",
+      "phase": "V2",
+      "title": "Task_RFQ + Bid_Object bidding protocol",
+      "status": "implemented",
+      "paper_refs": [
+        "4.2",
+        "6.1"
+      ],
+      "decision_vs_paper": "Implemented off-chain RFQ/bid negotiation with on-chain escrow formalization only after acceptance.",
+      "residual_gap": "None material."
+    },
+    {
+      "item_id": "8",
+      "phase": "V2",
+      "title": "A2A settlement adapter",
+      "status": "implemented",
+      "paper_refs": [
+        "6",
+        "6.1"
+      ],
+      "decision_vs_paper": "Added escrow-specific fields on A2A task metadata while preserving A2A JSON-RPC compatibility.",
+      "residual_gap": "Stronger protocol-level verification slots in broader A2A ecosystem remain open."
+    },
+    {
+      "item_id": "9",
+      "phase": "V2",
+      "title": "AP2 mandate-to-escrow bridge",
+      "status": "implemented",
+      "paper_refs": [
+        "6",
+        "6.1"
+      ],
+      "decision_vs_paper": "Implemented AP2 funding through x402 facilitator and escrow fundWithAuthorization bridge.",
+      "residual_gap": "Richer AP2-native conditional state semantics remain open."
+    },
+    {
+      "item_id": "10",
+      "phase": "V2",
+      "title": "Real-time event subscriptions",
+      "status": "implemented",
+      "paper_refs": [
+        "4.5",
+        "6.1"
+      ],
+      "decision_vs_paper": "Implemented L0/L1 eventing now; left L2/L3 as staged follow-on due privacy and operational concerns.",
+      "residual_gap": "L2_COT_TRACE and L3_FULL_STATE are not production features yet."
+    },
+    {
+      "item_id": "11",
+      "phase": "V2",
+      "title": "Emergency response protocol",
+      "status": "implemented",
+      "paper_refs": [
+        "4.9"
+      ],
+      "decision_vs_paper": "Used owner-governed freeze/unfreeze and emergency resolve controls as immediate incident-response baseline.",
+      "residual_gap": "Decentralized emergency governance remains open."
+    },
+    {
+      "item_id": "12",
+      "phase": "V3",
+      "title": "Sealed bidding",
+      "status": "implemented",
+      "paper_refs": [
+        "4.5",
+        "6.1"
+      ],
+      "decision_vs_paper": "Chose commit-reveal over advanced privacy cryptography for early deployability.",
+      "residual_gap": "Selective-disclosure private bidding remains open."
+    },
+    {
+      "item_id": "13",
+      "phase": "V3",
+      "title": "Delegation Capability Tokens (DCTs)",
+      "status": "implemented",
+      "paper_refs": [
+        "4.7",
+        "6.1"
+      ],
+      "decision_vs_paper": "Implemented DCTs as off-chain attenuated tokens with strict scoping and lifecycle invalidation hooks.",
+      "residual_gap": "On-chain/native cross-protocol DCT interoperability remains open."
+    },
+    {
+      "item_id": "13a",
+      "phase": "V3",
+      "title": "Canonical token profile hardening",
+      "status": "implemented",
+      "paper_refs": [
+        "4.7",
+        "6.1"
+      ],
+      "decision_vs_paper": "Applied hard cutover to one canonical profile to avoid long-lived legacy ambiguity.",
+      "residual_gap": "None material."
+    },
+    {
+      "item_id": "13b",
+      "phase": "V3",
+      "title": "Principal authorization layer for DCT operations",
+      "status": "implemented",
+      "paper_refs": [
+        "4.7",
+        "4.9"
+      ],
+      "decision_vs_paper": "Added explicit role-aware default-deny authz plus auditable policy decisions across interfaces.",
+      "residual_gap": "Formal policy verification and richer adaptive policy controls remain open."
+    },
+    {
+      "item_id": "14",
+      "phase": "V3",
+      "title": "Verifiable credentials for bidding",
+      "status": "implemented",
+      "paper_refs": [
+        "4.6",
+        "6.1"
+      ],
+      "decision_vs_paper": "Used secp256k1 attestation-v1 payloads now with optional issuer_did for forward DID compatibility.",
+      "residual_gap": "Full DID method lifecycle and revocation networks remain open."
+    },
+    {
+      "item_id": "15",
+      "phase": "V3",
+      "title": "Attestation chains",
+      "status": "implemented",
+      "paper_refs": [
+        "4.8"
+      ],
+      "decision_vs_paper": "Implemented recursive verification and chain-of-custody off-chain to avoid contract bloat and gas overhead.",
+      "residual_gap": "On-chain enforceability of full recursive chain validity remains open."
+    },
+    {
+      "item_id": "16",
+      "phase": "V3",
+      "title": "Checkpoint/resume",
+      "status": "implemented",
+      "paper_refs": [
+        "4.4",
+        "6.1"
+      ],
+      "decision_vs_paper": "Implemented off-chain checkpoint artifact registry with active-worker write authorization.",
+      "residual_gap": "Cryptographic checkpoint execution proofs remain open."
+    },
+    {
+      "item_id": "17",
+      "phase": "V3",
+      "title": "Tiered service levels",
+      "status": "implemented",
+      "paper_refs": [
+        "5.3"
+      ],
+      "decision_vs_paper": "Encoded low-assurance vs high-assurance tiers directly on-chain with fee snapshots and approval constraints.",
+      "residual_gap": "Governance-level mandatory floors by task class remain open."
+    },
+    {
+      "item_id": "18",
+      "phase": "V3",
+      "title": "ZK verification slot",
+      "status": "implemented",
+      "paper_refs": [
+        "4.8"
+      ],
+      "decision_vs_paper": "Implemented optional verifier integration and proof-hash commitments rather than mandatory ZK in all flows.",
+      "residual_gap": "Broader circuit ecosystem and proof UX hardening remain open."
+    },
+    {
+      "item_id": "19",
+      "phase": "V3",
+      "title": "Multi-verifier quorum",
+      "status": "implemented",
+      "paper_refs": [
+        "4.8"
+      ],
+      "decision_vs_paper": "Implemented bounded verifier panel, quorum thresholds, and stake economics as practical TrueBit-inspired consensus.",
+      "residual_gap": "Large-scale verification game markets remain open."
+    },
+    {
+      "item_id": "20",
+      "phase": "V3",
+      "title": "Market stability mechanisms",
+      "status": "implemented",
+      "paper_refs": [
+        "4.4"
+      ],
+      "decision_vs_paper": "Applied concrete controls (re-bid cooldowns, surcharge windows, damped reputation) where paper gives directional guidance.",
+      "residual_gap": "Model calibration and adaptive parameter governance remain open."
+    },
+    {
+      "item_id": "21",
+      "phase": "V3",
+      "title": "Contract-first decomposition tooling",
+      "status": "implemented",
+      "paper_refs": [
+        "4.1"
+      ],
+      "decision_vs_paper": "Made delegate preference and market context advisory in V3 to preserve market openness and reduce false negatives.",
+      "residual_gap": "Policy-enforced human-routing and optimization remain open."
+    },
+    {
+      "item_id": "22",
+      "phase": "V3",
+      "title": "UCP fulfillment provider",
+      "status": "planned",
+      "paper_refs": [
+        "6"
+      ],
+      "decision_vs_paper": "Planned to expose escrow as a fulfillment backend while preserving UCP interoperability boundaries.",
+      "residual_gap": "Entire item is pending."
+    },
+    {
+      "item_id": "23",
+      "phase": "V4",
+      "title": "Curriculum-aware task routing",
+      "status": "planned",
+      "paper_refs": [
+        "5.6"
+      ],
+      "decision_vs_paper": "Planned as intentional skill-preservation routing over pure short-term efficiency optimization.",
+      "residual_gap": "Entire item is pending."
+    },
+    {
+      "item_id": "24",
+      "phase": "V4",
+      "title": "Liability firebreaks",
+      "status": "planned",
+      "paper_refs": [
+        "5.2"
+      ],
+      "decision_vs_paper": "Planned explicit chain stop-gaps: assume non-transitive liability or halt for renewed authority transfer.",
+      "residual_gap": "Entire item is pending."
+    },
+    {
+      "item_id": "25",
+      "phase": "V4",
+      "title": "Cognitive friction calibration",
+      "status": "planned",
+      "paper_refs": [
+        "5.1"
+      ],
+      "decision_vs_paper": "Planned context-adaptive friction to avoid both blind automation and alert fatigue.",
+      "residual_gap": "Entire item is pending."
+    },
+    {
+      "item_id": "26",
+      "phase": "V4",
+      "title": "Decentralized identifiers (DIDs)",
+      "status": "planned",
+      "paper_refs": [
+        "4.6",
+        "4.9"
+      ],
+      "decision_vs_paper": "Planned migration from address-only identity to DID-backed signatures and trust proofs.",
+      "residual_gap": "Entire item is pending."
+    },
+    {
+      "item_id": "27",
+      "phase": "V4",
+      "title": "Insurance/liability framework",
+      "status": "planned",
+      "paper_refs": [
+        "4.9",
+        "5.1"
+      ],
+      "decision_vs_paper": "Planned as extra-technical protection for human participants where technical controls are insufficient.",
+      "residual_gap": "Entire item is pending."
+    },
+    {
+      "item_id": "28",
+      "phase": "V4",
+      "title": "Governance layer",
+      "status": "planned",
+      "paper_refs": [
+        "5.3"
+      ],
+      "decision_vs_paper": "Planned mandatory safety floors by task class to prevent competitive races to unsafe low-cost paths.",
+      "residual_gap": "Entire item is pending."
+    },
+    {
+      "item_id": "29",
+      "phase": "V4",
+      "title": "Social intelligence safeguards",
+      "status": "planned",
+      "paper_refs": [
+        "5.4"
+      ],
+      "decision_vs_paper": "Added as explicit roadmap item after gap review; operationalizes dignity, anti-micromanagement, and authority-gradient handling.",
+      "residual_gap": "Newly added item, not implemented."
+    },
+    {
+      "item_id": "30",
+      "phase": "V4",
+      "title": "User training and certification tracks",
+      "status": "planned",
+      "paper_refs": [
+        "5.5"
+      ],
+      "decision_vs_paper": "Added as explicit roadmap item after gap review; product and governance controls must be coupled with operator readiness.",
+      "residual_gap": "Newly added item, not implemented."
+    }
+  ],
+  "gaps_identified_during_v3_review": [
+    {
+      "gap_id": "G-ETHICS-SOCIAL-INTELLIGENCE",
+      "paper_section": "5.4",
+      "description": "No explicit roadmap item existed for social-intelligence requirements in human teams.",
+      "resolution": "Added roadmap item 29."
+    },
+    {
+      "gap_id": "G-ETHICS-USER-TRAINING",
+      "paper_section": "5.5",
+      "description": "No explicit roadmap item existed for user training/certification.",
+      "resolution": "Added roadmap item 30."
+    },
+    {
+      "gap_id": "G-MONITORING-DEPTH",
+      "paper_section": "4.5",
+      "description": "L2/L3 monitoring semantics are not complete production features.",
+      "resolution": "Track as V3 closeout hardening and V4 governance policy work."
+    },
+    {
+      "gap_id": "G-HUMAN-DELEGATEE-ENFORCEMENT",
+      "paper_section": "4.1, 5.6",
+      "description": "Human allocation support is currently advisory in decomposition.",
+      "resolution": "Track enforceable routing/governance controls under items 23, 25, 28, and 29."
+    }
+  ],
+  "opinionated_reconsideration_backlog": [
+    {
+      "revisit_id": "R1",
+      "anchored_item_id": "12",
+      "title": "Sealed bidding hardening",
+      "why_revisit": "Commit-reveal is deployable but still exposed to reveal-withholding and griefing behavior.",
+      "tasks": [
+        "Add anti-grief controls for commit-without-reveal behavior.",
+        "Define deterministic fallback rules when top commits are not revealed.",
+        "Preserve interface parity across MCP, HTTP, and CLI."
+      ],
+      "status": "planned"
+    },
+    {
+      "revisit_id": "R2",
+      "anchored_item_id": "15",
+      "title": "Attestation-chain anchoring",
+      "why_revisit": "Off-chain-only verification is efficient, but stronger non-repudiation is useful for high-assurance disputes.",
+      "tasks": [
+        "Add optional on-chain commitment of attestation root hash on submit.",
+        "Add proof-of-inclusion retrieval and verification helpers.",
+        "Define dispute-time checks for mismatched chain data versus anchored roots."
+      ],
+      "status": "planned"
+    },
+    {
+      "revisit_id": "R3",
+      "anchored_item_id": "20",
+      "title": "Market stability parameter recalibration",
+      "why_revisit": "Static damping/cooldown/surcharge knobs may need telemetry-driven tuning to avoid over-correction.",
+      "tasks": [
+        "Build replay/simulation harness for surcharge, cooldown, and damping settings.",
+        "Add parameter guardrails by task class and risk profile.",
+        "Add staged, auditable governance rollout path for parameter updates."
+      ],
+      "status": "planned"
+    },
+    {
+      "revisit_id": "R4",
+      "anchored_item_id": "21",
+      "title": "Human delegate preference enforcement modes",
+      "why_revisit": "Advisory-only delegate preference underdelivers on paper emphasis for human delegatees in sensitive workflows.",
+      "tasks": [
+        "Introduce policy modes (advisory, require_human, require_ai, any) scoped by risk/task class.",
+        "Enforce policy mode during decomposition finalize and bid acceptance.",
+        "Record explicit override reason and audit events for exceptions."
+      ],
+      "status": "planned"
+    }
+  ],
+  "recommended_execution_order": [
+    "22",
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "25",
+    "29",
+    "30",
+    "23",
+    "24",
+    "26",
+    "28",
+    "27"
+  ]
+}
