@@ -20,6 +20,7 @@ contract TaskEscrowFactory {
     error EscrowNotFrozen();
     error InvalidServiceTier();
     error InvalidQuorumConfiguration();
+    error InvalidConfig();
 
     // Service tier constants (paper §5.3: tiered service levels)
     uint8 public constant TIER_LOW_ASSURANCE = 0;
@@ -286,6 +287,9 @@ contract TaskEscrowFactory {
             revert InvalidFeeBps();
         }
         if (uint256(highAssuranceFeeBps) + uint256(newMaxSurchargeBps) > 10_000) revert InvalidFeeBps();
+        if (newFrequencyWindowSeconds == 0 && (newSurchargeStepBps != 0 || newMaxSurchargeBps != 0)) {
+            revert InvalidConfig();
+        }
 
         uint16 oldSurchargeStepBps = redelegationSurchargeStepBps;
         uint16 oldMaxSurchargeBps = redelegationMaxSurchargeBps;

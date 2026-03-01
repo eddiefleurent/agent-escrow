@@ -113,4 +113,17 @@ contract TaskEscrowMarketStabilityTest is Test {
         factory.setRedelegationSurchargePolicy(25, 9_751, 3600);
         vm.stopPrank();
     }
+
+    function testSetRedelegationSurchargePolicyRejectsZeroWindowWithNonZeroSurcharge() public {
+        vm.startPrank(owner);
+        vm.expectRevert(TaskEscrowFactory.InvalidConfig.selector);
+        factory.setRedelegationSurchargePolicy(25, 60, 0);
+
+        vm.expectRevert(TaskEscrowFactory.InvalidConfig.selector);
+        factory.setRedelegationSurchargePolicy(0, 60, 0);
+
+        // Zero surcharges with zero window is allowed (effectively disables surcharge)
+        factory.setRedelegationSurchargePolicy(0, 0, 0);
+        vm.stopPrank();
+    }
 }
