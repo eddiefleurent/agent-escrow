@@ -427,7 +427,7 @@ func (d *DB) GetReputation(ctx context.Context, address, role string) (*Reputati
 	var updatedAt string
 	err := d.db.QueryRowContext(ctx,
 		`SELECT id, address, role, completed, disputed, failed, updated_at FROM reputation WHERE address = ? AND role = ?`,
-		address, role,
+		strings.ToLower(strings.TrimSpace(address)), role,
 	).Scan(&r.ID, &r.Address, &r.Role, &r.Completed, &r.Disputed, &r.Failed, &updatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("get reputation: %w", err)
@@ -569,7 +569,8 @@ func (d *DB) RecordReputationOutcome(ctx context.Context, e *ReputationEvent) er
 		return err
 	}
 	if inserted {
-		if err := upsertReputationOn(ctx, tx, e.Address, e.Role, e.Outcome); err != nil {
+		normalizedAddr := strings.ToLower(strings.TrimSpace(e.Address))
+		if err := upsertReputationOn(ctx, tx, normalizedAddr, e.Role, e.Outcome); err != nil {
 			tx.Rollback()
 			return err
 		}

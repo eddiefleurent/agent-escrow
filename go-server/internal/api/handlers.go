@@ -293,6 +293,10 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("parent escrow %d has invalid on-chain address", *req.ParentEscrowID)})
 			return
 		}
+		if parentEscrow.ChainID != h.cfg.ChainID || common.HexToAddress(parentEscrow.FactoryAddress) != common.HexToAddress(h.cfg.FactoryAddress) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("parent escrow %d is from different chain/factory", *req.ParentEscrowID)})
+			return
+		}
 		activeWorker := parentEscrow.ActiveWorker
 		if activeWorker == "" {
 			activeWorker = parentEscrow.Worker

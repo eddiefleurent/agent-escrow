@@ -299,6 +299,18 @@ func TestWebhook_OutcomeRecorded_Processed(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("expected 1 reputation event, got %d", len(events))
 	}
+	if events[0].Role != "worker" {
+		t.Errorf("unexpected role: got %v want worker", events[0].Role)
+	}
+	if events[0].Outcome != "completed" {
+		t.Errorf("unexpected outcome: got %v want completed", events[0].Outcome)
+	}
+	if events[0].TxHash != "0xoutcome456" {
+		t.Errorf("unexpected tx_hash: got %v want 0xoutcome456", events[0].TxHash)
+	}
+	if events[0].LogIndex != 0 {
+		t.Errorf("unexpected log_index: got %v want 0", events[0].LogIndex)
+	}
 }
 
 func TestWebhook_DuplicateEvent_Idempotent(t *testing.T) {

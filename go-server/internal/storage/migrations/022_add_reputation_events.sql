@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS reputation_events (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reputation_events_tx_log_addr_role
-    ON reputation_events(tx_hash, log_index, address, role);
+    ON reputation_events(tx_hash, log_index, lower(address), role);
 
 CREATE INDEX IF NOT EXISTS idx_reputation_events_addr_role_time
-    ON reputation_events(address, role, occurred_at, id);
+    ON reputation_events(lower(address), role, occurred_at, id);

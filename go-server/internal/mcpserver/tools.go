@@ -744,6 +744,9 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		if !common.IsHexAddress(parentEscrow.EscrowAddress) {
 			return textResult(fmt.Sprintf("parent escrow %d has invalid on-chain address", pid)), nil, nil
 		}
+		if parentEscrow.ChainID != s.cfg.ChainID || common.HexToAddress(parentEscrow.FactoryAddress) != common.HexToAddress(s.cfg.FactoryAddress) {
+			return textResult(fmt.Sprintf("parent escrow %d is from different chain/factory", pid)), nil, nil
+		}
 		activeWorker := parentEscrow.ActiveWorker
 		if activeWorker == "" {
 			activeWorker = parentEscrow.Worker

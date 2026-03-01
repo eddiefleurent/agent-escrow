@@ -1053,8 +1053,19 @@ func TestCreateRFQ_ParentCooldownReturns429(t *testing.T) {
 		t.Fatalf("expected 429, got %d: %s", rr.Code, rr.Body.String())
 	}
 	resp := decodeJSON(t, rr)
-	if resp["retry_after_seconds"] == nil {
+	retryAfterRaw, ok := resp["retry_after_seconds"]
+	if !ok || retryAfterRaw == nil {
 		t.Fatalf("expected retry_after_seconds in cooldown response, got %v", resp)
+	}
+	retryAfterSecs, ok := retryAfterRaw.(float64)
+	if !ok || retryAfterSecs <= 0 {
+		t.Fatalf("expected retry_after_seconds to be a positive number, got %v", retryAfterRaw)
+	}
+	if retryAfter := rr.Header().Get("Retry-After"); retryAfter != "" {
+		parsed, parseErr := strconv.ParseFloat(retryAfter, 64)
+		if parseErr != nil || parsed < retryAfterSecs {
+			t.Errorf("Retry-After header %q should be >= retry_after_seconds %.0f", retryAfter, retryAfterSecs)
+		}
 	}
 }
 

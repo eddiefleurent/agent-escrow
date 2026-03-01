@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"os"
 	"strconv"
@@ -151,6 +152,9 @@ func Load() (*Config, error) {
 		v, err := strconv.ParseFloat(raw, 64)
 		if err != nil {
 			return nil, fmt.Errorf("invalid REPUTATION_DAMPING_FACTOR: %w", err)
+		}
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return nil, errors.New("invalid REPUTATION_DAMPING_FACTOR: must be finite")
 		}
 		if v <= 0 || v > 1 {
 			return nil, errors.New("invalid REPUTATION_DAMPING_FACTOR: must be > 0 and <= 1")
@@ -336,7 +340,7 @@ func (c *Config) Validate() ValidationResult {
 		r.Errors = append(r.Errors, "REBID_COOLDOWN_SECONDS must be >= 0")
 	}
 
-	if c.ReputationDampingFactor <= 0 || c.ReputationDampingFactor > 1 {
+	if math.IsNaN(c.ReputationDampingFactor) || math.IsInf(c.ReputationDampingFactor, 0) || c.ReputationDampingFactor <= 0 || c.ReputationDampingFactor > 1 {
 		r.Errors = append(r.Errors, "REPUTATION_DAMPING_FACTOR must be > 0 and <= 1")
 	}
 
