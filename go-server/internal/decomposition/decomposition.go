@@ -338,6 +338,21 @@ func (s *Service) FinalizeDecomposition(ctx context.Context, p FinalizeParams) (
 	if err != nil {
 		return nil, nil, fmt.Errorf("begin finalize tx: %w", err)
 	}
+	if err := s.DB.UpdateDecompositionStatusIfCurrentTx(
+		ctx,
+		tx,
+		decomp.ID,
+		"valid",
+		"finalized",
+		decomp.ValidationErrorsJSON,
+		"[]",
+	); err != nil {
+		_ = tx.Rollback()
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, errors.New("decomposition must be valid before finalization")
+		}
+		return nil, nil, err
+	}
 
 	rfqIDs := make([]int64, 0, len(leafNodes))
 	for i, leaf := range leafNodes {
@@ -358,7 +373,15 @@ func (s *Service) FinalizeDecomposition(ctx context.Context, p FinalizeParams) (
 		_ = tx.Rollback()
 		return nil, nil, fmt.Errorf("marshal rfq ids: %w", err)
 	}
-	if err := s.DB.UpdateDecompositionStatusTx(ctx, tx, decomp.ID, "finalized", decomp.ValidationErrorsJSON, string(rfqIDsJSON)); err != nil {
+	if err := s.DB.UpdateDecompositionStatusIfCurrentTx(
+		ctx,
+		tx,
+		decomp.ID,
+		"finalized",
+		"finalized",
+		decomp.ValidationErrorsJSON,
+		string(rfqIDsJSON),
+	); err != nil {
 		_ = tx.Rollback()
 		return nil, nil, err
 	}
@@ -367,7 +390,7 @@ func (s *Service) FinalizeDecomposition(ctx context.Context, p FinalizeParams) (
 	}
 	updated, err := s.DB.GetDecomposition(ctx, decomp.ID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("decomposition %d committed but subsequent read failed: %w", decomp.ID, err)
 	}
 	return updated, rfqIDs, nil
 }
@@ -568,6 +591,9 @@ func buildRFQParamsForLeaf(node *storage.DecompositionNode, p FinalizeParams) (b
 		biddingMode = "sealed"
 		if p.QuorumCount <= 0 {
 			return bidding.CreateRFQParams{}, errors.New("quorum_count must be > 0 for quorum verification_type")
+		}
+		if p.QuorumCount > len(p.VerifierPanel) {
+			return bidding.CreateRFQParams{}, errors.New("quorum_count must be <= verifier_panel size")
 		}
 		requirements["verifier_panel"] = p.VerifierPanel
 		requirements["quorum_count"] = p.QuorumCount

@@ -1096,6 +1096,53 @@ func updateDecompositionStatusOn(
 	return nil
 }
 
+func updateDecompositionStatusIfCurrentOn(
+	ctx context.Context,
+	q dbExecer,
+	id int64,
+	expectedStatus string,
+	status string,
+	validationErrorsJSON string,
+	rfqIDsJSON string,
+) error {
+	if strings.TrimSpace(expectedStatus) == "" {
+		return errors.New("expectedStatus is required")
+	}
+	if status == "" {
+		return errors.New("status is required")
+	}
+	if validationErrorsJSON == "" {
+		validationErrorsJSON = "[]"
+	}
+	if !json.Valid([]byte(validationErrorsJSON)) {
+		return errors.New("invalid validation_errors_json")
+	}
+	if rfqIDsJSON == "" {
+		rfqIDsJSON = "[]"
+	}
+	if !json.Valid([]byte(rfqIDsJSON)) {
+		return errors.New("invalid rfq_ids_json")
+	}
+	res, err := q.ExecContext(
+		ctx,
+		`UPDATE decompositions
+         SET status = ?, validation_errors_json = ?, rfq_ids_json = ?, updated_at = datetime('now')
+         WHERE id = ? AND status = ?`,
+		status, validationErrorsJSON, rfqIDsJSON, id, expectedStatus,
+	)
+	if err != nil {
+		return fmt.Errorf("update decomposition status conditionally: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update decomposition status conditionally rows affected: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("update decomposition status id=%d expected_status=%s: %w", id, expectedStatus, sql.ErrNoRows)
+	}
+	return nil
+}
+
 func (d *DB) UpdateDecompositionStatus(
 	ctx context.Context,
 	id int64,
@@ -1115,6 +1162,45 @@ func (d *DB) UpdateDecompositionStatusTx(
 	rfqIDsJSON string,
 ) error {
 	return updateDecompositionStatusOn(ctx, tx, id, status, validationErrorsJSON, rfqIDsJSON)
+}
+
+func (d *DB) UpdateDecompositionStatusIfCurrent(
+	ctx context.Context,
+	id int64,
+	expectedStatus string,
+	status string,
+	validationErrorsJSON string,
+	rfqIDsJSON string,
+) error {
+	return updateDecompositionStatusIfCurrentOn(
+		ctx,
+		d.db,
+		id,
+		expectedStatus,
+		status,
+		validationErrorsJSON,
+		rfqIDsJSON,
+	)
+}
+
+func (d *DB) UpdateDecompositionStatusIfCurrentTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	id int64,
+	expectedStatus string,
+	status string,
+	validationErrorsJSON string,
+	rfqIDsJSON string,
+) error {
+	return updateDecompositionStatusIfCurrentOn(
+		ctx,
+		tx,
+		id,
+		expectedStatus,
+		status,
+		validationErrorsJSON,
+		rfqIDsJSON,
+	)
 }
 
 func (d *DB) GetDecomposition(ctx context.Context, id int64) (*Decomposition, error) {

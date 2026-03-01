@@ -464,3 +464,34 @@ func TestFinalize_RequiresValidStatus(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestFinalize_QuorumCountMustNotExceedVerifierPanelSize(t *testing.T) {
+	svc, _ := newDecompositionTestService(t)
+	createRes, err := svc.CreateDecomposition(context.Background(), CreateDecompositionParams{
+		Buyer:       testBuyerAddress,
+		Title:       "Quorum Limits",
+		Description: "quorum count bounds",
+		SubTasks: []SubTaskInput{
+			{TempID: "root", Title: "Root", Description: "root"},
+			{TempID: "leaf-quorum", ParentTempID: "root", Title: "Leaf quorum", Description: "quorum", VerificationType: "quorum"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create decomposition: %v", err)
+	}
+	if !createRes.Valid {
+		t.Fatalf("expected valid decomposition, issues=%+v", createRes.Issues)
+	}
+
+	params := defaultFinalizeParams(createRes.Decomposition.ID)
+	params.VerifierPanel = []string{testVerifierAddress}
+	params.QuorumCount = 2
+
+	_, _, err = svc.FinalizeDecomposition(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected finalize to fail when quorum_count exceeds verifier_panel size")
+	}
+	if !strings.Contains(err.Error(), "quorum_count must be <= verifier_panel size") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
