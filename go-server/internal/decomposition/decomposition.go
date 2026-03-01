@@ -243,7 +243,7 @@ func (s *Service) CreateDecomposition(ctx context.Context, p CreateDecomposition
 
 	decompStored, nodesStored, err := s.GetDecomposition(ctx, decomp.ID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decomposition %d created but subsequent read failed: %w", decomp.ID, err)
 	}
 	leafNodes := leafNodes(nodesStored)
 	marketContext := make([]NodeMarketContext, 0, len(leafNodes))
@@ -463,6 +463,8 @@ func parseVerificationDetails(raw string) (map[string]string, error) {
 	for k, v := range details {
 		if s, ok := v.(string); ok {
 			out[k] = s
+		} else {
+			out[k] = fmt.Sprintf("%v", v)
 		}
 	}
 	return out, nil
