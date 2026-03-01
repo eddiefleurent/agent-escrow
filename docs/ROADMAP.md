@@ -1,6 +1,6 @@
 # Roadmap
 
-Implementation roadmap for the ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) paper (Tomasev, Franklin, Osindero -- Google DeepMind, 2026).
+Implementation roadmap for the ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) paper (Tomašev, Franklin, Osindero -- Google DeepMind, 2026).
 
 **Current phase: V3 closeout (item 22), with V4 execution planning active.**
 
