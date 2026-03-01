@@ -28,10 +28,10 @@ contract TaskEscrowMarketStabilityTest is Test {
         factory = new TaskEscrowFactory(LOW_FEE_BPS, HIGH_FEE_BPS, treasury, owner);
     }
 
-    function _createEscrow(address workerAddr, address parentEscrow) internal returns (TaskEscrow) {
+    function _createEscrow(address buyerAddr, address workerAddr, address parentEscrow) internal returns (TaskEscrow) {
         (, address addr) = factory.createEscrow(
             TaskEscrowFactory.CreateParams({
-                buyer: buyer,
+                buyer: buyerAddr,
                 worker: workerAddr,
                 verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
                 quorumThreshold: 1,
@@ -60,20 +60,20 @@ contract TaskEscrowMarketStabilityTest is Test {
 
     function testParentEscrowMustBeRegistered() public {
         vm.expectRevert(TaskEscrowFactory.NotRegisteredEscrow.selector);
-        _createEscrow(worker, makeAddr("not-registered-parent"));
+        _createEscrow(buyer, worker, makeAddr("not-registered-parent"));
     }
 
     function testRedelegationSurchargeProgressionAndCap() public {
         vm.prank(owner);
         factory.setRedelegationSurchargePolicy(25, 60, 1 hours);
 
-        TaskEscrow parent = _createEscrow(worker, address(0));
+        TaskEscrow parent = _createEscrow(buyer, worker, address(0));
         assertEq(parent.protocolFeeBpsSnapshot(), LOW_FEE_BPS);
 
-        TaskEscrow child1 = _createEscrow(workerAlt, address(parent));
-        TaskEscrow child2 = _createEscrow(workerAlt, address(parent));
-        TaskEscrow child3 = _createEscrow(workerAlt, address(parent));
-        TaskEscrow child4 = _createEscrow(workerAlt, address(parent));
+        TaskEscrow child1 = _createEscrow(worker, workerAlt, address(parent));
+        TaskEscrow child2 = _createEscrow(worker, workerAlt, address(parent));
+        TaskEscrow child3 = _createEscrow(worker, workerAlt, address(parent));
+        TaskEscrow child4 = _createEscrow(worker, workerAlt, address(parent));
 
         // First child linked to parent starts a fresh streak (no surcharge yet).
         assertEq(child1.protocolFeeBpsSnapshot(), LOW_FEE_BPS);
@@ -91,14 +91,14 @@ contract TaskEscrowMarketStabilityTest is Test {
         vm.prank(owner);
         factory.setRedelegationSurchargePolicy(30, 90, 1 hours);
 
-        TaskEscrow parent = _createEscrow(worker, address(0));
-        TaskEscrow child1 = _createEscrow(workerAlt, address(parent));
-        TaskEscrow child2 = _createEscrow(workerAlt, address(parent));
+        TaskEscrow parent = _createEscrow(buyer, worker, address(0));
+        TaskEscrow child1 = _createEscrow(worker, workerAlt, address(parent));
+        TaskEscrow child2 = _createEscrow(worker, workerAlt, address(parent));
         assertEq(child1.protocolFeeBpsSnapshot(), LOW_FEE_BPS);
         assertEq(child2.protocolFeeBpsSnapshot(), LOW_FEE_BPS + 30);
 
         vm.warp(block.timestamp + 2 hours);
-        TaskEscrow child3 = _createEscrow(workerAlt, address(parent));
+        TaskEscrow child3 = _createEscrow(worker, workerAlt, address(parent));
         assertEq(child3.protocolFeeBpsSnapshot(), LOW_FEE_BPS);
     }
 

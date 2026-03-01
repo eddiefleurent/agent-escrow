@@ -189,7 +189,10 @@ contract TaskEscrowFactory {
         if (FactoryLib.rolesCollide(
                 p.buyer, p.worker, p.arbitrator, p.backupWorker, p.verifierPanel, p.quorumVerifierCount
             )) revert TaskEscrow.RolesNotDistinct();
-        if (p.parentEscrow != address(0) && escrowToId[p.parentEscrow] == 0) revert NotRegisteredEscrow();
+        if (p.parentEscrow != address(0)) {
+            if (escrowToId[p.parentEscrow] == 0) revert NotRegisteredEscrow();
+            if (p.buyer != TaskEscrow(p.parentEscrow).activeWorker()) revert Unauthorized();
+        }
 
         FeeComputation memory fee = _computeFeeSnapshot(p.serviceTier, p.parentEscrow);
 
