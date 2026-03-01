@@ -284,6 +284,7 @@ func (idx *Indexer) indexFactoryEvents(ctx context.Context, from, to uint64) err
 	topicIDs := []common.Hash{
 		chain.FactoryABI.Events["EscrowCreated"].ID,
 		chain.FactoryABI.Events["OutcomeRecorded"].ID,
+		chain.FactoryABI.Events["MarketStabilityFeeApplied"].ID,
 		chain.FactoryABI.Events["AddressFrozen"].ID,
 		chain.FactoryABI.Events["AddressUnfrozen"].ID,
 		chain.FactoryABI.Events["EscrowFrozen"].ID,
@@ -533,7 +534,22 @@ func (idx *Indexer) handleOutcomeRecorded(ctx context.Context, lg types.Log) err
 		"outcome", outcome,
 	)
 
-	return idx.db.UpsertReputation(ctx, strings.ToLower(participant.Hex()), role, outcome)
+	logIndex, err := numconv.UintToInt(lg.Index, "log index")
+	if err != nil {
+		return err
+	}
+	blockNumber, err := numconv.Uint64ToInt64(lg.BlockNumber, "block number")
+	if err != nil {
+		return err
+	}
+	return idx.db.RecordReputationOutcome(ctx, &storage.ReputationEvent{
+		Address:     strings.ToLower(participant.Hex()),
+		Role:        role,
+		Outcome:     outcome,
+		TxHash:      lg.TxHash.Hex(),
+		LogIndex:    logIndex,
+		BlockNumber: blockNumber,
+	})
 }
 
 func (idx *Indexer) indexEscrowEvents(ctx context.Context, escrowAddr common.Address, dbEscrowID int64, from, to uint64) error {

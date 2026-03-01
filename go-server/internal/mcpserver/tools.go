@@ -55,6 +55,7 @@ type createEscrowArgs struct {
 	BackupDeadlineExtension  FlexibleString `json:"backup_deadline_extension,omitempty" jsonschema:"Seconds to extend deadline when backup activates; omit or 0 for no extension"`
 	ZKVerifier               string         `json:"zk_verifier,omitempty" jsonschema:"Optional on-chain ZK verifier contract address; required with circuit_id"`
 	CircuitID                string         `json:"circuit_id,omitempty" jsonschema:"Optional 0x-prefixed bytes32 circuit identifier; required with zk_verifier"`
+	ParentEscrowID           FlexibleString `json:"parent_escrow_id,omitempty" jsonschema:"Optional parent escrow ID for sub-delegation. Buyer must match the parent's active worker."`
 }
 
 type escrowIDArgs struct {
@@ -359,7 +360,7 @@ func (s *Server) registerTools(srv *mcp.Server) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "get_reputation",
-		Description: "Get on-chain reputation record for an address (tasks completed, disputed, failed). Paper §4.6: immutable ledger approach.",
+		Description: "Get reputation for an address with both immutable raw counters and damped (decayed) metrics. Paper §4.6: immutable ledger approach with V3 stability damping.",
 	}, s.handleGetReputation)
 
 	mcp.AddTool(srv, &mcp.Tool{
@@ -728,6 +729,34 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		}
 	}
 
+	var parentEscrowID *int64
+	var parentEscrowAddr common.Address
+	if raw := args.ParentEscrowID.String(); raw != "" {
+		pid, pidErr := strconv.ParseInt(raw, 10, 64)
+		if pidErr != nil {
+			return textResult(fmt.Sprintf("invalid parent_escrow_id: %v", pidErr)), nil, nil
+		}
+		parentEscrowID = &pid
+		parentEscrow, err := s.db.GetEscrow(ctx, pid)
+		if err != nil {
+			return textResult(fmt.Sprintf("invalid parent_escrow_id: %v", err)), nil, nil
+		}
+		if !common.IsHexAddress(parentEscrow.EscrowAddress) {
+			return textResult(fmt.Sprintf("parent escrow %d has invalid on-chain address", pid)), nil, nil
+		}
+		activeWorker := parentEscrow.ActiveWorker
+		if activeWorker == "" {
+			activeWorker = parentEscrow.Worker
+		}
+		if !strings.EqualFold(common.HexToAddress(args.Buyer).Hex(), common.HexToAddress(activeWorker).Hex()) {
+			return textResult(fmt.Sprintf(
+				"sub-delegation buyer (%s) must be active worker of parent escrow %d (%s)",
+				args.Buyer, pid, activeWorker,
+			)), nil, nil
+		}
+		parentEscrowAddr = common.HexToAddress(parentEscrow.EscrowAddress)
+	}
+
 	// Validate all uint64→int64 conversions before any on-chain or DB side effects.
 	submissionDeadline, err := numconv.Uint64ToInt64(deadline, "submission_deadline")
 	if err != nil {
@@ -781,6 +810,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		BackupDeadlineExtension:  backupDeadlineExt,
 		ZKVerifier:               zkVerifier,
 		CircuitID:                circuitID,
+		ParentEscrow:             parentEscrowAddr,
 	}
 
 	tx, err := s.chain.CreateEscrow(ctx, factory, params)
@@ -837,6 +867,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 		ServiceTier:              int(serviceTier),
 		ZKVerifier:               zkVerifier.Hex(),
 		CircuitID:                fmt.Sprintf("0x%x", circuitID),
+		ParentEscrowID:           parentEscrowID,
 	})
 	if err != nil {
 		return textResult(fmt.Sprintf("db error: %v", err)), nil, nil
@@ -1522,36 +1553,36 @@ func (s *Server) handleGetReputation(ctx context.Context, req *mcp.CallToolReque
 	}
 
 	if args.Role != "" {
-		rep, err := s.db.GetReputation(ctx, addr, args.Role)
+		view, err := s.db.GetReputationView(ctx, addr, args.Role, s.cfg.ReputationDampingFactor)
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return jsonResult(map[string]any{
-					"address":   addr,
-					"role":      args.Role,
-					"completed": 0,
-					"disputed":  0,
-					"failed":    0,
-				})
-			}
 			return nil, nil, fmt.Errorf("get reputation: %w", err)
 		}
-		return jsonResult(rep)
+		return jsonResult(view)
 	}
 
-	reps, err := s.db.GetReputationByAddress(ctx, addr)
+	views, err := s.db.GetReputationViewsByAddress(ctx, addr, s.cfg.ReputationDampingFactor)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get reputation by address: %w", err)
 	}
-	if len(reps) == 0 {
+	allZero := true
+	for _, v := range views {
+		if v.Completed != 0 || v.Disputed != 0 || v.Failed != 0 {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
 		return jsonResult(map[string]any{
-			"address": addr,
-			"roles":   []any{},
-			"note":    "No on-chain reputation recorded yet. Reputation counters update after the indexer processes OutcomeRecorded events (~15s after settlement).",
+			"address":        addr,
+			"damping_factor": s.cfg.ReputationDampingFactor,
+			"roles":          views,
+			"note":           "No on-chain reputation recorded yet. Reputation counters update after the indexer processes OutcomeRecorded events (~15s after settlement).",
 		})
 	}
 	return jsonResult(map[string]any{
-		"address": addr,
-		"roles":   reps,
+		"address":        addr,
+		"damping_factor": s.cfg.ReputationDampingFactor,
+		"roles":          views,
 	})
 }
 
@@ -1752,6 +1783,14 @@ func (s *Server) handleCreateRFQ(ctx context.Context, req *mcp.CallToolRequest, 
 		ParentEscrowID:           parentEscrowID,
 	})
 	if err != nil {
+		var cooldownErr *bidding.RebidCooldownError
+		if errors.As(err, &cooldownErr) {
+			return jsonResult(map[string]any{
+				"error":               cooldownErr.Error(),
+				"retry_after_seconds": cooldownErr.RetryAfterSeconds(),
+				"retry_at":            cooldownErr.RetryAt.Unix(),
+			})
+		}
 		return textResult(err.Error()), nil, nil
 	}
 

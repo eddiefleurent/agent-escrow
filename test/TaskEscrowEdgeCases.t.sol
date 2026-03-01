@@ -129,6 +129,7 @@ contract TaskEscrowEdgeCasesTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -205,6 +206,7 @@ contract TaskEscrowEdgeCasesTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -235,6 +237,7 @@ contract TaskEscrowEdgeCasesTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -265,6 +268,7 @@ contract TaskEscrowEdgeCasesTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -295,6 +299,7 @@ contract TaskEscrowEdgeCasesTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -325,6 +330,7 @@ contract TaskEscrowEdgeCasesTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -355,6 +361,7 @@ contract TaskEscrowEdgeCasesTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -483,6 +490,7 @@ contract TaskEscrowEdgeCasesTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );

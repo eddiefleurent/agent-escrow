@@ -332,6 +332,124 @@ func TestChainLogIdempotent(t *testing.T) {
 	}
 }
 
+func TestRecordReputationOutcome_DeduplicatesAndUpdatesRaw(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	ev := &ReputationEvent{
+		Address:     "0xworker",
+		Role:        "worker",
+		Outcome:     "completed",
+		TxHash:      "0xtx1",
+		LogIndex:    0,
+		BlockNumber: 1,
+	}
+	if err := db.RecordReputationOutcome(ctx, ev); err != nil {
+		t.Fatalf("record reputation outcome: %v", err)
+	}
+	if err := db.RecordReputationOutcome(ctx, ev); err != nil {
+		t.Fatalf("record duplicate reputation outcome: %v", err)
+	}
+
+	rep, err := db.GetReputation(ctx, "0xworker", "worker")
+	if err != nil {
+		t.Fatalf("get reputation: %v", err)
+	}
+	if rep.Completed != 1 || rep.Disputed != 0 || rep.Failed != 0 {
+		t.Fatalf("unexpected raw counters: %+v", rep)
+	}
+
+	events, err := db.ListReputationEvents(ctx, "0xworker", "worker")
+	if err != nil {
+		t.Fatalf("list reputation events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected exactly 1 unique reputation event, got %d", len(events))
+	}
+}
+
+func TestGetReputationView_Damped(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	records := []*ReputationEvent{
+		{Address: "0xworker", Role: "worker", Outcome: "completed", TxHash: "0xtx-a", LogIndex: 0, BlockNumber: 1},
+		{Address: "0xworker", Role: "worker", Outcome: "disputed", TxHash: "0xtx-b", LogIndex: 0, BlockNumber: 2},
+		{Address: "0xworker", Role: "worker", Outcome: "completed", TxHash: "0xtx-c", LogIndex: 0, BlockNumber: 3},
+	}
+	for _, rec := range records {
+		if err := db.RecordReputationOutcome(ctx, rec); err != nil {
+			t.Fatalf("record reputation outcome: %v", err)
+		}
+	}
+
+	view, err := db.GetReputationView(ctx, "0xworker", "worker", 0.5)
+	if err != nil {
+		t.Fatalf("get reputation view: %v", err)
+	}
+	if view.Completed != 2 || view.Disputed != 1 || view.Failed != 0 {
+		t.Fatalf("unexpected raw view counters: %+v", view)
+	}
+	// Outcomes [completed, disputed, completed] with factor 0.5:
+	// completed = 0.25 + 1.0 = 1.25, disputed = 0.5, failed = 0.
+	if view.Damped.Completed < 1.249 || view.Damped.Completed > 1.251 {
+		t.Fatalf("unexpected damped completed: %f", view.Damped.Completed)
+	}
+	if view.Damped.Disputed < 0.499 || view.Damped.Disputed > 0.501 {
+		t.Fatalf("unexpected damped disputed: %f", view.Damped.Disputed)
+	}
+	if view.Damped.Failed != 0 {
+		t.Fatalf("expected damped failed to be 0, got %f", view.Damped.Failed)
+	}
+}
+
+func TestGetLatestRFQByParentEscrow(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	task, err := db.CreateTask(ctx, "Parent", "", "0xparent")
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	parent, err := db.CreateEscrow(ctx, &Escrow{
+		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xf", EscrowAddress: "0xe-parent",
+		EscrowID: 1, Buyer: "0xb", Worker: "0xw", Verifier: "0xv", Arbitrator: "0xa",
+		Amount: "100", Status: "created", SubmissionDeadline: 1700000000, ReviewPeriodSeconds: 60, DisputePeriodSeconds: 60, ArbitratorTimeoutSeconds: 60,
+	})
+	if err != nil {
+		t.Fatalf("create parent escrow: %v", err)
+	}
+
+	first, err := db.CreateRFQ(ctx, &RFQ{
+		Title: "rfq-1", Description: "desc", SpecHash: "0x1", Buyer: "0xbuyer", Token: "", BudgetMin: "10", BudgetMax: "20",
+		Deadline: 1800000000, ReviewPeriodSeconds: 60, DisputePeriodSeconds: 60, ArbitratorTimeoutSeconds: 60,
+		Verifier: "0xv", Arbitrator: "0xa", WorkerStake: "0", MilestonesJSON: "[]", RequirementsJSON: "{}",
+		RequiredCredentialsJSON: "[]", BiddingMode: "sealed", CommitDeadline: 1700000100, RevealDeadline: 1700000200,
+		ServiceTier: 0, ParentEscrowID: &parent.ID, Status: "open", ExpiresAt: 1700000300,
+	})
+	if err != nil {
+		t.Fatalf("create first rfq: %v", err)
+	}
+	second, err := db.CreateRFQ(ctx, &RFQ{
+		Title: "rfq-2", Description: "desc", SpecHash: "0x2", Buyer: "0xbuyer", Token: "", BudgetMin: "10", BudgetMax: "20",
+		Deadline: 1800000001, ReviewPeriodSeconds: 60, DisputePeriodSeconds: 60, ArbitratorTimeoutSeconds: 60,
+		Verifier: "0xv", Arbitrator: "0xa", WorkerStake: "0", MilestonesJSON: "[]", RequirementsJSON: "{}",
+		RequiredCredentialsJSON: "[]", BiddingMode: "sealed", CommitDeadline: 1700000101, RevealDeadline: 1700000201,
+		ServiceTier: 0, ParentEscrowID: &parent.ID, Status: "open", ExpiresAt: 1700000301,
+	})
+	if err != nil {
+		t.Fatalf("create second rfq: %v", err)
+	}
+
+	latest, err := db.GetLatestRFQByParentEscrow(ctx, parent.ID)
+	if err != nil {
+		t.Fatalf("get latest rfq by parent: %v", err)
+	}
+	if latest.ID != second.ID {
+		t.Fatalf("expected latest RFQ id %d, got %d (first id %d)", second.ID, latest.ID, first.ID)
+	}
+}
+
 // RFQ and Bid tests
 
 func TestCreateAndGetRFQ(t *testing.T) {

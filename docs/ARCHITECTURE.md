@@ -243,7 +243,7 @@ The riskiest V4+ item is **cross-chain settlement**, which introduces bridge tru
 
 ### Contracts
 
-- **`TaskEscrowFactory`** (`src/TaskEscrowFactory.sol`) -- creates escrow instances, stores protocol-level configuration (fee basis points, treasury, pause state), and records per-address reputation outcomes (completed/disputed/failed counters for workers and buyers). Delegates `TaskEscrow` deployment to `EscrowDeployer` to stay under the EIP-170 size limit.
+- **`TaskEscrowFactory`** (`src/TaskEscrowFactory.sol`) -- creates escrow instances, stores protocol-level configuration (fee basis points, treasury, pause state), enforces parent-escrow validity for sub-delegation, applies on-chain market-stability re-delegation surcharges (step/cap/window), and records per-address reputation outcomes (completed/disputed/failed counters for workers and buyers). Delegates `TaskEscrow` deployment to `EscrowDeployer` to stay under the EIP-170 size limit.
 - **`EscrowDeployer`** (`src/EscrowDeployer.sol`) -- minimal deployer contract that creates `TaskEscrow` instances on behalf of the factory.
 - **`TaskEscrow`** (`src/TaskEscrow.sol`) -- holds escrowed ETH or ERC20, enforces the lifecycle state machine with role-gated transitions.
 
@@ -447,6 +447,7 @@ SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 | `submissions` | Worker submission records (`submission_hash`, `proof_hash`) |
 | `disputes` | Dispute and resolution records |
 | `reputation` | Per-address, per-role outcome counters (completed, disputed, failed) indexed from on-chain events |
+| `reputation_events` | Append-only outcome event log (`tx_hash` + `log_index` keyed) used to compute damped reputation overlays while preserving immutable raw counters |
 | `rfqs` | Task Request for Quote broadcasts (paper §6.1: Task_RFQ); optional `required_credentials_json` for credential-gated bidding |
 | `bids` | Signed Bid_Objects from worker agents (paper §6.1: Bid_Object); optional `stake_mandate_id` for Sybil resistance; `credentials_json` (attestation-v1 payloads), `credential_verified` when RFQ has requirements |
 | `ap2_mandates` | AP2 mandate records for gasless escrow funding via x402 facilitator |
@@ -585,7 +586,7 @@ Attestation chains implement recursive delegation verification. When an agent su
 
 ![Attestation Chain Sequence](diagrams/attestation-chain-sequence.png)
 
-**Parent-child escrow linkage.** RFQs and escrows carry an optional `parent_escrow_id` linking sub-delegated tasks to their parent. When creating a sub-delegation RFQ, the buyer must be the active worker of the parent escrow (enforced by the bidding service). Bid acceptance propagates the parent link to the newly created child escrow.
+**Parent-child escrow linkage.** RFQs and escrows carry an optional `parent_escrow_id` linking sub-delegated tasks to their parent. When creating a sub-delegation RFQ (or direct escrow with parent linkage), the buyer must be the active worker of the parent escrow (enforced by the bidding service and direct creation handlers). Bid acceptance and direct creation both propagate parent linkage into on-chain `createEscrow` as `parentEscrow`, enabling factory-level surcharge enforcement.
 
 **Completion-attestation-v1 profile.** Each attestation link is a signed message with a deterministic canonical format: `completion-attestation-v1|link_id|parent_link_id|from|to|child_escrow_id|task_spec_hash|outcome_hash|issued_at|expires_at|nonce`. The `from_address` (delegator) signs the message; verification recovers the signer via secp256k1 `Ecrecover` and checks it matches `from_address`.
 
@@ -636,7 +637,7 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 
 | Tool | Inputs | Chain Method |
 |---|---|---|
-| `create_escrow` | title, roles, verifier_panel/quorum params, amount, worker_stake, verifier_stake_per_verifier, token, deadlines, milestones, backup_worker, backup_deadline_extension, zk_verifier, circuit_id (optional) | `Factory.createEscrow` |
+| `create_escrow` | title, roles, verifier_panel/quorum params, amount, worker_stake, verifier_stake_per_verifier, token, deadlines, milestones, backup_worker, backup_deadline_extension, zk_verifier, circuit_id, parent_escrow_id (optional) | `Factory.createEscrow` |
 | `fund_escrow` | escrow_id | `Escrow.fund` |
 | `deposit_stake` | escrow_id | `Escrow.depositStake` |
 | `deposit_verifier_stake` | escrow_id | `Escrow.depositVerifierStake` |
@@ -650,14 +651,14 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 | `activate_backup` | escrow_id | `Escrow.activateBackup` |
 | `get_escrow` | escrow_id | DB read (includes milestone details) |
 | `list_escrows` | role, address, status | DB query |
-| `get_reputation` | address, role (optional) | DB read (indexed from on-chain OutcomeRecorded events) |
+| `get_reputation` | address, role (optional) | DB read: raw counters (`reputation`) + damped overlays (`reputation_events` with configurable decay factor) |
 | `mint_dct` | escrow_id, subject, operations, resources, expires_at, issuer (optional), caller | Off-chain DCT mint (authz: buyer only) |
 | `delegate_dct` | parent_token, subject, operations/resources subsets, expires_at, issuer (optional), caller | Off-chain DCT attenuation/delegation (authz: token holder only) |
 | `introspect_dct` | token | Off-chain DCT introspection (public) |
 | `revoke_dct` | token_id, reason/by (optional), caller | Off-chain DCT revoke (authz: issuer or buyer) |
 | `emergency_override_dct` | escrow_id, operation, caller_address, reason, owner | Emergency DCT override (factory owner only) |
 | `list_dct_audit` | escrow_id (optional), limit, offset | List DCT authorization audit entries |
-| `create_rfq` | title, description, buyer, budget_min/max, commit_deadline, reveal_deadline, expires_at, deadline, etc. | DB write (off-chain) |
+| `create_rfq` | title, description, buyer, budget_min/max, commit_deadline, reveal_deadline, expires_at, deadline, etc. | DB write (off-chain) with optional parent-linked re-bid cooldown gate |
 | `commit_bid` | rfq_id, bidder, commitment, nonce | DB write (off-chain) |
 | `reveal_bid` | rfq_id, bidder, nonce, salt, amount, estimated_duration, expires_at, etc. | DB write (off-chain) |
 | `list_bids` | rfq_id or bidder | DB query |
@@ -682,7 +683,7 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/v1/health` | Health check |
-| POST | `/api/v1/escrows` | Create escrow (includes `verifier_panel`, quorum params, optional `milestones`, `zk_verifier`, `circuit_id`) |
+| POST | `/api/v1/escrows` | Create escrow (includes `verifier_panel`, quorum params, optional `milestones`, `zk_verifier`, `circuit_id`, `parent_escrow_id`) |
 | GET | `/api/v1/escrows` | List (query: role, address, status) |
 | GET | `/api/v1/escrows/{id}` | Get escrow (includes milestone details if applicable) |
 | POST | `/api/v1/escrows/{id}/fund` | Fund |
@@ -699,7 +700,7 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 | POST | `/api/v1/escrows/{id}/resolve` | Resolve (body: worker_award_bps, resolution_uri, optional milestone_index) |
 | POST | `/api/v1/escrows/{id}/abort-milestones` | Abort remaining milestones (buyer only) |
 | POST | `/api/v1/escrows/{id}/activate-backup` | Activate backup worker (buyer only) |
-| GET | `/api/v1/reputation/{address}` | Get reputation (query: role) |
+| GET | `/api/v1/reputation/{address}` | Get reputation (query: role) with both raw and damped metrics |
 | POST | `/api/v1/dcts/mint` | Mint DCT (body: caller for authz) |
 | POST | `/api/v1/dcts/delegate` | Delegate DCT with strict attenuation (body: caller for authz) |
 | POST | `/api/v1/dcts/introspect` | Introspect DCT (public) |
@@ -707,7 +708,7 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 | POST | `/api/v1/dcts/emergency-override` | Emergency DCT override (factory owner only) |
 | GET | `/api/v1/dcts/audit` | List DCT authorization audit entries (query: escrow_id, limit, offset) |
 | GET | `/api/v1/escrows/{id}/dcts` | List DCTs scoped to escrow |
-| POST | `/api/v1/rfqs` | Create RFQ (Task_RFQ broadcast) |
+| POST | `/api/v1/rfqs` | Create RFQ (Task_RFQ broadcast; parent-linked requests are subject to re-bid cooldown) |
 | GET | `/api/v1/rfqs` | List RFQs (query: status, buyer) |
 | GET | `/api/v1/rfqs/{id}` | Get RFQ details with bids |
 | POST | `/api/v1/rfqs/{id}/cancel` | Cancel an open RFQ (buyer only) |

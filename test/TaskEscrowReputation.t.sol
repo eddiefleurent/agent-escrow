@@ -54,6 +54,7 @@ contract TaskEscrowReputationTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -84,6 +85,7 @@ contract TaskEscrowReputationTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -114,6 +116,7 @@ contract TaskEscrowReputationTest is Test {
                 backupDeadlineExtension: 3 days,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
             })
         );
@@ -399,6 +402,7 @@ contract TaskEscrowReputationTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: ms
             })
         );
@@ -459,6 +463,7 @@ contract TaskEscrowReputationTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: ms
             })
         );

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -465,7 +466,7 @@ func (d *DB) GetReputationByAddress(ctx context.Context, address string) ([]*Rep
 	return reps, rows.Err()
 }
 
-func (d *DB) UpsertReputation(ctx context.Context, address, role, outcome string) error {
+func upsertReputationOn(ctx context.Context, q dbExecer, address, role, outcome string) error {
 	var col string
 	switch outcome {
 	case "completed":
@@ -478,17 +479,220 @@ func (d *DB) UpsertReputation(ctx context.Context, address, role, outcome string
 		return fmt.Errorf("invalid outcome: %s", outcome)
 	}
 
-	query := fmt.Sprintf( //nolint:gosec // col is from a hardcoded switch, not user input
+	query := fmt.Sprintf(
 		`INSERT INTO reputation (address, role, %s) VALUES (?, ?, 1)
 		 ON CONFLICT(address, role)
 		 DO UPDATE SET %s = %s + 1, updated_at = datetime('now')`,
 		col, col, col,
 	)
-	_, err := d.db.ExecContext(ctx, query, address, role)
+	_, err := q.ExecContext(ctx, query, address, role)
 	if err != nil {
 		return fmt.Errorf("upsert reputation: %w", err)
 	}
 	return nil
+}
+
+func (d *DB) UpsertReputation(ctx context.Context, address, role, outcome string) error {
+	return upsertReputationOn(ctx, d.db, address, role, outcome)
+}
+
+func validateReputationRole(role string) error {
+	switch role {
+	case "worker", "buyer":
+		return nil
+	default:
+		return fmt.Errorf("invalid role: %s", role)
+	}
+}
+
+func validateReputationOutcome(outcome string) error {
+	switch outcome {
+	case "completed", "disputed", "failed":
+		return nil
+	default:
+		return fmt.Errorf("invalid outcome: %s", outcome)
+	}
+}
+
+func insertReputationEventOn(ctx context.Context, q dbExecer, e *ReputationEvent) (bool, error) {
+	if err := validateReputationRole(e.Role); err != nil {
+		return false, err
+	}
+	if err := validateReputationOutcome(e.Outcome); err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(e.Address) == "" {
+		return false, errors.New("reputation event address is required")
+	}
+	if strings.TrimSpace(e.TxHash) == "" {
+		return false, errors.New("reputation event tx_hash is required")
+	}
+
+	occurredAt := e.OccurredAt.UTC()
+	if occurredAt.IsZero() {
+		occurredAt = time.Now().UTC()
+	}
+	address := strings.ToLower(strings.TrimSpace(e.Address))
+	txHash := strings.ToLower(strings.TrimSpace(e.TxHash))
+
+	res, err := q.ExecContext(
+		ctx,
+		`INSERT OR IGNORE INTO reputation_events
+         (address, role, outcome, tx_hash, log_index, block_number, occurred_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		address, e.Role, e.Outcome, txHash, e.LogIndex, e.BlockNumber, occurredAt.Format("2006-01-02 15:04:05"),
+	)
+	if err != nil {
+		return false, fmt.Errorf("insert reputation_event: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("reputation_event rows affected: %w", err)
+	}
+	return rows > 0, nil
+}
+
+func (d *DB) RecordReputationEvent(ctx context.Context, e *ReputationEvent) (bool, error) {
+	return insertReputationEventOn(ctx, d.db, e)
+}
+
+// RecordReputationOutcome appends an immutable event and updates raw counters
+// exactly once per unique tx/log/address/role identity.
+func (d *DB) RecordReputationOutcome(ctx context.Context, e *ReputationEvent) error {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin reputation outcome tx: %w", err)
+	}
+	inserted, err := insertReputationEventOn(ctx, tx, e)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	if inserted {
+		if err := upsertReputationOn(ctx, tx, e.Address, e.Role, e.Outcome); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("commit reputation outcome tx: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) ListReputationEvents(ctx context.Context, address, role string) ([]*ReputationEvent, error) {
+	if err := validateReputationRole(role); err != nil {
+		return nil, err
+	}
+	rows, err := d.db.QueryContext(
+		ctx,
+		`SELECT id, address, role, outcome, tx_hash, log_index, block_number, occurred_at, created_at
+         FROM reputation_events
+         WHERE address = ? AND role = ?
+         ORDER BY occurred_at ASC, id ASC`,
+		strings.ToLower(strings.TrimSpace(address)), role,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list reputation events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []*ReputationEvent
+	for rows.Next() {
+		ev := &ReputationEvent{}
+		var occurredAt, createdAt string
+		if err := rows.Scan(
+			&ev.ID, &ev.Address, &ev.Role, &ev.Outcome, &ev.TxHash, &ev.LogIndex, &ev.BlockNumber, &occurredAt, &createdAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan reputation event: %w", err)
+		}
+		ev.OccurredAt, err = parseSQLiteTime(occurredAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse reputation event occurred_at: %w", err)
+		}
+		ev.CreatedAt, err = parseSQLiteTime(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse reputation event created_at: %w", err)
+		}
+		events = append(events, ev)
+	}
+	return events, rows.Err()
+}
+
+func computeDampedCounts(outcomes []string, dampingFactor float64) DampedReputation {
+	var damped DampedReputation
+	if dampingFactor <= 0 || len(outcomes) == 0 {
+		return damped
+	}
+	n := len(outcomes)
+	for i, outcome := range outcomes {
+		weight := math.Pow(dampingFactor, float64(n-1-i))
+		switch outcome {
+		case "completed":
+			damped.Completed += weight
+		case "disputed":
+			damped.Disputed += weight
+		case "failed":
+			damped.Failed += weight
+		}
+	}
+	return damped
+}
+
+func (d *DB) GetReputationView(ctx context.Context, address, role string, dampingFactor float64) (*ReputationView, error) {
+	if err := validateReputationRole(role); err != nil {
+		return nil, err
+	}
+	if dampingFactor <= 0 || dampingFactor > 1 {
+		return nil, fmt.Errorf("invalid damping factor %.6f: must be > 0 and <= 1", dampingFactor)
+	}
+
+	address = strings.ToLower(strings.TrimSpace(address))
+	view := &ReputationView{
+		Address: address,
+		Role:    role,
+	}
+
+	rep, err := d.GetReputation(ctx, address, role)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+	} else {
+		view.Completed = rep.Completed
+		view.Disputed = rep.Disputed
+		view.Failed = rep.Failed
+		view.UpdatedAt = rep.UpdatedAt
+	}
+	view.Raw = ReputationCounts{
+		Completed: view.Completed,
+		Disputed:  view.Disputed,
+		Failed:    view.Failed,
+	}
+
+	events, err := d.ListReputationEvents(ctx, address, role)
+	if err != nil {
+		return nil, err
+	}
+	outcomes := make([]string, 0, len(events))
+	for _, ev := range events {
+		outcomes = append(outcomes, ev.Outcome)
+	}
+	view.Damped = computeDampedCounts(outcomes, dampingFactor)
+	return view, nil
+}
+
+func (d *DB) GetReputationViewsByAddress(ctx context.Context, address string, dampingFactor float64) ([]*ReputationView, error) {
+	workerView, err := d.GetReputationView(ctx, address, "worker", dampingFactor)
+	if err != nil {
+		return nil, err
+	}
+	buyerView, err := d.GetReputationView(ctx, address, "buyer", dampingFactor)
+	if err != nil {
+		return nil, err
+	}
+	return []*ReputationView{workerView, buyerView}, nil
 }
 
 func (d *DB) ListReputations(ctx context.Context, minCompleted int) ([]*Reputation, error) {
@@ -584,6 +788,19 @@ func (d *DB) GetRFQ(ctx context.Context, id int64) (*RFQ, error) {
 	r, err := scanRFQ(row)
 	if err != nil {
 		return nil, fmt.Errorf("get rfq: %w", err)
+	}
+	return r, nil
+}
+
+func (d *DB) GetLatestRFQByParentEscrow(ctx context.Context, parentEscrowID int64) (*RFQ, error) {
+	row := d.db.QueryRowContext(
+		ctx,
+		`SELECT `+rfqColumns+` FROM rfqs WHERE parent_escrow_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+		parentEscrowID,
+	)
+	r, err := scanRFQ(row)
+	if err != nil {
+		return nil, fmt.Errorf("get latest rfq by parent escrow: %w", err)
 	}
 	return r, nil
 }

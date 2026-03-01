@@ -84,6 +84,7 @@ type createEscrowRequest struct {
 	BackupDeadlineExtension  string             `json:"backup_deadline_extension,omitempty"`
 	ZKVerifier               string             `json:"zk_verifier,omitempty"`
 	CircuitID                string             `json:"circuit_id,omitempty"`
+	ParentEscrowID           *int64             `json:"parent_escrow_id,omitempty"`
 }
 
 func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
@@ -281,6 +282,30 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		serviceTier = 1
 	}
 
+	var parentEscrowAddr common.Address
+	if req.ParentEscrowID != nil {
+		parentEscrow, err := h.db.GetEscrow(r.Context(), *req.ParentEscrowID)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid parent_escrow_id: %v", err)})
+			return
+		}
+		if !common.IsHexAddress(parentEscrow.EscrowAddress) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("parent escrow %d has invalid on-chain address", *req.ParentEscrowID)})
+			return
+		}
+		activeWorker := parentEscrow.ActiveWorker
+		if activeWorker == "" {
+			activeWorker = parentEscrow.Worker
+		}
+		if !strings.EqualFold(common.HexToAddress(req.Buyer).Hex(), common.HexToAddress(activeWorker).Hex()) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("sub-delegation buyer (%s) must be active worker of parent escrow %d (%s)", req.Buyer, *req.ParentEscrowID, activeWorker),
+			})
+			return
+		}
+		parentEscrowAddr = common.HexToAddress(parentEscrow.EscrowAddress)
+	}
+
 	// Validate all uint64→int64 conversions before any on-chain or DB side effects.
 	submissionDeadline, err := numconv.Uint64ToInt64(deadline, "submission_deadline")
 	if err != nil {
@@ -352,6 +377,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		BackupDeadlineExtension:  backupDeadlineExt,
 		ZKVerifier:               zkVerifier,
 		CircuitID:                circuitID,
+		ParentEscrow:             parentEscrowAddr,
 	}
 
 	tx, err := h.chain.CreateEscrow(r.Context(), factory, params)
@@ -412,6 +438,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		ServiceTier:              req.ServiceTier,
 		ZKVerifier:               zkVerifier.Hex(),
 		CircuitID:                fmt.Sprintf("0x%x", circuitID),
+		ParentEscrowID:           req.ParentEscrowID,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("db: %v", err)})
@@ -1388,37 +1415,27 @@ func (h *Handlers) GetReputation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if role != "" {
-		rep, err := h.db.GetReputation(r.Context(), addr, role)
+		view, err := h.db.GetReputationView(r.Context(), addr, role, h.cfg.ReputationDampingFactor)
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				writeJSON(w, http.StatusOK, map[string]any{
-					"address": addr, "role": role,
-					"completed": 0, "disputed": 0, "failed": 0,
-				})
-				return
-			}
 			slog.Error("GetReputation DB error", "address", addr, "role", role, "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 			return
 		}
-		writeJSON(w, http.StatusOK, rep)
+		writeJSON(w, http.StatusOK, view)
 		return
 	}
 
-	reps, err := h.db.GetReputationByAddress(r.Context(), addr)
+	views, err := h.db.GetReputationViewsByAddress(r.Context(), addr, h.cfg.ReputationDampingFactor)
 	if err != nil {
 		slog.Error("GetReputationByAddress DB error", "address", addr, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
-	if len(reps) == 0 {
-		writeJSON(w, http.StatusOK, []map[string]any{
-			{"address": addr, "role": "worker", "completed": 0, "disputed": 0, "failed": 0},
-			{"address": addr, "role": "buyer", "completed": 0, "disputed": 0, "failed": 0},
-		})
-		return
-	}
-	writeJSON(w, http.StatusOK, reps)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"address":        addr,
+		"damping_factor": h.cfg.ReputationDampingFactor,
+		"roles":          views,
+	})
 }
 
 func (h *Handlers) biddingService() *bidding.Service {
@@ -1537,6 +1554,15 @@ func (h *Handlers) CreateRFQ(w http.ResponseWriter, r *http.Request) {
 		ParentEscrowID:           req.ParentEscrowID,
 	})
 	if err != nil {
+		var cooldownErr *bidding.RebidCooldownError
+		if errors.As(err, &cooldownErr) {
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{
+				"error":               cooldownErr.Error(),
+				"retry_after_seconds": cooldownErr.RetryAfterSeconds(),
+				"retry_at":            cooldownErr.RetryAt.Unix(),
+			})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}

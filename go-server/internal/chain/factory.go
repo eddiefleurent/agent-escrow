@@ -37,6 +37,7 @@ type CreateEscrowParams struct {
 	BackupDeadlineExtension  uint64         // Seconds added to deadline when backup activates
 	ZKVerifier               common.Address // Optional zk verifier contract; address(0) disables on-chain proof checks
 	CircuitID                [32]byte       // bytes32 circuit identifier used by zkVerifier
+	ParentEscrow             common.Address // Optional parent escrow address for sub-delegation surcharge logic
 }
 
 // milestoneTuple matches the Solidity CreateMilestoneParams struct layout for ABI encoding.
@@ -69,6 +70,7 @@ type createParamsTuple struct {
 	BackupDeadlineExtension  uint64
 	ZKVerifier               common.Address
 	CircuitID                [32]byte
+	ParentEscrow             common.Address
 	Milestones               []milestoneTuple
 }
 
@@ -106,6 +108,7 @@ func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p Cre
 		BackupDeadlineExtension:  p.BackupDeadlineExtension,
 		ZKVerifier:               p.ZKVerifier,
 		CircuitID:                p.CircuitID,
+		ParentEscrow:             p.ParentEscrow,
 		Milestones:               milestones,
 	}
 	data, err := FactoryABI.Pack("createEscrow", tuple)

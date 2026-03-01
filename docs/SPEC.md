@@ -317,13 +317,16 @@ Only addresses registered via `createEscrow` can call `recordOutcome`. The facto
 
 ### Scope and Limitations
 
-V2 records raw outcome counts only. The paper warns that naive implementations are susceptible to gaming (e.g., inflating reputation by only accepting simple, low-risk tasks). Weighted scoring, anti-gaming measures, and behavioral metrics are deferred to V3.
+Raw outcome counters remain the canonical immutable ledger on-chain. V3 adds an off-chain append-only `reputation_events` log and a configurable damping overlay for ranking/coordination, but raw counters are never rewritten.
 
 ## 9) Economic Parameters
 
 Global (factory-level):
 - `protocolFeeBps` (0-10000) -- fee for low-assurance (tier 0) escrows, snapshotted at creation to prevent governance race conditions mid-task.
 - `highAssuranceFeeBps` (0-10000) -- fee for high-assurance (tier 1) escrows, snapshotted at creation. Typically higher than `protocolFeeBps` to reflect the additional verification overhead.
+- `redelegationSurchargeStepBps` (0-10000) -- surcharge step applied to frequent parent-linked re-delegations.
+- `redelegationMaxSurchargeBps` (0-10000) -- hard cap on re-delegation surcharge.
+- `redelegationFrequencyWindowSeconds` -- frequency window used to detect rapid parent-linked re-delegation streaks.
 - `treasury` address -- snapshotted at creation.
 - `complexityFloor` -- minimum escrow amount (in wei or smallest token unit) to justify delegation overhead. Owner-settable via `setComplexityFloor`. `0` means disabled (no minimum). Checked against `p.amount` (total escrow amount) at `createEscrow` time. Rationale (paper §4.3): below a certain complexity floor, transaction costs (gas + protocol fee) exceed the value of the task, rendering delegation infeasible.
 
@@ -331,6 +334,7 @@ Per-escrow:
 - `amount` -- total escrow amount (ETH or ERC20). For milestone escrows, equals sum of all milestone amounts.
 - `serviceTier` -- `0` (low-assurance / optimistic) or `1` (high-assurance / verified). Immutable after creation. Determines which fee is snapshotted and whether buyer-only approval is permitted (see §9a).
 - `workerStake` -- anti-Sybil bond (paper §4.8). `0` means no stake required.
+- `parentEscrow` -- optional parent escrow contract address for sub-delegation linkage. Must be a registered factory escrow when set.
 - `submissionDeadline` -- unix timestamp (single-shot) or per-milestone deadlines.
 - `reviewPeriodSeconds` -- window for approval/rejection after submission.
 - `disputePeriodSeconds` -- window for buyer dispute after review period.
@@ -349,11 +353,21 @@ Two service tiers ensure safety does not become a luxury good:
 | 0 | Low-assurance (optimistic) | `protocolFeeBps` | Buyer **or** verifier quorum can approve |
 | 1 | High-assurance (verified) | `highAssuranceFeeBps` | Verifier quorum **only** can approve; `approveByBuyer` / `approveMilestoneByBuyer` revert with `HighAssuranceRequiresVerifier()` |
 
-**Fee snapshot**: at `createEscrow` time, the factory reads `highAssuranceFeeBps` or `protocolFeeBps` depending on `serviceTier` and writes the result into the escrow's immutable `protocolFeeBpsSnapshot`. Subsequent factory fee changes do not affect existing escrows.
+**Fee snapshot**: at `createEscrow` time, the factory computes:
+
+`baseFeeBps = (serviceTier == 1) ? highAssuranceFeeBps : protocolFeeBps`
+
+`surchargeBps = min(redelegationMaxSurchargeBps, redelegationStreak * redelegationSurchargeStepBps)`
+
+`protocolFeeBpsSnapshot = baseFeeBps + surchargeBps`
+
+The surcharge path is active only for parent-linked escrows (`parentEscrow != address(0)`), where streaks are tracked per parent escrow within `redelegationFrequencyWindowSeconds`. Subsequent factory fee changes do not affect existing escrows.
 
 **Invariants**:
 - `serviceTier` is immutable (set in constructor, stored as `uint8`).
 - `createEscrow` reverts with `InvalidServiceTier()` if `serviceTier > 1`.
+- Parent-linked creations (`parentEscrow != address(0)`) must reference a registered escrow or revert with `NotRegisteredEscrow()`.
+- Factory admin updates are bounded so `highAssuranceFeeBps + redelegationMaxSurchargeBps <= 10_000`, preventing fee snapshot overflow.
 - All other escrow behavior (dispute, timeout, settlement math, milestone flows, stake handling) is tier-agnostic -- only the approval gate and fee snapshot differ.
 
 ## 10) Edge Cases

@@ -45,7 +45,7 @@ POST /api/v1/escrows
 
 Required fields: `title`, `description`, `buyer`, `worker`, `verifier`, `arbitrator`, `amount`, `submission_deadline`, `review_period_seconds`, `dispute_period_seconds`, `arbitrator_timeout_seconds`
 
-Optional fields: `worker_stake`, `token`, `milestones` (array of `{amount, submission_deadline}`), `backup_worker`, `backup_deadline_extension`, `zk_verifier`, `circuit_id`
+Optional fields: `worker_stake`, `token`, `milestones` (array of `{amount, submission_deadline}`), `backup_worker`, `backup_deadline_extension`, `zk_verifier`, `circuit_id`, `parent_escrow_id` (numeric DB escrow ID for sub-delegation linkage)
 
 All numeric values are strings. Amounts in wei. Deadlines as Unix timestamps. Periods in seconds.
 
@@ -157,7 +157,9 @@ POST /api/v1/rfqs
 
 Required fields: `title`, `description`, `buyer`, `budget_min`, `budget_max`, `deadline`, `review_period_seconds`, `dispute_period_seconds`, `arbitrator_timeout_seconds`, `expires_at`
 
-Optional fields: `token`, `verifier`, `arbitrator`, `worker_stake`, `milestones_json`, `requirements_json`, `required_credentials_json` (JSON array of credential requirement selectors, e.g. `[{"domain":"code-review","capabilities":["solidity"],"trusted_issuers":["0x..."]}]`), `commit_deadline`, `reveal_deadline`
+Optional fields: `token`, `verifier`, `arbitrator`, `worker_stake`, `milestones_json`, `requirements_json`, `required_credentials_json` (JSON array of credential requirement selectors, e.g. `[{"domain":"code-review","capabilities":["solidity"],"trusted_issuers":["0x..."]}]`), `commit_deadline`, `reveal_deadline`, `parent_escrow_id`
+
+When `parent_escrow_id` is set, the server enforces parent-worker ownership checks and a configurable re-bid cooldown gate. Cooldown rejections include retry timing.
 
 #### `rfq list`
 
@@ -243,6 +245,8 @@ GET /api/v1/reputation/{address}
 | Flag | Description |
 |------|-------------|
 | `--role buyer\|worker` | Filter by role |
+
+Responses include both immutable raw counters (`completed`, `disputed`, `failed`) and damped metrics under `damped` for stability-aware ranking.
 
 ---
 

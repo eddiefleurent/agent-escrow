@@ -25,6 +25,12 @@ type Config struct {
 	TxTimeout      time.Duration // Timeout for chain transaction requests (default 90s)
 	LogChunkSize   uint64        // Max block range per eth_getLogs request (default 2000)
 	StartBlock     uint64        // Block to start indexing from (0 = use defaultLookback)
+	// RebidCooldownSeconds enforces minimum delay between parent-linked RFQ creations.
+	// 0 disables the cooldown gate.
+	RebidCooldownSeconds int64
+	// ReputationDampingFactor controls exponential decay for damped reputation
+	// views derived from immutable reputation_events history. Must be > 0 and <= 1.
+	ReputationDampingFactor float64
 
 	// ComplexityFloor is the minimum escrow amount (in wei or smallest token unit)
 	// to justify delegation overhead. Used for early rejection before sending
@@ -131,6 +137,27 @@ func Load() (*Config, error) {
 		startBlock = v
 	}
 
+	rebidCooldownSeconds := int64(0)
+	if raw := os.Getenv("REBID_COOLDOWN_SECONDS"); raw != "" {
+		v, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || v < 0 {
+			return nil, errors.New("invalid REBID_COOLDOWN_SECONDS: must be a non-negative integer")
+		}
+		rebidCooldownSeconds = v
+	}
+
+	reputationDampingFactor := 0.9
+	if raw := os.Getenv("REPUTATION_DAMPING_FACTOR"); raw != "" {
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid REPUTATION_DAMPING_FACTOR: %w", err)
+		}
+		if v <= 0 || v > 1 {
+			return nil, errors.New("invalid REPUTATION_DAMPING_FACTOR: must be > 0 and <= 1")
+		}
+		reputationDampingFactor = v
+	}
+
 	complexityFloor := os.Getenv("COMPLEXITY_FLOOR")
 	if complexityFloor != "" {
 		bi := new(big.Int)
@@ -227,6 +254,8 @@ func Load() (*Config, error) {
 		TxTimeout:               txTimeout,
 		LogChunkSize:            logChunkSize,
 		StartBlock:              startBlock,
+		RebidCooldownSeconds:    rebidCooldownSeconds,
+		ReputationDampingFactor: reputationDampingFactor,
 		ComplexityFloor:         complexityFloor,
 		CDPWebhookSecret:        os.Getenv("CDP_WEBHOOK_SECRET"),
 		A2AEnabled:              a2aEnabled,
@@ -301,6 +330,14 @@ func (c *Config) Validate() ValidationResult {
 
 	if c.TxTimeout <= 0 {
 		r.Errors = append(r.Errors, "TX_TIMEOUT must be positive")
+	}
+
+	if c.RebidCooldownSeconds < 0 {
+		r.Errors = append(r.Errors, "REBID_COOLDOWN_SECONDS must be >= 0")
+	}
+
+	if c.ReputationDampingFactor <= 0 || c.ReputationDampingFactor > 1 {
+		r.Errors = append(r.Errors, "REPUTATION_DAMPING_FACTOR must be > 0 and <= 1")
 	}
 
 	if c.EventsEnabled {

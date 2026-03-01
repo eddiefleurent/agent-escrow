@@ -34,6 +34,32 @@ const (
 	commitRateLimitWindowSeconds    = 60
 )
 
+type RebidCooldownError struct {
+	ParentEscrowID int64
+	RetryAt        time.Time
+	RetryAfter     time.Duration
+}
+
+func (e *RebidCooldownError) RetryAfterSeconds() int64 {
+	seconds := int64(e.RetryAfter / time.Second)
+	if e.RetryAfter%time.Second != 0 {
+		seconds++
+	}
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
+}
+
+func (e *RebidCooldownError) Error() string {
+	return fmt.Sprintf(
+		"re-bid cooldown active for parent_escrow_id %d: retry in %d seconds (at %s)",
+		e.ParentEscrowID,
+		e.RetryAfterSeconds(),
+		e.RetryAt.UTC().Format(time.RFC3339),
+	)
+}
+
 // parseMilestonesJSON parses the milestones_json string from an RFQ or bid into chain params.
 func parseMilestonesJSON(raw string) ([]chain.MilestoneParam, error) {
 	if raw == "" || raw == "[]" {
@@ -264,6 +290,28 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 		if !strings.EqualFold(common.HexToAddress(p.Buyer).Hex(), common.HexToAddress(activeWorker).Hex()) {
 			return nil, fmt.Errorf("sub-delegation RFQ buyer (%s) must be the active worker of parent escrow %d (%s)",
 				p.Buyer, *p.ParentEscrowID, activeWorker)
+		}
+
+		cooldownSeconds := int64(0)
+		if s.Cfg != nil {
+			cooldownSeconds = s.Cfg.RebidCooldownSeconds
+		}
+		if cooldownSeconds > 0 {
+			latestRFQ, err := s.DB.GetLatestRFQByParentEscrow(ctx, *p.ParentEscrowID)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, fmt.Errorf("latest parent-linked rfq lookup failed: %w", err)
+			}
+			if err == nil {
+				retryAt := latestRFQ.CreatedAt.Add(time.Duration(cooldownSeconds) * time.Second)
+				nowUTC := time.Now().UTC()
+				if nowUTC.Before(retryAt) {
+					return nil, &RebidCooldownError{
+						ParentEscrowID: *p.ParentEscrowID,
+						RetryAt:        retryAt,
+						RetryAfter:     retryAt.Sub(nowUTC),
+					}
+				}
+			}
 		}
 	}
 
@@ -715,6 +763,18 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 	var verifierPanel [7]common.Address
 	verifierPanel[0] = common.HexToAddress(rfq.Verifier)
 
+	var parentEscrowAddr common.Address
+	if rfq.ParentEscrowID != nil {
+		parentEscrow, err := s.DB.GetEscrow(ctx, *rfq.ParentEscrowID)
+		if err != nil {
+			return nil, fmt.Errorf("parent escrow lookup failed: %w", err)
+		}
+		if !common.IsHexAddress(parentEscrow.EscrowAddress) {
+			return nil, fmt.Errorf("parent escrow %d has invalid on-chain address %q", *rfq.ParentEscrowID, parentEscrow.EscrowAddress)
+		}
+		parentEscrowAddr = common.HexToAddress(parentEscrow.EscrowAddress)
+	}
+
 	// Use bid milestones if provided, fall back to RFQ milestones.
 	milestonesRaw := bid.MilestonesJSON
 	if milestonesRaw == "" || milestonesRaw == "[]" {
@@ -759,6 +819,7 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 		ArbitratorTimeoutSeconds: arbitratorTimeoutSeconds,
 		Token:                    tokenAddr,
 		ServiceTier:              uint8(rfq.ServiceTier), //nolint:gosec // validated 0-1 at RFQ creation
+		ParentEscrow:             parentEscrowAddr,
 		Milestones:               milestones,
 	}
 

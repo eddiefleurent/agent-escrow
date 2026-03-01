@@ -201,6 +201,7 @@ contract TaskEscrowZKVerificationTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: zkVerifierAddr,
                 circuitId: circuitId,
+                parentEscrow: address(0),
                 milestones: milestones
             })
         );

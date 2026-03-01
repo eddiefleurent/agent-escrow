@@ -28,7 +28,7 @@ func clearEnv(t *testing.T) {
 		"CHAIN_ID", "DATABASE_URL", "PORT",
 		"MCP_TRANSPORT", "CORS_ORIGINS",
 		"REQUEST_TIMEOUT", "TX_TIMEOUT",
-		"COMPLEXITY_FLOOR",
+		"COMPLEXITY_FLOOR", "REBID_COOLDOWN_SECONDS", "REPUTATION_DAMPING_FACTOR",
 	} {
 		os.Unsetenv(key)
 	}
@@ -206,6 +206,12 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.TxTimeout != 90*time.Second {
 		t.Errorf("expected 90s tx timeout, got %v", cfg.TxTimeout)
 	}
+	if cfg.RebidCooldownSeconds != 0 {
+		t.Errorf("expected default rebid cooldown 0, got %d", cfg.RebidCooldownSeconds)
+	}
+	if cfg.ReputationDampingFactor != 0.9 {
+		t.Errorf("expected default damping factor 0.9, got %v", cfg.ReputationDampingFactor)
+	}
 }
 
 func TestLoad_CustomPort(t *testing.T) {
@@ -278,9 +284,10 @@ func TestLoad_CORSOrigins(t *testing.T) {
 
 func TestValidate_OfflineWarning(t *testing.T) {
 	cfg := &Config{
-		Port:           8080,
-		RequestTimeout: 10 * time.Second,
-		TxTimeout:      90 * time.Second,
+		Port:                    8080,
+		RequestTimeout:          10 * time.Second,
+		TxTimeout:               90 * time.Second,
+		ReputationDampingFactor: 0.9,
 	}
 	r := cfg.Validate()
 	if len(r.Errors) != 0 {
@@ -302,12 +309,13 @@ func TestValidate_OfflineWarning(t *testing.T) {
 
 func TestValidate_OnlineNoWarnings(t *testing.T) {
 	cfg := &Config{
-		RPCURL:         "https://sepolia.base.org",
-		PrivateKey:     validPrivateKey,
-		FactoryAddress: validFactoryAddress,
-		Port:           8080,
-		RequestTimeout: 10 * time.Second,
-		TxTimeout:      90 * time.Second,
+		RPCURL:                  "https://sepolia.base.org",
+		PrivateKey:              validPrivateKey,
+		FactoryAddress:          validFactoryAddress,
+		Port:                    8080,
+		RequestTimeout:          10 * time.Second,
+		TxTimeout:               90 * time.Second,
+		ReputationDampingFactor: 0.9,
 	}
 	r := cfg.Validate()
 	if len(r.Errors) != 0 {
@@ -320,9 +328,10 @@ func TestValidate_OnlineNoWarnings(t *testing.T) {
 
 func TestValidate_InvalidPort_Zero(t *testing.T) {
 	cfg := &Config{
-		Port:           0,
-		RequestTimeout: 10 * time.Second,
-		TxTimeout:      90 * time.Second,
+		Port:                    0,
+		RequestTimeout:          10 * time.Second,
+		TxTimeout:               90 * time.Second,
+		ReputationDampingFactor: 0.9,
 	}
 	r := cfg.Validate()
 	found := false
@@ -338,9 +347,10 @@ func TestValidate_InvalidPort_Zero(t *testing.T) {
 
 func TestValidate_InvalidPort_TooHigh(t *testing.T) {
 	cfg := &Config{
-		Port:           70000,
-		RequestTimeout: 10 * time.Second,
-		TxTimeout:      90 * time.Second,
+		Port:                    70000,
+		RequestTimeout:          10 * time.Second,
+		TxTimeout:               90 * time.Second,
+		ReputationDampingFactor: 0.9,
 	}
 	r := cfg.Validate()
 	found := false
@@ -356,9 +366,10 @@ func TestValidate_InvalidPort_TooHigh(t *testing.T) {
 
 func TestValidate_NegativeTimeout(t *testing.T) {
 	cfg := &Config{
-		Port:           8080,
-		RequestTimeout: -1 * time.Second,
-		TxTimeout:      90 * time.Second,
+		Port:                    8080,
+		RequestTimeout:          -1 * time.Second,
+		TxTimeout:               90 * time.Second,
+		ReputationDampingFactor: 0.9,
 	}
 	r := cfg.Validate()
 	found := false
@@ -374,9 +385,10 @@ func TestValidate_NegativeTimeout(t *testing.T) {
 
 func TestValidate_NegativeTxTimeout(t *testing.T) {
 	cfg := &Config{
-		Port:           8080,
-		RequestTimeout: 10 * time.Second,
-		TxTimeout:      -1 * time.Second,
+		Port:                    8080,
+		RequestTimeout:          10 * time.Second,
+		TxTimeout:               -1 * time.Second,
+		ReputationDampingFactor: 0.9,
 	}
 	r := cfg.Validate()
 	found := false
@@ -392,12 +404,13 @@ func TestValidate_NegativeTxTimeout(t *testing.T) {
 
 func TestValidate_PrivateKeyWithout0xPrefix(t *testing.T) {
 	cfg := &Config{
-		RPCURL:         "https://sepolia.base.org",
-		PrivateKey:     deterministicTestKey("agent-escrow-test-key")[2:],
-		FactoryAddress: validFactoryAddress,
-		Port:           8080,
-		RequestTimeout: 10 * time.Second,
-		TxTimeout:      90 * time.Second,
+		RPCURL:                  "https://sepolia.base.org",
+		PrivateKey:              deterministicTestKey("agent-escrow-test-key")[2:],
+		FactoryAddress:          validFactoryAddress,
+		Port:                    8080,
+		RequestTimeout:          10 * time.Second,
+		TxTimeout:               90 * time.Second,
+		ReputationDampingFactor: 0.9,
 	}
 	r := cfg.Validate()
 	if len(r.Errors) != 0 {
@@ -561,5 +574,57 @@ func TestLoad_ComplexityFloor_Negative(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "COMPLEXITY_FLOOR") {
 		t.Errorf("expected error mentioning COMPLEXITY_FLOOR, got: %v", err)
+	}
+}
+
+func TestLoad_RebidCooldownSeconds_Valid(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("REBID_COOLDOWN_SECONDS", "120")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.RebidCooldownSeconds != 120 {
+		t.Fatalf("expected REBID_COOLDOWN_SECONDS=120, got %d", cfg.RebidCooldownSeconds)
+	}
+}
+
+func TestLoad_RebidCooldownSeconds_Invalid(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("REBID_COOLDOWN_SECONDS", "-5")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid REBID_COOLDOWN_SECONDS")
+	}
+	if !strings.Contains(err.Error(), "REBID_COOLDOWN_SECONDS") {
+		t.Fatalf("expected REBID_COOLDOWN_SECONDS error, got: %v", err)
+	}
+}
+
+func TestLoad_ReputationDampingFactor_Valid(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("REPUTATION_DAMPING_FACTOR", "0.75")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ReputationDampingFactor != 0.75 {
+		t.Fatalf("expected REPUTATION_DAMPING_FACTOR=0.75, got %v", cfg.ReputationDampingFactor)
+	}
+}
+
+func TestLoad_ReputationDampingFactor_Invalid(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("REPUTATION_DAMPING_FACTOR", "1.5")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid REPUTATION_DAMPING_FACTOR")
+	}
+	if !strings.Contains(err.Error(), "REPUTATION_DAMPING_FACTOR") {
+		t.Fatalf("expected REPUTATION_DAMPING_FACTOR error, got: %v", err)
 	}
 }

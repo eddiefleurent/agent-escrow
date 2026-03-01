@@ -68,6 +68,7 @@ contract TaskEscrowMilestoneTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: _milestoneParams3()
             })
         );
@@ -376,6 +377,7 @@ contract TaskEscrowMilestoneTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: ms
             })
         );
@@ -496,6 +498,7 @@ contract TaskEscrowMilestoneTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: ms
             })
         );
@@ -533,6 +536,7 @@ contract TaskEscrowMilestoneTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: ms
             })
         );
@@ -571,6 +575,7 @@ contract TaskEscrowMilestoneTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: ms
             })
         );
@@ -645,6 +650,7 @@ contract TaskEscrowMilestoneTest is Test {
                 backupDeadlineExtension: 0,
                 zkVerifier: address(0),
                 circuitId: bytes32(0),
+                parentEscrow: address(0),
                 milestones: ms
             })
         );

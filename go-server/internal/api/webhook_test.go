@@ -42,11 +42,12 @@ func setupWebhookTest(t *testing.T) *webhookTestEnv {
 
 	mock := chain.NewMockClient()
 	cfg := &config.Config{
-		ChainID:          84532,
-		FactoryAddress:   "0x0000000000000000000000000000000000000F01",
-		RequestTimeout:   10 * time.Second,
-		TxTimeout:        90 * time.Second,
-		CDPWebhookSecret: testWebhookSecret,
+		ChainID:                 84532,
+		FactoryAddress:          "0x0000000000000000000000000000000000000F01",
+		RequestTimeout:          10 * time.Second,
+		TxTimeout:               90 * time.Second,
+		CDPWebhookSecret:        testWebhookSecret,
+		ReputationDampingFactor: 0.9,
 	}
 
 	idx := indexer.New(db, mock, cfg.FactoryAddress)
@@ -285,6 +286,18 @@ func TestWebhook_OutcomeRecorded_Processed(t *testing.T) {
 	}
 	if rep.Completed != 1 {
 		t.Fatalf("expected 1 completed, got %d", rep.Completed)
+	}
+
+	events, err := env.db.ListReputationEvents(
+		context.Background(),
+		strings.ToLower("0x1000000000000000000000000000000000000001"),
+		"worker",
+	)
+	if err != nil {
+		t.Fatalf("list reputation events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 reputation event, got %d", len(events))
 	}
 }
 
