@@ -48,6 +48,13 @@ Server -> Chain: Escrow.fund()
 
 == Phase 2: Sub-delegation (B delegates to C) ==
 
+opt B uses contract-first decomposition for the child task
+  B -> Server: create_decomposition(sub_task_tree)
+  Server -> DB: validate leaf verification types\n+ attach market context signals
+  B -> Server: finalize_decomposition(decomposition_id)
+  Server -> DB: create leaf RFQs from valid decomposition
+end
+
 B -> Server: create_rfq(sub_task,\n  parent_escrow_id=E1)
 note right of Server
   Validates: B must be active

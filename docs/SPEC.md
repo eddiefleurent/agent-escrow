@@ -10,11 +10,11 @@ It does **not** duplicate information that lives authoritatively elsewhere:
 - Deployment procedures → `docs/SETUP.md`
 - Testing requirements → the test files (`test/`)
 
-Current off-chain integration surfaces (Skills + `escrow-cli`, MCP, HTTP API) do not change this contract-level specification. They are delivery interfaces for the same on-chain state machine and settlement math.
+Current off-chain integration surfaces (Skills + `escrow-cli`, MCP, HTTP API) do not change this contract-level specification. They are delivery interfaces for the same on-chain state machine and settlement math, including V3 decomposition tooling that validates task structure before any escrow/RFQ formalization.
 
 ## 2) Paper Traceability
 
-Implements ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) (Tomašev, Franklin, Osindero -- Google DeepMind, 2026). V1 implements the settlement kernel: financial accountability and bounded authority. V2 adds market primitives. Adaptive delegation intelligence is deferred to subsequent phases.
+Implements ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) (Tomašev, Franklin, Osindero -- Google DeepMind, 2026). V1 implements the settlement kernel: financial accountability and bounded authority. V2 adds market primitives. V3 adds adaptive delegation intelligence primarily off-chain (for example, decomposition and market matching), while this spec remains focused on the on-chain settlement state machine.
 
 ### Requirement Mapping
 
@@ -40,7 +40,7 @@ Implements ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) (Toma
 
 ### Explicitly Deferred
 
-- Dynamic capability lookup/matching (§4.1-4.2)
+- On-chain dynamic capability lookup/matching (§4.1-4.2) -- handled off-chain via decomposition + RFQ flow
 - Adaptive multi-agent delegation policies (§4.4 advanced)
 - Distributed reputation markets as primary trust substrate (§4.6)
 - Hybrid human/AI oversight optimization at scale (§5)

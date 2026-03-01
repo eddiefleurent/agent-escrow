@@ -19,6 +19,7 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/bidding"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/dct"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/decomposition"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/numconv"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
@@ -169,6 +170,41 @@ type acceptBidArgs struct {
 	RFQID  FlexibleString `json:"rfq_id" jsonschema:"RFQ ID"`
 	BidID  FlexibleString `json:"bid_id" jsonschema:"Bid ID to accept. WARNING: accepting a bid immediately deploys an escrow on-chain (irreversible). The next step is to fund the new escrow."`
 	Caller string         `json:"caller,omitempty" jsonschema:"Caller address (must match RFQ buyer)"`
+}
+
+type createDecompositionArgs struct {
+	Title        string `json:"title" jsonschema:"Decomposition title"`
+	Description  string `json:"description" jsonschema:"Decomposition description"`
+	Buyer        string `json:"buyer" jsonschema:"Buyer address authoring the decomposition"`
+	SpecHash     string `json:"spec_hash,omitempty" jsonschema:"Optional externally-computed spec hash"`
+	SubTasksJSON string `json:"sub_tasks_json" jsonschema:"JSON array of SubTaskInput objects"`
+}
+
+type listDecompositionsArgs struct {
+	Buyer  string `json:"buyer,omitempty" jsonschema:"Optional buyer filter"`
+	Status string `json:"status,omitempty" jsonschema:"Optional status filter: draft|valid|finalized"`
+}
+
+type getDecompositionArgs struct {
+	DecompositionID FlexibleString `json:"decomposition_id" jsonschema:"Decomposition ID"`
+}
+
+type finalizeDecompositionArgs struct {
+	DecompositionID          FlexibleString `json:"decomposition_id" jsonschema:"Decomposition ID to finalize"`
+	Buyer                    string         `json:"buyer" jsonschema:"Buyer address (must match decomposition buyer)"`
+	Token                    string         `json:"token,omitempty" jsonschema:"ERC20 token address, or omit/zero address for ETH"`
+	Deadline                 FlexibleString `json:"deadline" jsonschema:"Unix timestamp submission deadline"`
+	BudgetMin                FlexibleString `json:"budget_min" jsonschema:"Minimum budget in wei or smallest token unit"`
+	BudgetMax                FlexibleString `json:"budget_max" jsonschema:"Maximum budget in wei or smallest token unit"`
+	CommitDeadline           FlexibleString `json:"commit_deadline" jsonschema:"Unix timestamp commit phase deadline"`
+	RevealDeadline           FlexibleString `json:"reveal_deadline" jsonschema:"Unix timestamp reveal phase deadline"`
+	ExpiresAt                FlexibleString `json:"expires_at" jsonschema:"Unix timestamp RFQ expiry"`
+	ReviewPeriodSeconds      FlexibleString `json:"review_period_seconds" jsonschema:"Review period in seconds"`
+	DisputePeriodSeconds     FlexibleString `json:"dispute_period_seconds" jsonschema:"Dispute period in seconds"`
+	ArbitratorTimeoutSeconds FlexibleString `json:"arbitrator_timeout_seconds" jsonschema:"Arbitrator timeout in seconds"`
+	Arbitrator               string         `json:"arbitrator,omitempty" jsonschema:"Arbitrator address"`
+	VerifierPanelJSON        string         `json:"verifier_panel_json,omitempty" jsonschema:"JSON array of verifier addresses for quorum/zk_proof leaves"`
+	QuorumCount              FlexibleString `json:"quorum_count,omitempty" jsonschema:"Verifier quorum count for quorum leaves"`
 }
 
 type reputationArgs struct {
@@ -388,6 +424,26 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Name:        "create_rfq",
 		Description: "Broadcast a Task_RFQ (Request for Quote) describing a task for agents to bid on. Supports sealed bidding with commit/reveal windows. 'deadline' is task submission deadline; 'commit_deadline' and 'reveal_deadline' define bid privacy windows. Optional 'required_credentials_json' lets buyers require signed capability attestations from bidders. Paper §6.1: Task_RFQ broadcast; §4.6 Table 3: Web of Trust.",
 	}, s.handleCreateRFQ)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "create_decomposition",
+		Description: "Create a contract-first decomposition proposal and run structural validation on leaf nodes. Returns hard blockers (issues) and informational market context per leaf.",
+	}, s.handleCreateDecomposition)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "list_decompositions",
+		Description: "List decomposition proposals, optionally filtered by buyer or status.",
+	}, s.handleListDecompositions)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "get_decomposition",
+		Description: "Get one decomposition with all nodes and current structural suggestions.",
+	}, s.handleGetDecomposition)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "finalize_decomposition",
+		Description: "Finalize a valid decomposition into RFQs. Creates one RFQ per leaf node and links rfq_id back to each node.",
+	}, s.handleFinalizeDecomposition)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "commit_bid",
@@ -1700,6 +1756,176 @@ func (s *Server) biddingService() *bidding.Service {
 		Idx:   s.idx,
 		Cfg:   s.cfg,
 	}
+}
+
+func (s *Server) handleCreateDecomposition(
+	ctx context.Context,
+	_ *mcp.CallToolRequest,
+	args createDecompositionArgs,
+) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.SubTasksJSON) == "" {
+		return textResult("sub_tasks_json is required"), nil, nil
+	}
+	var subTasks []decomposition.SubTaskInput
+	if err := json.Unmarshal([]byte(args.SubTasksJSON), &subTasks); err != nil {
+		return textResult(fmt.Sprintf("invalid sub_tasks_json: %v", err)), nil, nil
+	}
+
+	result, err := s.decompositionService().CreateDecomposition(ctx, decomposition.CreateDecompositionParams{
+		Buyer:       args.Buyer,
+		Title:       args.Title,
+		Description: args.Description,
+		SpecHash:    args.SpecHash,
+		SubTasks:    subTasks,
+	})
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
+
+	nextSteps := "If valid=false, fix structural issues and resubmit. If valid=true, review market_context and decide whether to finalize."
+	if result.Valid {
+		nextSteps = "Use finalize_decomposition to create RFQs from each leaf node."
+	}
+	return jsonResult(map[string]any{
+		"decomposition_id": result.Decomposition.ID,
+		"status":           result.Decomposition.Status,
+		"valid":            result.Valid,
+		"nodes":            result.Nodes,
+		"issues":           result.Issues,
+		"market_context":   result.MarketContext,
+		"next_steps":       nextSteps,
+	})
+}
+
+func (s *Server) handleListDecompositions(
+	ctx context.Context,
+	_ *mcp.CallToolRequest,
+	args listDecompositionsArgs,
+) (*mcp.CallToolResult, any, error) {
+	decompositions, err := s.decompositionService().ListDecompositions(ctx, args.Buyer, args.Status)
+	if err != nil {
+		return textResult(err.Error()), nil, nil
+	}
+	return jsonResult(map[string]any{
+		"decompositions": decompositions,
+		"count":          len(decompositions),
+	})
+}
+
+func (s *Server) handleGetDecomposition(
+	ctx context.Context,
+	_ *mcp.CallToolRequest,
+	args getDecompositionArgs,
+) (*mcp.CallToolResult, any, error) {
+	id, err := strconv.ParseInt(args.DecompositionID.String(), 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid decomposition_id: %v", err)), nil, nil
+	}
+	decomp, nodes, err := s.decompositionService().GetDecomposition(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return textResult("decomposition not found"), nil, nil
+		}
+		return textResult(err.Error()), nil, nil
+	}
+
+	var issues []decomposition.StructuralIssue
+	if strings.TrimSpace(decomp.ValidationErrorsJSON) != "" && json.Valid([]byte(decomp.ValidationErrorsJSON)) {
+		if unmarshalErr := json.Unmarshal([]byte(decomp.ValidationErrorsJSON), &issues); unmarshalErr != nil {
+			return textResult(fmt.Sprintf("failed to decode validation_errors_json: %v", unmarshalErr)), nil, nil
+		}
+	}
+	return jsonResult(map[string]any{
+		"decomposition": decomp,
+		"nodes":         nodes,
+		"suggestions": map[string]any{
+			"structural_issues": issues,
+		},
+	})
+}
+
+func (s *Server) handleFinalizeDecomposition(
+	ctx context.Context,
+	_ *mcp.CallToolRequest,
+	args finalizeDecompositionArgs,
+) (*mcp.CallToolResult, any, error) {
+	decompositionID, err := strconv.ParseInt(args.DecompositionID.String(), 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid decomposition_id: %v", err)), nil, nil
+	}
+	deadline, err := strconv.ParseInt(args.Deadline.String(), 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid deadline: %v", err)), nil, nil
+	}
+	reviewPeriodSeconds, err := strconv.ParseInt(args.ReviewPeriodSeconds.String(), 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid review_period_seconds: %v", err)), nil, nil
+	}
+	disputePeriodSeconds, err := strconv.ParseInt(args.DisputePeriodSeconds.String(), 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid dispute_period_seconds: %v", err)), nil, nil
+	}
+	arbitratorTimeoutSeconds, err := strconv.ParseInt(args.ArbitratorTimeoutSeconds.String(), 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid arbitrator_timeout_seconds: %v", err)), nil, nil
+	}
+	commitDeadline, err := strconv.ParseInt(args.CommitDeadline.String(), 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid commit_deadline: %v", err)), nil, nil
+	}
+	revealDeadline, err := strconv.ParseInt(args.RevealDeadline.String(), 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid reveal_deadline: %v", err)), nil, nil
+	}
+	expiresAt, err := strconv.ParseInt(args.ExpiresAt.String(), 10, 64)
+	if err != nil {
+		return textResult(fmt.Sprintf("invalid expires_at: %v", err)), nil, nil
+	}
+	quorumCount := 0
+	if args.QuorumCount.String() != "" {
+		quorumCount, err = strconv.Atoi(args.QuorumCount.String())
+		if err != nil {
+			return textResult(fmt.Sprintf("invalid quorum_count: %v", err)), nil, nil
+		}
+	}
+
+	verifierPanel := []string{}
+	if strings.TrimSpace(args.VerifierPanelJSON) != "" {
+		if err := json.Unmarshal([]byte(args.VerifierPanelJSON), &verifierPanel); err != nil {
+			return textResult(fmt.Sprintf("invalid verifier_panel_json: %v", err)), nil, nil
+		}
+	}
+
+	decomp, rfqIDs, err := s.decompositionService().FinalizeDecomposition(ctx, decomposition.FinalizeParams{
+		DecompositionID:          decompositionID,
+		Buyer:                    args.Buyer,
+		Token:                    args.Token,
+		Deadline:                 deadline,
+		ReviewPeriodSeconds:      reviewPeriodSeconds,
+		DisputePeriodSeconds:     disputePeriodSeconds,
+		ArbitratorTimeoutSeconds: arbitratorTimeoutSeconds,
+		Arbitrator:               args.Arbitrator,
+		VerifierPanel:            verifierPanel,
+		QuorumCount:              quorumCount,
+		BudgetMin:                args.BudgetMin.String(),
+		BudgetMax:                args.BudgetMax.String(),
+		CommitDeadline:           commitDeadline,
+		RevealDeadline:           revealDeadline,
+		ExpiresAt:                expiresAt,
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return textResult("decomposition not found"), nil, nil
+		}
+		return textResult(err.Error()), nil, nil
+	}
+	return jsonResult(map[string]any{
+		"decomposition_id": decomp.ID,
+		"status":           decomp.Status,
+		"rfq_ids":          rfqIDs,
+		"rfq_count":        len(rfqIDs),
+		"next_steps":       "Workers can now discover and bid on the generated RFQs.",
+	})
 }
 
 func (s *Server) handleCreateRFQ(ctx context.Context, req *mcp.CallToolRequest, args createRFQArgs) (*mcp.CallToolResult, any, error) {

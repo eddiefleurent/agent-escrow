@@ -114,6 +114,7 @@ type CreateRFQParams struct {
 	RequiredCredentialsJSON  string
 	RequiredProofProtocol    string
 	ServiceTier              int // 0 = low_assurance (default), 1 = high_assurance (paper §5.3)
+	BiddingMode              string
 	CommitDeadline           int64
 	RevealDeadline           int64
 	ExpiresAt                int64
@@ -202,6 +203,13 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 		if !common.IsHexAddress(p.Token) {
 			return nil, errors.New("invalid token address")
 		}
+	}
+	biddingMode := strings.TrimSpace(p.BiddingMode)
+	if biddingMode == "" {
+		biddingMode = "sealed"
+	}
+	if biddingMode != "sealed" && biddingMode != "open" {
+		return nil, errors.New("invalid bidding_mode: must be 'sealed' or 'open'")
 	}
 
 	if p.Verifier != "" && !common.IsHexAddress(p.Verifier) {
@@ -318,7 +326,7 @@ func (s *Service) CreateRFQ(ctx context.Context, p CreateRFQParams) (*storage.RF
 		MilestonesJSON:           p.MilestonesJSON,
 		RequirementsJSON:         p.RequirementsJSON,
 		RequiredCredentialsJSON:  p.RequiredCredentialsJSON,
-		BiddingMode:              "sealed",
+		BiddingMode:              biddingMode,
 		CommitDeadline:           p.CommitDeadline,
 		RevealDeadline:           p.RevealDeadline,
 		ServiceTier:              p.ServiceTier,

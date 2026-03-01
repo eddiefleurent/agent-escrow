@@ -34,6 +34,13 @@ state Cancelled #E0E0E0 ##9E9E9E
 
 [*] --> Created
 
+note left of Created
+  Contract-first decomposition (V3)
+  is off-chain planning/validation
+  before createEscrow(). It does
+  not change this on-chain state machine.
+end note
+
 Created --> Funded : fund() / fundWithAuthorization()
 Created --> Cancelled : cancel()
 
