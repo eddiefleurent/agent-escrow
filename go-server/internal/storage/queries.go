@@ -1241,7 +1241,7 @@ func (d *DB) ListDecompositions(ctx context.Context, buyer, status string) ([]*D
 	return out, rows.Err()
 }
 
-const decompositionNodeColumns = `id, decomposition_id, parent_node_id, title, description, verification_type, verification_details_json, depth, requires_further_decomposition, rfq_id, created_at`
+const decompositionNodeColumns = `id, decomposition_id, parent_node_id, title, description, verification_type, delegate_preference, verification_details_json, depth, requires_further_decomposition, rfq_id, created_at`
 
 func scanDecompositionNode(scanner interface{ Scan(...any) error }) (*DecompositionNode, error) {
 	n := &DecompositionNode{}
@@ -1256,6 +1256,7 @@ func scanDecompositionNode(scanner interface{ Scan(...any) error }) (*Decomposit
 		&n.Title,
 		&n.Description,
 		&n.VerificationType,
+		&n.DelegatePreference,
 		&n.VerificationDetailsJSON,
 		&n.Depth,
 		&requiresFurtherInt,
@@ -1292,13 +1293,14 @@ func createDecompositionNodeOn(ctx context.Context, q dbExecer, node *Decomposit
 	res, err := q.ExecContext(
 		ctx,
 		`INSERT INTO decomposition_nodes
-         (decomposition_id, parent_node_id, title, description, verification_type, verification_details_json, depth, requires_further_decomposition, rfq_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (decomposition_id, parent_node_id, title, description, verification_type, delegate_preference, verification_details_json, depth, requires_further_decomposition, rfq_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		node.DecompositionID,
 		node.ParentNodeID,
 		node.Title,
 		node.Description,
 		node.VerificationType,
+		node.DelegatePreference,
 		verificationDetailsJSON,
 		node.Depth,
 		boolToInt(node.RequiresFurtherDecomposition),

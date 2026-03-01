@@ -184,7 +184,8 @@ type DecompositionNode struct {
 	ParentNodeID                 *int64    `json:"parent_node_id,omitempty"`
 	Title                        string    `json:"title"`
 	Description                  string    `json:"description"`
-	VerificationType             string    `json:"verification_type"` // optimistic|quorum|zk_proof|unit_test
+	VerificationType             string    `json:"verification_type"`             // optimistic|quorum|zk_proof|unit_test
+	DelegatePreference           string    `json:"delegate_preference,omitempty"` // human|ai|any|""
 	VerificationDetailsJSON      string    `json:"verification_details_json"`
 	Depth                        int       `json:"depth"`
 	RequiresFurtherDecomposition bool      `json:"requires_further_decomposition"`

@@ -112,7 +112,7 @@ Full marketplace intelligence and the paper's advanced coordination mechanisms.
 18. **ZK verification slot** ✓ -- `proofHash` commitment support on `submit` and `submitMilestone`; optional escrow-level verifier wiring (`zkVerifier`, `circuitId`) at creation; on-chain `verifyAndApprove` / `verifyAndApproveMilestone` that enforce proof hash matching and call a dedicated verifier contract (e.g. groth16 verifier) for high-assurance automated settlement; end-to-end propagation through Solidity events, Go chain bindings, indexer decoding, SQLite schema (`proof_hash`, `zk_verifier`, `circuit_id`), MCP (`submit_work.proof_hash`, `verify_and_approve`), and HTTP API (`submit.proof_hash`, `POST /api/v1/escrows/{id}/verify-approve`) (paper §4.8: cryptographic verification for trustless automated verification)
 19. **Multi-verifier quorum** ✓ -- single-verifier role replaced with `verifierPanel` + quorum thresholds (max 7), verifier stake deposit + Schelling majority/minority settlement, ZK verification integrated as one quorum vote, and non-quorum-cycle verifier stake unwinding to prevent locked verifier funds; propagated through Solidity contracts, tests, Go chain/storage/indexer, MCP tools, HTTP API, CLI, and diagrams (paper §4.8: game-theoretic verification consensus)
 20. **Market stability mechanisms** ✓ -- parent-linked re-delegation fee surcharges enforced on-chain (`TaskEscrowFactory` policy with step/cap/window and fee snapshot events), re-bid cooldown gate for parent-linked RFQs, and dual raw + damped reputation outputs (append-only `reputation_events` + configurable damping factor) exposed across HTTP API, MCP tools, and CLI docs (paper §4.4: prevent oscillation and cascading re-allocations)
-21. **Contract-first decomposition tooling** ✓ -- decomposition planning and validation flow across MCP tools, HTTP API, and `escrow-cli`; structural validation for leaf-node verifiability (`optimistic`, `quorum`, `zk_proof`, `unit_test`), per-leaf market context signals (`proven`/`emerging`/`untested`) that inform but do not gate, and decomposition finalization that creates RFQs with verification-type-aware service tiers and bidding modes (paper §4.1: decompose until units match formal proofs or automated tests)
+21. **Contract-first decomposition tooling** ✓ -- decomposition planning and validation flow across MCP tools, HTTP API, and `escrow-cli`; structural validation for leaf-node verifiability (`optimistic`, `quorum`, `zk_proof`, `unit_test`), per-leaf market context signals (`proven`/`emerging`/`untested`) that inform but do not gate, optional leaf-level `delegate_preference` metadata (`human`/`ai`/`any`) to explicitly mark hybrid human/AI allocation intent without hard gating, and decomposition finalization that creates RFQs with verification-type-aware service tiers and bidding modes (paper §4.1: decompose until units match formal proofs or automated tests)
 22. **UCP fulfillment provider** -- expose escrow lifecycle as UCP-compatible fulfillment backend for commercial agent transactions (paper §6: UCP architecture extension for abstract computational tasks)
 
 ### V4 -- Ethical Safeguards and Ecosystem Maturity
@@ -140,7 +140,7 @@ How each version maps to the five pillars from ["Intelligent AI Delegation"](htt
 
 **V2**: Task_RFQ broadcast + Bid_Object schema (paper §6.1). Factory becomes backend for accepted bids. A2A agent card integration for capability discovery. Complexity floor parameter.
 
-**V3**: Contract-first decomposition tooling -- recursive task decomposition until leaf sub-tasks are structurally verifiable (formal proofs, quorum, automated tests, or optimistic review), with market-depth context surfaced for caller judgment and finalize-time RFQ generation for market assignment.
+**V3**: Contract-first decomposition tooling -- recursive task decomposition until leaf sub-tasks are structurally verifiable (formal proofs, quorum, automated tests, or optimistic review), with market-depth context surfaced for caller judgment, advisory per-leaf human/AI delegate preference signaling, and finalize-time RFQ generation for market assignment.
 
 ### Pillar 2: Adaptive Execution (Section 4.4)
 
@@ -194,9 +194,9 @@ How each version maps to the five pillars from ["Intelligent AI Delegation"](htt
 
 **V2**: Structured dispute resolution with human-compatible interfaces (MCP + HTTP dual surface).
 
-**V3**: Tiered service levels ensure minimum viable reliability for all participants. Cognitive friction calibration with context-aware intensity.
+**V3**: Tiered service levels ensure minimum viable reliability for all participants. Contract-first decomposition adds advisory leaf-level human/AI allocation intent metadata for hybrid market planning.
 
-**V4**: Curriculum-aware task routing for human skill preservation. Liability firebreaks in long chains. Insurance/liability frameworks. Governance-enforced safety floors.
+**V4**: Curriculum-aware task routing for human skill preservation. Cognitive friction calibration with context-aware intensity. Liability firebreaks in long chains. Insurance/liability frameworks. Governance-enforced safety floors.
 
 ### Protocol Integration (Section 6)
 
