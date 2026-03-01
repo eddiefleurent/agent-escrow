@@ -442,7 +442,7 @@ func (d *DB) GetReputation(ctx context.Context, address, role string) (*Reputati
 func (d *DB) GetReputationByAddress(ctx context.Context, address string) ([]*Reputation, error) {
 	rows, err := d.db.QueryContext(ctx,
 		`SELECT id, address, role, completed, disputed, failed, updated_at FROM reputation WHERE address = ?`,
-		address,
+		strings.ToLower(strings.TrimSpace(address)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get reputation by address: %w", err)

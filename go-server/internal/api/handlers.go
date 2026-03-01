@@ -289,7 +289,8 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid parent_escrow_id: %v", err)})
 			return
 		}
-		if !isValidAddress(parentEscrow.EscrowAddress) {
+		parsedParent := common.HexToAddress(parentEscrow.EscrowAddress)
+		if !common.IsHexAddress(parentEscrow.EscrowAddress) || parsedParent == (common.Address{}) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("parent escrow %d has invalid on-chain address", *req.ParentEscrowID)})
 			return
 		}
@@ -307,7 +308,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		parentEscrowAddr = common.HexToAddress(parentEscrow.EscrowAddress)
+		parentEscrowAddr = parsedParent
 	}
 
 	// Validate all uint64→int64 conversions before any on-chain or DB side effects.
@@ -1560,10 +1561,11 @@ func (h *Handlers) CreateRFQ(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var cooldownErr *bidding.RebidCooldownError
 		if errors.As(err, &cooldownErr) {
-			w.Header().Set("Retry-After", strconv.FormatInt(cooldownErr.RetryAfterSeconds(), 10))
+			retrySecs := cooldownErr.RetryAfterSeconds()
+			w.Header().Set("Retry-After", strconv.FormatInt(retrySecs, 10))
 			writeJSON(w, http.StatusTooManyRequests, map[string]any{
 				"error":               cooldownErr.Error(),
-				"retry_after_seconds": cooldownErr.RetryAfterSeconds(),
+				"retry_after_seconds": retrySecs,
 				"retry_at":            cooldownErr.RetryAt.Unix(),
 			})
 			return
