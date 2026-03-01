@@ -579,7 +579,6 @@ func (d *DB) RecordReputationOutcome(ctx context.Context, e *ReputationEvent) er
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		tx.Rollback()
 		return fmt.Errorf("commit reputation outcome tx: %w", err)
 	}
 	return nil
