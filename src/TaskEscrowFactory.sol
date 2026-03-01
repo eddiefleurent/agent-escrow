@@ -442,6 +442,10 @@ contract TaskEscrowFactory {
             return (0, 0);
         }
 
+        if (redelegationSurchargeStepBps == 0 || redelegationMaxSurchargeBps == 0) {
+            return (0, 0);
+        }
+
         RedelegationFeeState storage state = redelegationFeeState[parentEscrow];
         bool isFrequent = state.lastRedelegationAt != 0 && redelegationFrequencyWindowSeconds > 0
             && block.timestamp <= uint256(state.lastRedelegationAt) + uint256(redelegationFrequencyWindowSeconds);
@@ -456,10 +460,6 @@ contract TaskEscrowFactory {
 
         state.lastRedelegationAt = uint64(block.timestamp);
         state.streak = streak;
-
-        if (redelegationSurchargeStepBps == 0 || redelegationMaxSurchargeBps == 0) {
-            return (0, streak);
-        }
 
         uint256 rawSurcharge = uint256(streak) * uint256(redelegationSurchargeStepBps);
         if (rawSurcharge > redelegationMaxSurchargeBps) {
