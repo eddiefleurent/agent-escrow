@@ -105,7 +105,7 @@ Recommended near-term order: `22 -> R1 -> R2 -> R3 -> R4 -> 25 -> 29 -> 30 -> 23
 #### V3 closeout gates
 
 - [ ] `22` implemented and documented.
-- [ ] No interface-parity regressions (MCP/HTTP/CLI).
+- [ ] No interface-parity regressions for features designated as multi-transport (MCP/HTTP/CLI).
 - [ ] `docs/paper-feature-map.json` updated with final V3 status.
 - [ ] `docs/ARCHITECTURE.md` and `README.md` updated in the same PR.
 
