@@ -1,16 +1,16 @@
 {
   "schema_version": "1.0.0",
-  "generated_on": "2026-03-01",
+  "generated_at": "2026-03-01T00:00:00Z",
   "sources": [
     "docs/intelligent-ai-delegation.md",
     "docs/ROADMAP.md",
     "docs/ARCHITECTURE.md"
   ],
   "status_legend": {
-    "implemented": "Built and exposed through core interfaces where applicable.",
-    "partial": "Substantial implementation exists, but paper-prescribed scope is not complete.",
-    "planned": "Explicit roadmap item exists, not implemented yet.",
-    "missing": "Paper-prescribed capability had no explicit roadmap item before this review."
+    "implemented": "Currently implemented and exposed through core interfaces where applicable.",
+    "partial": "Partially implemented today; paper-prescribed scope is not complete.",
+    "planned": "Not implemented yet, but explicitly planned on the roadmap.",
+    "not_planned": "Not implemented and not currently planned on the roadmap."
   },
   "paper_system_features": {
     "technical_protocols": [
@@ -170,8 +170,9 @@
         "id": "E5.4",
         "section": "5.4",
         "name": "Social Intelligence",
-        "status": "missing",
-        "coverage_notes": "No explicit item previously tracked AI-as-delegator behavior in human teams.",
+        "status": "planned",
+        "origin": "Gap identified during V3 review; captured as roadmap item 29.",
+        "coverage_notes": "Not implemented yet; planned safeguards address AI-as-delegator behavior in human teams.",
         "roadmap_items": [
           "29"
         ]
@@ -180,8 +181,9 @@
         "id": "E5.5",
         "section": "5.5",
         "name": "User Training",
-        "status": "missing",
-        "coverage_notes": "No explicit item previously tracked operator training/certification readiness.",
+        "status": "planned",
+        "origin": "Gap identified during V3 review; captured as roadmap item 30.",
+        "coverage_notes": "Not implemented yet; planned operator training/certification readiness track.",
         "roadmap_items": [
           "30"
         ]

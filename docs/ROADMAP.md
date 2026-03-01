@@ -115,7 +115,7 @@ Recommended near-term order: `22 -> R1 -> R2 -> R3 -> R4 -> 25 -> 29 -> 30 -> 23
 
 - [ ] Add anti-grief controls for commit-without-reveal behavior.
 - [ ] Define deterministic fallback rules when top commits are not revealed.
-- [ ] Keep backward-compatible transport parity across MCP, HTTP, and CLI.
+- [ ] Evaluate transport compatibility across MCP, HTTP, and CLI case by case; avoid compatibility shims unless explicitly requested.
 
 #### R2 (item 15): Attestation-chain anchoring
 
@@ -215,7 +215,7 @@ Long-horizon items that remain important but are not V3/V4 blockers:
 ## Key Risks
 
 - V3 closeout delay if UCP mapping overreaches into protocol redesign.
-- Human-participant safeguards lagging behind technical feature velocity.
+- Human-participant safeguards lag technical feature velocity.
 - Safety controls becoming cost-prohibitive without governance floor enforcement.
 - Reputation and monitoring signals being overfit or gamed without periodic calibration.
 - Privacy expectations outpacing current on-chain transparency model.
