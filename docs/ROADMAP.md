@@ -34,7 +34,7 @@ Recommended near-term order: `22 -> R1 -> R2 -> R3 -> R4 -> 25 -> 29 -> 30 -> 23
 
 - Extend existing protocols (MCP, A2A, AP2, UCP, x402) instead of replacing them.
 - Keep escrow as the conditional settlement/accountability layer; keep protocol transports interoperable.
-- Evaluate transport compatibility across MCP, HTTP, and CLI on a case-by-case basis and avoid compatibility shims unless explicitly requested.
+- Evaluate transport compatibility across MCP, HTTP, and CLI case by case; avoid compatibility shims unless explicitly requested.
 - Favor incremental integration paths that can ship safely on Base before deeper cross-chain/privacy work.
 
 ---
