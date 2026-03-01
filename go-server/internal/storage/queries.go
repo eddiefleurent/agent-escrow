@@ -600,7 +600,9 @@ func (d *DB) ListReputationEvents(ctx context.Context, address, role string, lim
 	if err := validateReputationRole(role); err != nil {
 		return nil, err
 	}
-	if limit <= 0 || limit > maxReputationEvents {
+	if limit <= 0 {
+		limit = 1
+	} else if limit > maxReputationEvents {
 		limit = maxReputationEvents
 	}
 	rows, err := d.db.QueryContext(
