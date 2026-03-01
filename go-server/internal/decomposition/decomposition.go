@@ -238,7 +238,6 @@ func (s *Service) CreateDecomposition(ctx context.Context, p CreateDecomposition
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
-		_ = tx.Rollback()
 		return nil, fmt.Errorf("commit decomposition tx: %w", err)
 	}
 
@@ -364,7 +363,6 @@ func (s *Service) FinalizeDecomposition(ctx context.Context, p FinalizeParams) (
 		return nil, nil, err
 	}
 	if err := tx.Commit(); err != nil {
-		_ = tx.Rollback()
 		return nil, nil, fmt.Errorf("commit finalize tx: %w", err)
 	}
 	updated, err := s.DB.GetDecomposition(ctx, decomp.ID)
