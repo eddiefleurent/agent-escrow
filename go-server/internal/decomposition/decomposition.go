@@ -23,13 +23,21 @@ var supportedVerificationTypes = map[string]struct{}{
 	"unit_test":  {},
 }
 
+var supportedDelegatePreferences = map[string]struct{}{
+	"":      {},
+	"human": {},
+	"ai":    {},
+	"any":   {},
+}
+
 // SubTaskInput is a node in the decomposition proposal from the calling agent.
 type SubTaskInput struct {
 	TempID                       string         `json:"temp_id"`        // client-assigned, for referencing parents
 	ParentTempID                 string         `json:"parent_temp_id"` // "" for root nodes
 	Title                        string         `json:"title"`
 	Description                  string         `json:"description"`
-	VerificationType             string         `json:"verification_type"` // optimistic|quorum|zk_proof|unit_test|""
+	VerificationType             string         `json:"verification_type"`             // optimistic|quorum|zk_proof|unit_test|""
+	DelegatePreference           string         `json:"delegate_preference,omitempty"` // human|ai|any|""
 	VerificationDetails          map[string]any `json:"verification_details"`
 	RequiresFurtherDecomposition bool           `json:"requires_further_decomposition"`
 }
@@ -130,6 +138,10 @@ func (s *Service) CreateDecomposition(ctx context.Context, p CreateDecomposition
 		if _, ok := supportedVerificationTypes[in.VerificationType]; !ok {
 			return nil, fmt.Errorf("sub_tasks[%d] has unsupported verification_type %q", i, in.VerificationType)
 		}
+		in.DelegatePreference = strings.ToLower(strings.TrimSpace(in.DelegatePreference))
+		if _, ok := supportedDelegatePreferences[in.DelegatePreference]; !ok {
+			return nil, fmt.Errorf("sub_tasks[%d] has unsupported delegate_preference %q", i, in.DelegatePreference)
+		}
 		inputByTempID[tempID] = in
 		order = append(order, tempID)
 	}
@@ -203,6 +215,7 @@ func (s *Service) CreateDecomposition(ctx context.Context, p CreateDecomposition
 				Title:                        in.Title,
 				Description:                  in.Description,
 				VerificationType:             in.VerificationType,
+				DelegatePreference:           in.DelegatePreference,
 				VerificationDetailsJSON:      verificationDetailsJSON,
 				Depth:                        depth,
 				RequiresFurtherDecomposition: in.RequiresFurtherDecomposition,

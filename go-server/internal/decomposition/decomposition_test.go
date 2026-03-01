@@ -129,6 +129,15 @@ func findContextByTempID(contexts []NodeMarketContext, tempID string) *NodeMarke
 	return nil
 }
 
+func findNodeByTitle(nodes []*storage.DecompositionNode, title string) *storage.DecompositionNode {
+	for _, node := range nodes {
+		if node.Title == title {
+			return node
+		}
+	}
+	return nil
+}
+
 func defaultFinalizeParams(decompositionID int64) FinalizeParams {
 	now := time.Now().Unix()
 	return FinalizeParams{
@@ -367,6 +376,75 @@ func TestCreate_InternalNodeIgnored(t *testing.T) {
 	}
 	if len(result.Issues) != 0 {
 		t.Fatalf("expected zero issues, got %d", len(result.Issues))
+	}
+}
+
+func TestCreate_DelegatePreferencePersisted(t *testing.T) {
+	svc, _ := newDecompositionTestService(t)
+	result, err := svc.CreateDecomposition(context.Background(), CreateDecompositionParams{
+		Buyer:       testBuyerAddress,
+		Title:       "Human Preference",
+		Description: "persist delegate preference",
+		SubTasks: []SubTaskInput{
+			{TempID: "root", Title: "Root", Description: "root"},
+			{
+				TempID:             "leaf-human",
+				ParentTempID:       "root",
+				Title:              "Human Review",
+				Description:        "needs judgment",
+				VerificationType:   "optimistic",
+				DelegatePreference: "human",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create decomposition: %v", err)
+	}
+	if !result.Valid {
+		t.Fatalf("expected valid decomposition, issues=%+v", result.Issues)
+	}
+	createdLeaf := findNodeByTitle(result.Nodes, "Human Review")
+	if createdLeaf == nil {
+		t.Fatalf("missing created leaf node: %+v", result.Nodes)
+	}
+	if createdLeaf.DelegatePreference != "human" {
+		t.Fatalf("expected delegate_preference=human, got %q", createdLeaf.DelegatePreference)
+	}
+
+	_, storedNodes, err := svc.GetDecomposition(context.Background(), result.Decomposition.ID)
+	if err != nil {
+		t.Fatalf("get decomposition: %v", err)
+	}
+	storedLeaf := findNodeByTitle(storedNodes, "Human Review")
+	if storedLeaf == nil {
+		t.Fatalf("missing stored leaf node: %+v", storedNodes)
+	}
+	if storedLeaf.DelegatePreference != "human" {
+		t.Fatalf("expected stored delegate_preference=human, got %q", storedLeaf.DelegatePreference)
+	}
+}
+
+func TestCreate_UnsupportedDelegatePreference(t *testing.T) {
+	svc, _ := newDecompositionTestService(t)
+	_, err := svc.CreateDecomposition(context.Background(), CreateDecompositionParams{
+		Buyer:       testBuyerAddress,
+		Title:       "Bad Preference",
+		Description: "invalid delegate preference",
+		SubTasks: []SubTaskInput{
+			{
+				TempID:             "leaf-1",
+				Title:              "Leaf 1",
+				Description:        "desc",
+				VerificationType:   "optimistic",
+				DelegatePreference: "robot",
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for unsupported delegate_preference")
+	}
+	if !strings.Contains(err.Error(), "unsupported delegate_preference") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
