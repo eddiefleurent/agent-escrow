@@ -493,7 +493,7 @@ func upsertReputationOn(ctx context.Context, q dbExecer, address, role, outcome 
 }
 
 func (d *DB) UpsertReputation(ctx context.Context, address, role, outcome string) error {
-	return upsertReputationOn(ctx, d.db, address, role, outcome)
+	return upsertReputationOn(ctx, d.db, strings.ToLower(strings.TrimSpace(address)), role, outcome)
 }
 
 func validateReputationRole(role string) error {

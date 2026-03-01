@@ -1560,6 +1560,7 @@ func (h *Handlers) CreateRFQ(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var cooldownErr *bidding.RebidCooldownError
 		if errors.As(err, &cooldownErr) {
+			w.Header().Set("Retry-After", strconv.FormatInt(cooldownErr.RetryAfterSeconds(), 10))
 			writeJSON(w, http.StatusTooManyRequests, map[string]any{
 				"error":               cooldownErr.Error(),
 				"retry_after_seconds": cooldownErr.RetryAfterSeconds(),

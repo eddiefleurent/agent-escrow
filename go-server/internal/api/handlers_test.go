@@ -39,7 +39,7 @@ func setup(t *testing.T) *testEnv {
 	mock := chain.NewMockClient()
 	cfg := &config.Config{
 		ChainID:                 84532,
-		FactoryAddress:          "0xFactoryAddr",
+		FactoryAddress:          "0x0000000000000000000000000000000000000001",
 		RequestTimeout:          10 * time.Second,
 		TxTimeout:               90 * time.Second,
 		ReputationDampingFactor: 0.9,
