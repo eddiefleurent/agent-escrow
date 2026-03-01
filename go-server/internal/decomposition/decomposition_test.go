@@ -448,6 +448,25 @@ func TestCreate_UnsupportedDelegatePreference(t *testing.T) {
 	}
 }
 
+func TestCreate_DelegatePreferenceOnInternalNodeRejected(t *testing.T) {
+	svc, _ := newDecompositionTestService(t)
+	_, err := svc.CreateDecomposition(context.Background(), CreateDecompositionParams{
+		Buyer:       testBuyerAddress,
+		Title:       "Internal Preference",
+		Description: "internal node delegate preference should fail",
+		SubTasks: []SubTaskInput{
+			{TempID: "root", Title: "Root", Description: "root", DelegatePreference: "human"},
+			{TempID: "leaf", ParentTempID: "root", Title: "Leaf", Description: "leaf", VerificationType: "optimistic"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for non-leaf delegate_preference")
+	}
+	if !strings.Contains(err.Error(), "non-empty delegate_preference only allowed on leaf nodes") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestFinalize_CreatesRFQsWithCorrectTier(t *testing.T) {
 	svc, db := newDecompositionTestService(t)
 	createRes, err := svc.CreateDecomposition(context.Background(), CreateDecompositionParams{

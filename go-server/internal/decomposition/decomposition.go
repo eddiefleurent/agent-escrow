@@ -123,6 +123,13 @@ func (s *Service) CreateDecomposition(ctx context.Context, p CreateDecomposition
 	}
 
 	inputByTempID := make(map[string]SubTaskInput, len(p.SubTasks))
+	childCountByTempID := make(map[string]int, len(p.SubTasks))
+	for _, in := range p.SubTasks {
+		parentTempID := strings.TrimSpace(in.ParentTempID)
+		if parentTempID != "" {
+			childCountByTempID[parentTempID]++
+		}
+	}
 	order := make([]string, 0, len(p.SubTasks))
 	for i, in := range p.SubTasks {
 		tempID := strings.TrimSpace(in.TempID)
@@ -141,6 +148,9 @@ func (s *Service) CreateDecomposition(ctx context.Context, p CreateDecomposition
 		in.DelegatePreference = strings.ToLower(strings.TrimSpace(in.DelegatePreference))
 		if _, ok := supportedDelegatePreferences[in.DelegatePreference]; !ok {
 			return nil, fmt.Errorf("sub_tasks[%d] has unsupported delegate_preference %q", i, in.DelegatePreference)
+		}
+		if in.DelegatePreference != "" && childCountByTempID[tempID] > 0 {
+			return nil, fmt.Errorf("sub_tasks[%d] non-empty delegate_preference only allowed on leaf nodes", i)
 		}
 		inputByTempID[tempID] = in
 		order = append(order, tempID)
