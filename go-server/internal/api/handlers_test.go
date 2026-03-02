@@ -471,7 +471,7 @@ func TestFundEscrow_Success(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "1000000000000000000", Status: "created",
 	})
@@ -510,7 +510,7 @@ func TestFundEscrow_ValidationErrorReturns400(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "1000000000000000000", Status: "created",
 	})
@@ -540,7 +540,7 @@ func TestWithdrawStake_ValidationErrorReturns400(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "1000000000000000000", Status: "funded",
 	})
@@ -569,7 +569,7 @@ func TestSubmitWork_Success(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "funded",
 	})
@@ -594,7 +594,7 @@ func TestSubmitWork_InternalFailureReturns500(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "funded",
 	})
@@ -623,7 +623,7 @@ func TestApproveWork_Buyer(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
@@ -647,7 +647,7 @@ func TestApproveWork_Verifier(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
@@ -671,7 +671,7 @@ func TestApproveWork_InvalidRole(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
@@ -695,7 +695,7 @@ func TestDisputeWork_Buyer(t *testing.T) {
 	}
 	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr1",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E1",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
@@ -720,7 +720,7 @@ func TestDisputeWork_Verifier(t *testing.T) {
 	}
 	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr2",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E2",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
@@ -745,7 +745,7 @@ func TestDisputeWork_Worker(t *testing.T) {
 	}
 	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr3",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E3",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
@@ -770,7 +770,7 @@ func TestDisputeWork_InvalidRole(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
@@ -794,7 +794,7 @@ func TestResolveDispute_Success(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "disputed",
 	})
@@ -936,7 +936,7 @@ func TestTimeout_POST_UsesLongerTxTimeout(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "1000000000000000000", Status: "created",
 	})
@@ -967,7 +967,7 @@ func TestTimeout_POST_TxTimeoutExceeded(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "1000000000000000000", Status: "created",
 	})

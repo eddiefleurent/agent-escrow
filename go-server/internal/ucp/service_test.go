@@ -3,7 +3,7 @@ package ucp
 import (
 	"context"
 	"errors"
-	"strconv"
+	"fmt"
 	"testing"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
@@ -142,7 +142,7 @@ func createTestEscrow(ctx context.Context, t *testing.T, db *storage.DB, status 
 		TaskID:                   task.ID,
 		ChainID:                  84532,
 		FactoryAddress:           "0x00000000000000000000000000000000000000f0",
-		EscrowAddress:            "0x0000000000000000000000000000000000000" + strconv.FormatInt(task.ID, 16),
+		EscrowAddress:            fmt.Sprintf("0x%040x", task.ID),
 		EscrowID:                 task.ID,
 		Buyer:                    "0x00000000000000000000000000000000000000b0",
 		Worker:                   "0x00000000000000000000000000000000000000c0",

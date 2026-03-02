@@ -553,6 +553,22 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 		escrowStatusCreateFinalized,
 	)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			latest, getErr := s.DB.GetEscrow(ctx, escrowRecord.ID)
+			if getErr == nil &&
+				latest.Status == escrowStatusCreateFinalized &&
+				common.IsHexAddress(latest.EscrowAddress) &&
+				latest.EscrowID > 0 {
+				return &CreateEscrowResult{
+					EscrowID:       latest.ID,
+					TxHash:         strings.TrimSpace(latest.CreateTxHash),
+					TaskID:         latest.TaskID,
+					EscrowAddress:  latest.EscrowAddress,
+					ChainEscrowID:  latest.EscrowID,
+					MilestoneCount: latest.MilestoneCount,
+				}, nil
+			}
+		}
 		return nil, fmt.Errorf("finalize escrow create record: %w", err)
 	}
 
@@ -607,6 +623,18 @@ func NormalizeToken(token string) string {
 	return token
 }
 
+// parseAddress validates and converts a hex address string, returning ErrValidation if malformed or zero.
+func parseAddress(field, raw string) (common.Address, error) {
+	if !common.IsHexAddress(raw) {
+		return common.Address{}, fmt.Errorf("%w: %s %q is not a valid hex address", ErrValidation, field, raw)
+	}
+	addr := common.HexToAddress(raw)
+	if addr == (common.Address{}) {
+		return common.Address{}, fmt.Errorf("%w: %s must not be the zero address", ErrValidation, field)
+	}
+	return addr, nil
+}
+
 func HasStake(escrow *storage.Escrow) bool {
 	amt, ok := new(big.Int).SetString(escrow.WorkerStake, 10)
 	return ok && amt.Sign() > 0
@@ -658,9 +686,15 @@ func (s *Service) FundEscrow(ctx context.Context, escrow *storage.Escrow) (strin
 	if !ok {
 		return "", fmt.Errorf("malformed escrow amount in database: %q", escrow.Amount)
 	}
-	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
+	escrowAddr, err := parseAddress("escrow_address", escrow.EscrowAddress)
+	if err != nil {
+		return "", err
+	}
 	if IsERC20Token(escrow.Token) {
-		tokenAddr := common.HexToAddress(escrow.Token)
+		tokenAddr, err := parseAddress("token", escrow.Token)
+		if err != nil {
+			return "", err
+		}
 		approveTx, err := s.Chain.ApproveERC20(ctx, tokenAddr, escrowAddr, amount)
 		if err != nil {
 			return "", fmt.Errorf("approve erc20: %w", err)
@@ -693,7 +727,11 @@ func (s *Service) DepositWorkerStake(ctx context.Context, escrow *storage.Escrow
 	if !ok || stakeAmount.Sign() <= 0 {
 		return "", fmt.Errorf("%w: this escrow does not require a worker stake", ErrValidation)
 	}
-	return s.processStakeDeposit(ctx, common.HexToAddress(escrow.EscrowAddress), escrow.Token, stakeAmount, s.Chain.DepositStake)
+	escrowAddr, err := parseAddress("escrow_address", escrow.EscrowAddress)
+	if err != nil {
+		return "", err
+	}
+	return s.processStakeDeposit(ctx, escrowAddr, escrow.Token, stakeAmount, s.Chain.DepositStake)
 }
 
 func (s *Service) DepositVerifierStake(ctx context.Context, escrow *storage.Escrow) (string, error) {
@@ -701,7 +739,11 @@ func (s *Service) DepositVerifierStake(ctx context.Context, escrow *storage.Escr
 	if !ok || stakeAmount.Sign() <= 0 {
 		return "", fmt.Errorf("%w: this escrow does not require verifier stake", ErrValidation)
 	}
-	return s.processStakeDeposit(ctx, common.HexToAddress(escrow.EscrowAddress), escrow.Token, stakeAmount, s.Chain.DepositVerifierStake)
+	escrowAddr, err := parseAddress("escrow_address", escrow.EscrowAddress)
+	if err != nil {
+		return "", err
+	}
+	return s.processStakeDeposit(ctx, escrowAddr, escrow.Token, stakeAmount, s.Chain.DepositVerifierStake)
 }
 
 func (s *Service) processStakeDeposit(
@@ -712,7 +754,10 @@ func (s *Service) processStakeDeposit(
 	deposit func(context.Context, common.Address, *big.Int) (*types.Transaction, error),
 ) (string, error) {
 	if IsERC20Token(token) {
-		tokenAddr := common.HexToAddress(token)
+		tokenAddr, err := parseAddress("token", token)
+		if err != nil {
+			return "", err
+		}
 		approveTx, err := s.Chain.ApproveERC20(ctx, tokenAddr, escrowAddr, stakeAmount)
 		if err != nil {
 			return "", fmt.Errorf("approve erc20: %w", err)
@@ -741,7 +786,11 @@ func (s *Service) processStakeDeposit(
 }
 
 func (s *Service) WithdrawStake(ctx context.Context, escrow *storage.Escrow) (string, error) {
-	tx, err := s.Chain.WithdrawStake(ctx, common.HexToAddress(escrow.EscrowAddress))
+	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
+	if err != nil {
+		return "", err
+	}
+	tx, err := s.Chain.WithdrawStake(ctx, addr)
 	if err != nil {
 		return "", fmt.Errorf("withdraw stake: %w", err)
 	}
@@ -773,7 +822,10 @@ func (s *Service) SubmitWork(ctx context.Context, escrow *storage.Escrow, req Su
 		return "", fmt.Errorf("%w: invalid proof_hash: %w", ErrValidation, err)
 	}
 
-	addr := common.HexToAddress(escrow.EscrowAddress)
+	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
+	if err != nil {
+		return "", err
+	}
 	if milestoneIndex != nil {
 		msIdxU8, convErr := numconv.IntToUint8(*milestoneIndex, "milestone_index")
 		if convErr != nil {
@@ -801,7 +853,10 @@ func (s *Service) ApproveWork(ctx context.Context, escrow *storage.Escrow, role 
 		return "", err
 	}
 
-	addr := common.HexToAddress(escrow.EscrowAddress)
+	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
+	if err != nil {
+		return "", err
+	}
 	if resolvedMilestone != nil {
 		msIdxU8, convErr := numconv.IntToUint8(*resolvedMilestone, "milestone_index")
 		if convErr != nil {
@@ -852,7 +907,10 @@ func (s *Service) VerifyAndApprove(ctx context.Context, escrow *storage.Escrow, 
 	if err != nil {
 		return "", err
 	}
-	addr := common.HexToAddress(escrow.EscrowAddress)
+	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
+	if err != nil {
+		return "", err
+	}
 	if resolvedMilestone != nil {
 		msIdxU8, convErr := numconv.IntToUint8(*resolvedMilestone, "milestone_index")
 		if convErr != nil {
@@ -878,7 +936,10 @@ func (s *Service) CastVerifierVote(ctx context.Context, escrow *storage.Escrow, 
 	if err != nil {
 		return "", err
 	}
-	addr := common.HexToAddress(escrow.EscrowAddress)
+	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
+	if err != nil {
+		return "", err
+	}
 	if resolvedMilestone != nil {
 		msIdxU8, convErr := numconv.IntToUint8(*resolvedMilestone, "milestone_index")
 		if convErr != nil {
@@ -905,7 +966,10 @@ func (s *Service) DisputeWork(ctx context.Context, escrow *storage.Escrow, role,
 	if err != nil {
 		return "", err
 	}
-	addr := common.HexToAddress(escrow.EscrowAddress)
+	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
+	if err != nil {
+		return "", err
+	}
 	if resolvedMilestone != nil {
 		msIdxU8, convErr := numconv.IntToUint8(*resolvedMilestone, "milestone_index")
 		if convErr != nil {
@@ -973,7 +1037,10 @@ func (s *Service) ResolveDispute(ctx context.Context, escrow *storage.Escrow, wo
 	if err != nil {
 		return "", err
 	}
-	addr := common.HexToAddress(escrow.EscrowAddress)
+	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
+	if err != nil {
+		return "", err
+	}
 	if resolvedMilestone != nil {
 		msIdxU8, convErr := numconv.IntToUint8(*resolvedMilestone, "milestone_index")
 		if convErr != nil {
@@ -1000,7 +1067,10 @@ func (s *Service) ClaimTimeoutRefund(ctx context.Context, escrow *storage.Escrow
 	if err != nil {
 		return "", err
 	}
-	addr := common.HexToAddress(escrow.EscrowAddress)
+	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
+	if err != nil {
+		return "", err
+	}
 	if resolvedMilestone != nil {
 		msIdxU8, convErr := numconv.IntToUint8(*resolvedMilestone, "milestone_index")
 		if convErr != nil {
@@ -1026,7 +1096,10 @@ func (s *Service) ClaimArbitratorTimeout(ctx context.Context, escrow *storage.Es
 	if err != nil {
 		return "", err
 	}
-	addr := common.HexToAddress(escrow.EscrowAddress)
+	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
+	if err != nil {
+		return "", err
+	}
 	if resolvedMilestone != nil {
 		msIdxU8, convErr := numconv.IntToUint8(*resolvedMilestone, "milestone_index")
 		if convErr != nil {
@@ -1048,7 +1121,11 @@ func (s *Service) ClaimArbitratorTimeout(ctx context.Context, escrow *storage.Es
 }
 
 func (s *Service) CancelBeforeFunding(ctx context.Context, escrow *storage.Escrow) (string, error) {
-	tx, err := s.Chain.CancelBeforeFunding(ctx, common.HexToAddress(escrow.EscrowAddress))
+	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
+	if err != nil {
+		return "", err
+	}
+	tx, err := s.Chain.CancelBeforeFunding(ctx, addr)
 	if err != nil {
 		return "", fmt.Errorf("cancel before funding: %w", err)
 	}
@@ -1060,7 +1137,11 @@ func (s *Service) AbortRemainingMilestones(ctx context.Context, escrow *storage.
 	if escrow.MilestoneCount <= 1 {
 		return "", fmt.Errorf("%w: abort_remaining_milestones is only available for multi-milestone escrows", ErrValidation)
 	}
-	tx, err := s.Chain.AbortRemainingMilestones(ctx, common.HexToAddress(escrow.EscrowAddress))
+	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
+	if err != nil {
+		return "", err
+	}
+	tx, err := s.Chain.AbortRemainingMilestones(ctx, addr)
 	if err != nil {
 		return "", fmt.Errorf("abort remaining milestones: %w", err)
 	}
@@ -1075,7 +1156,11 @@ func (s *Service) ActivateBackup(ctx context.Context, escrow *storage.Escrow) (s
 	if escrow.BackupActivated {
 		return "", fmt.Errorf("%w: backup already activated", ErrValidation)
 	}
-	tx, err := s.Chain.ActivateBackup(ctx, common.HexToAddress(escrow.EscrowAddress))
+	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
+	if err != nil {
+		return "", err
+	}
+	tx, err := s.Chain.ActivateBackup(ctx, addr)
 	if err != nil {
 		return "", fmt.Errorf("activate backup: %w", err)
 	}
