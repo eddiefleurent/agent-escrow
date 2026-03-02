@@ -27,13 +27,14 @@ package "AI Agents" as agents #E8EAF6 {
   [escrow-cli\n(thin HTTP client)] as cli_client #C5CAE9
   [MCP Client\n(Claude, GPT, etc.)] as mcp_client #C5CAE9
   [HTTP Client\n(Scripts, Agents)] as http_client #C5CAE9
+  [UCP Client\n(Integrators)] as ucp_client #C5CAE9
   [SSE/WS Client\n(Event Subscribers)] as stream_client #C5CAE9
 }
 
 package "Go Server" as server #E3F2FD {
   package "Agent Interfaces" as ifaces #BBDEFB {
     [MCP Server\n(+ decomposition tools)] as mcp_server #BBDEFB
-    [HTTP / AP2 API\n(+ decomposition routes)] as http_api #BBDEFB
+    [HTTP / AP2 / UCP API\n(+ decomposition routes)] as http_api #BBDEFB
     [SSE / WebSocket] as stream_handler #BBDEFB
   }
 
@@ -69,6 +70,7 @@ shell_agent -down-> cli_client : runs
 cli_client -down-> http_api : JSON
 mcp_client -down-> mcp_server : stdio / HTTP
 http_client -down-> http_api : JSON
+ucp_client -down-> http_api : UCP REST
 stream_client -down-> stream_handler : SSE / WebSocket
 
 ' --- Server-to-chain ---
@@ -114,11 +116,14 @@ package "Go Server" as server #E3F2FD {
     [HTTP API\n(JSON REST + decomposition)] as http_api #BBDEFB
     [MCP Server\n(stdio / streamable-HTTP + decomposition)] as mcp_server #BBDEFB
     [CLI via HTTP\n(escrow-cli)] as cli_iface #BBDEFB
+    [UCP Handler\n(/.well-known/ucp + /api/v1/ucp/*)] as ucp_handler #BBDEFB
     [AP2 Handler\n(/api/v1/ap2/*)] as ap2 #BBDEFB
     [SSE/WS Handlers\n(stream.go)] as stream_handler #BBDEFB
   }
 
   package "Domain Services" as services #BBDEFB {
+    [Escrow Service\n(shared lifecycle orchestration)] as escrow_service #BBDEFB
+    [UCP Service\n(checkout projection + idempotency)] as ucp_service #BBDEFB
     [Bidding Service\n(RFQ + Bid lifecycle)] as bidding_service #BBDEFB
     [Decomposition Service\n(structural validation + RFQ planning)] as decomposition_service #BBDEFB
   }
@@ -140,19 +145,26 @@ package "Go Server" as server #E3F2FD {
   }
 
   cli_iface -down-> http_api
+  ucp_handler -down-> ucp_service
+  ucp_service -down-> escrow_service
+  ucp_service -down-> storage
   mcp_server -down-> bidding_service
   mcp_server -down-> decomposition_service
+  mcp_server -down-> escrow_service
   mcp_server -down-> chain_client
   mcp_server -down-> storage
   mcp_server -right-> event_bus : subscribe_events\n(polling)
   mcp_server -down-> authz_engine : DCT authz
   http_api -down-> bidding_service
   http_api -down-> decomposition_service
+  http_api -down-> escrow_service
   http_api -down-> chain_client
   http_api -down-> storage
   http_api -down-> authz_engine : DCT authz
   ap2 -down-> chain_client
   ap2 -down-> storage
+  escrow_service -down-> chain_client
+  escrow_service -down-> storage
   bidding_service -down-> chain_client
   bidding_service -down-> storage
   decomposition_service -right-> bidding_service : finalize -> create RFQs

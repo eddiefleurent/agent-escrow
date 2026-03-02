@@ -63,6 +63,11 @@ func (c *Client) Post(ctx context.Context, path string, body any) (json.RawMessa
 	return c.doJSON(ctx, http.MethodPost, path, nil, body)
 }
 
+// Patch executes a PATCH request and returns the raw JSON body.
+func (c *Client) Patch(ctx context.Context, path string, body any) (json.RawMessage, error) {
+	return c.doJSON(ctx, http.MethodPatch, path, nil, body)
+}
+
 func (c *Client) doJSON(ctx context.Context, method, path string, query url.Values, body any) (json.RawMessage, error) {
 	normalizedPath := path
 	if normalizedPath != "" && !strings.HasPrefix(normalizedPath, "/") {

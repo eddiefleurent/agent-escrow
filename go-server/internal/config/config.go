@@ -50,6 +50,11 @@ type Config struct {
 	A2AAgentName string // Agent card display name
 	A2AAgentURL  string // Agent card URL (default derived from PORT)
 
+	// UCP fulfillment adapter configuration (roadmap item 22).
+	UCPEnabled      bool   // Enable UCP REST/MCP/CLI surfaces (default false)
+	UCPBaseURL      string // Public base URL used in /.well-known/ucp metadata
+	UCPProviderName string // Human-readable provider name for UCP profile
+
 	// x402 / AP2 mandate-to-escrow bridge (paper §6: AP2 stake-on-bid + conditional settlement).
 	X402Enabled        bool   // Enable x402 gasless funding path (default false)
 	X402FacilitatorURL string // CDP x402 facilitator endpoint
@@ -192,6 +197,25 @@ func Load() (*Config, error) {
 		a2aAgentURL = fmt.Sprintf("http://localhost:%d", port)
 	}
 
+	ucpEnabled := false
+	if raw := os.Getenv("UCP_ENABLED"); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid UCP_ENABLED: %w", err)
+		}
+		ucpEnabled = v
+	}
+
+	ucpBaseURL := os.Getenv("UCP_BASE_URL")
+	if ucpBaseURL == "" {
+		ucpBaseURL = fmt.Sprintf("http://localhost:%d", port)
+	}
+
+	ucpProviderName := os.Getenv("UCP_PROVIDER_NAME")
+	if ucpProviderName == "" {
+		ucpProviderName = "Agent Escrow UCP Provider"
+	}
+
 	x402Enabled := false
 	if raw := os.Getenv("X402_ENABLED"); raw != "" {
 		v, err := strconv.ParseBool(raw)
@@ -265,6 +289,9 @@ func Load() (*Config, error) {
 		A2AEnabled:              a2aEnabled,
 		A2AAgentName:            a2aAgentName,
 		A2AAgentURL:             a2aAgentURL,
+		UCPEnabled:              ucpEnabled,
+		UCPBaseURL:              ucpBaseURL,
+		UCPProviderName:         ucpProviderName,
 		X402Enabled:             x402Enabled,
 		X402FacilitatorURL:      x402FacilitatorURL,
 		EventsEnabled:           eventsEnabled,

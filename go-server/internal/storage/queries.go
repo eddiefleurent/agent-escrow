@@ -2317,6 +2317,166 @@ func (d *DB) GetAP2Mandate(ctx context.Context, id string) (*AP2Mandate, error) 
 	return &m, nil
 }
 
+// ── UCP sessions + idempotency ──
+
+const ucpSessionColumns = `id, checkout_id, session_id, escrow_id, ucp_status, idempotency_key, last_operation, last_request_hash, last_tx_hash, created_at, updated_at`
+
+func scanUCPSession(scanner interface{ Scan(...any) error }) (*UCPSession, error) {
+	rec := &UCPSession{}
+	var idempotencyKey sql.NullString
+	var createdAt, updatedAt string
+	if err := scanner.Scan(
+		&rec.ID,
+		&rec.CheckoutID,
+		&rec.SessionID,
+		&rec.EscrowID,
+		&rec.UCPStatus,
+		&idempotencyKey,
+		&rec.LastOperation,
+		&rec.LastRequestHash,
+		&rec.LastTxHash,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		return nil, err
+	}
+	if idempotencyKey.Valid {
+		rec.IdempotencyKey = idempotencyKey.String
+	}
+	var err error
+	rec.CreatedAt, err = parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse ucp_session created_at: %w", err)
+	}
+	rec.UpdatedAt, err = parseSQLiteTime(updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse ucp_session updated_at: %w", err)
+	}
+	return rec, nil
+}
+
+func (d *DB) CreateUCPSession(ctx context.Context, rec *UCPSession) (*UCPSession, error) {
+	res, err := d.db.ExecContext(ctx,
+		`INSERT INTO ucp_sessions (checkout_id, session_id, escrow_id, ucp_status, idempotency_key, last_operation, last_request_hash, last_tx_hash)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		rec.CheckoutID,
+		rec.SessionID,
+		rec.EscrowID,
+		rec.UCPStatus,
+		nilIfEmpty(rec.IdempotencyKey),
+		rec.LastOperation,
+		rec.LastRequestHash,
+		rec.LastTxHash,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert ucp_session: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("last insert id: %w", err)
+	}
+	return d.GetUCPSession(ctx, id)
+}
+
+func (d *DB) GetUCPSession(ctx context.Context, id int64) (*UCPSession, error) {
+	row := d.db.QueryRowContext(ctx, `SELECT `+ucpSessionColumns+` FROM ucp_sessions WHERE id = ?`, id)
+	rec, err := scanUCPSession(row)
+	if err != nil {
+		return nil, fmt.Errorf("get ucp_session: %w", err)
+	}
+	return rec, nil
+}
+
+func (d *DB) GetUCPSessionByCheckoutID(ctx context.Context, checkoutID string) (*UCPSession, error) {
+	row := d.db.QueryRowContext(ctx, `SELECT `+ucpSessionColumns+` FROM ucp_sessions WHERE checkout_id = ?`, checkoutID)
+	rec, err := scanUCPSession(row)
+	if err != nil {
+		return nil, fmt.Errorf("get ucp_session by checkout_id: %w", err)
+	}
+	return rec, nil
+}
+
+func (d *DB) UpdateUCPSessionProjection(
+	ctx context.Context,
+	checkoutID string,
+	ucpStatus string,
+	idempotencyKey string,
+	lastOperation string,
+	lastRequestHash string,
+	lastTxHash string,
+) error {
+	res, err := d.db.ExecContext(ctx,
+		`UPDATE ucp_sessions
+		 SET ucp_status = ?,
+		     idempotency_key = ?,
+		     last_operation = ?,
+		     last_request_hash = ?,
+		     last_tx_hash = ?,
+		     updated_at = datetime('now')
+		 WHERE checkout_id = ?`,
+		ucpStatus,
+		nilIfEmpty(idempotencyKey),
+		lastOperation,
+		lastRequestHash,
+		lastTxHash,
+		checkoutID,
+	)
+	if err != nil {
+		return fmt.Errorf("UpdateUCPSessionProjection: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("UpdateUCPSessionProjection rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("UpdateUCPSessionProjection checkout_id=%s: %w", checkoutID, sql.ErrNoRows)
+	}
+	return nil
+}
+
+func (d *DB) CreateUCPIdempotency(ctx context.Context, rec *UCPIdempotency) error {
+	_, err := d.db.ExecContext(ctx,
+		`INSERT INTO ucp_idempotency (idempotency_key, operation, request_hash, response_json, checkout_id)
+		 VALUES (?, ?, ?, ?, ?)`,
+		rec.IdempotencyKey,
+		rec.Operation,
+		rec.RequestHash,
+		rec.ResponseJSON,
+		rec.CheckoutID,
+	)
+	if err != nil {
+		return fmt.Errorf("insert ucp_idempotency: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) GetUCPIdempotency(ctx context.Context, idempotencyKey string) (*UCPIdempotency, error) {
+	row := d.db.QueryRowContext(ctx,
+		`SELECT id, idempotency_key, operation, request_hash, response_json, checkout_id, created_at
+		 FROM ucp_idempotency WHERE idempotency_key = ?`,
+		idempotencyKey,
+	)
+	rec := &UCPIdempotency{}
+	var createdAt string
+	if err := row.Scan(
+		&rec.ID,
+		&rec.IdempotencyKey,
+		&rec.Operation,
+		&rec.RequestHash,
+		&rec.ResponseJSON,
+		&rec.CheckoutID,
+		&createdAt,
+	); err != nil {
+		return nil, fmt.Errorf("get ucp_idempotency: %w", err)
+	}
+	t, err := parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse ucp_idempotency created_at: %w", err)
+	}
+	rec.CreatedAt = t
+	return rec, nil
+}
+
 // parseSQLiteTime handles the two timestamp formats that SQLite / modernc.org/sqlite
 // can produce: datetime('now') returns "2006-01-02 15:04:05" while
 // CURRENT_TIMESTAMP can return "2006-01-02T15:04:05Z" (ISO 8601).

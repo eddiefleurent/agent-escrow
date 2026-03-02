@@ -259,6 +259,32 @@ type AP2Mandate struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+// UCPSession links a UCP checkout/session to an escrow lifecycle projection.
+type UCPSession struct {
+	ID              int64     `json:"id"`
+	CheckoutID      string    `json:"checkout_id"`
+	SessionID       string    `json:"session_id"`
+	EscrowID        int64     `json:"escrow_id"`
+	UCPStatus       string    `json:"ucp_status"`
+	IdempotencyKey  string    `json:"idempotency_key,omitempty"`
+	LastOperation   string    `json:"last_operation,omitempty"`
+	LastRequestHash string    `json:"last_request_hash,omitempty"`
+	LastTxHash      string    `json:"last_tx_hash,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// UCPIdempotency stores deterministic UCP responses by idempotency key.
+type UCPIdempotency struct {
+	ID             int64     `json:"id"`
+	IdempotencyKey string    `json:"idempotency_key"`
+	Operation      string    `json:"operation"`
+	RequestHash    string    `json:"request_hash"`
+	ResponseJSON   string    `json:"response_json"`
+	CheckoutID     string    `json:"checkout_id"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
 // FrozenAddress represents a frozen address in the emergency protocol.
 type FrozenAddress struct {
 	Address  string    `json:"address"`

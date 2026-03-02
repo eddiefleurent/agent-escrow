@@ -19,6 +19,15 @@ func (c *Client) Fund(ctx context.Context, escrow common.Address, amount *big.In
 	return c.SendTx(ctx, escrow, data, amount)
 }
 
+// CancelBeforeFunding sends the cancelBeforeFunding() transaction.
+func (c *Client) CancelBeforeFunding(ctx context.Context, escrow common.Address) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("cancelBeforeFunding")
+	if err != nil {
+		return nil, fmt.Errorf("pack cancelBeforeFunding: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, nil)
+}
+
 // FundWithAuthorization calls fundWithAuthorization on the escrow contract
 // using an EIP-3009 signed authorization for gasless ERC20 funding.
 func (c *Client) FundWithAuthorization(ctx context.Context, escrow common.Address, from common.Address, validAfter, validBefore *big.Int, nonce [32]byte, v uint8, r, s [32]byte) (*types.Transaction, error) {

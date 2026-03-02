@@ -396,6 +396,8 @@ go-server/
     bidding/
       bidding.go                   Shared bidding protocol logic (RFQ + Bid lifecycle)
       credentials.go               Attestation-v1 verification, credential requirements matching (paper §4.6 Table 3)
+    escrow/
+      service.go                   Shared escrow lifecycle orchestration used by HTTP/MCP/UCP
     a2a/
       types.go                     A2A protocol types (AgentCard, Task, verification_policy)
       service.go                   A2A-to-escrow lifecycle mapping
@@ -406,6 +408,10 @@ go-server/
       types.go                     AP2 mandate types
       service.go                   Mandate validation, binding, fund orchestration
       handler.go                   HTTP handlers (validate, fund, get mandate)
+    ucp/
+      types.go                     UCP checkout/request/response types + well-known profile
+      service.go                   UCP-to-escrow lifecycle projection and idempotency logic
+      handler.go                   HTTP handlers for /.well-known/ucp + /api/v1/ucp/*
     authz/
       authz.go                     Principal authorization engine: default-deny policy, role resolution, context keys (paper §4.7)
       audit.go                     Authorization audit store: SQLite-backed decision logging for security auditing (paper §4.9)
@@ -414,7 +420,7 @@ go-server/
       bus.go                       In-process pub/sub EventBus (publish, subscribe, heartbeat, recent events ring buffer)
     mcpserver/
       server.go                    MCP server setup
-      tools.go                     33 registered tool handlers with default feature flags enabled (core + bidding + AP2 + emergency + events + A2A + DCT + authz)
+      tools.go                     MCP tool handlers (core + bidding + AP2 + UCP + emergency + events + A2A + DCT + authz; feature-flag gated)
     api/
       router.go                    HTTP mux with middleware
       handlers.go                  JSON request/response handlers
@@ -457,6 +463,8 @@ SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 | `decomposition_nodes` | Tree nodes for each decomposition: parent linkage, depth, verification type/details, decomposition-required flag, and optional linked RFQ |
 | `ap2_mandates` | AP2 mandate records for gasless escrow funding via x402 facilitator |
 | `a2a_tasks` | A2A protocol tasks linked to escrows (paper §6: A2A Task object extension) |
+| `ucp_sessions` | UCP checkout/session projection state: checkout↔escrow linkage, projected status, last operation, tx hash |
+| `ucp_idempotency` | Deterministic UCP responses keyed by idempotency key (operation + request hash + response snapshot) |
 | `chain_logs` | Raw chain event log (idempotent by tx_hash + log_index) |
 | `chain_cursors` | Indexer block cursor per chain |
 | `frozen_addresses` | Addresses frozen via emergency protocol (paper §4.9) |
@@ -601,6 +609,48 @@ The AP2 mandate bridge enables gasless ERC20 escrow funding via the [x402](https
 
 **Flow:** Validate mandate → Bind mandate to escrow → Fund escrow via `fundWithAuthorization` (EIP-3009). Bids may include an optional `stake_mandate_id` for worker stake funding, providing Sybil resistance via the same gasless rail.
 
+### UCP Fulfillment Adapter (Paper §6)
+
+The UCP provider is implemented as an interoperability envelope over existing escrow semantics. It does not redesign settlement logic and cannot bypass escrow invariants. The adapter is exposed through:
+
+- `GET /.well-known/ucp` (provider profile + capability declaration)
+- `POST /api/v1/ucp/checkouts` (`create_checkout`)
+- `GET /api/v1/ucp/checkouts/{checkout_id}` (`get_checkout`)
+- `PATCH /api/v1/ucp/checkouts/{checkout_id}` (`update_checkout`)
+- `POST /api/v1/ucp/checkouts/{checkout_id}/complete` (`complete_checkout`)
+- `POST /api/v1/ucp/checkouts/{checkout_id}/cancel` (`cancel_checkout`)
+
+The same semantics are also exposed as MCP tools (`ucp_*`) and CLI commands (`escrow-cli ucp ...`) for transport parity in this phase.
+
+#### Mapping Contract: UCP Status ↔ Escrow State
+
+| UCP status | Escrow status projection | Semantics |
+|---|---|---|
+| `incomplete` | `created`, `funded` (and other non-terminal pre-submission states) | Checkout exists but completion conditions are not met. |
+| `ready_for_complete` | `submitted` | Submission exists and is waiting for approval/verification. |
+| `complete_in_progress` | `approved`, `resolved` | Completion path is in-flight; final settlement not yet indexed as terminal. |
+| `requires_escalation` | `disputed` | Dispute/escalation path is active and requires explicit resolution. |
+| `completed` | `settled` | Terminal success path; payout/fee outcomes finalized. |
+| `canceled` | `cancelled`, `refunded` | Terminal cancellation/refund path. |
+
+**Semantic anchor:** UCP `completed` maps only to escrow `settled`. This preserves verification, dispute, and refund guarantees from the escrow contract/state machine.
+
+#### Mapping Contract: UCP Operations ↔ Escrow Actions
+
+| UCP operation | Shared service entrypoint | Escrow behavior |
+|---|---|---|
+| `create_checkout` | `ucp.Service.CreateCheckout` | Links an existing escrow or creates a new escrow through shared orchestration; persists checkout/session projection. |
+| `get_checkout` | `ucp.Service.GetCheckout` | Reads escrow + projection state from DB with status refresh. |
+| `update_checkout` | `ucp.Service.UpdateCheckout` | Executes mapped lifecycle operations (`fund`, `submit`, `approve`, `dispute`, `resolve`, timeout claims, stake ops, backup/milestone controls) via `escrow.Service`. |
+| `complete_checkout` | `ucp.Service.CompleteCheckout` | Attempts approve/verify transitions but never short-circuits terminal settlement rules. |
+| `cancel_checkout` | `ucp.Service.CancelCheckout` | Uses escrow-native cancel/refund paths (`cancelBeforeFunding` or timeout-based claims) according to state. |
+
+Unsupported or out-of-scope UCP commerce fields are rejected explicitly (error path), not silently ignored.
+
+#### Shared-Orchestration Invariant
+
+`internal/escrow/service.go` centralizes lifecycle orchestration (create/fund/submit/approve/dispute/resolve/refund/cancel/stake/backup + indexer sync) and is used by HTTP handlers, MCP tools, and UCP service. This removes transport-level drift and keeps settlement semantics consistent across interfaces.
+
 ### Emergency Response Protocol (Paper §4.9)
 
 The emergency protocol spans on-chain (factory + escrow contracts) and off-chain (Go server) components, implementing the paper's rapid incident response (§4.9).
@@ -701,6 +751,11 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 | `fund_via_mandate` | escrow_id, mandate_id, authorization params | x402 validate + `Escrow.fundWithAuthorization` |
 | `subscribe_events` | escrow_id (optional), since_id, granularity, limit | EventBus polling (cursor-based) |
 | `get_agent_card` | (none) | Returns A2A agent card JSON |
+| `ucp_create_checkout` | checkout/session metadata + escrow_id or create_escrow_json | UCP adapter over shared escrow service (`create_checkout`) |
+| `ucp_get_checkout` | checkout_id | UCP projection read (`get_checkout`) |
+| `ucp_update_checkout` | checkout_id + mapped operation payload | UCP mapped operation (`update_checkout`) via shared escrow service |
+| `ucp_complete_checkout` | checkout_id + optional role/proof payload | UCP completion orchestration (`complete_checkout`) |
+| `ucp_cancel_checkout` | checkout_id + optional milestone payload | UCP cancellation/refund orchestration (`cancel_checkout`) |
 | `freeze_address` | address | `Factory.freezeAddress` (owner-only) |
 | `unfreeze_address` | address | `Factory.unfreezeAddress` (owner-only) |
 | `freeze_escrow` | escrow_id | `Factory.freezeEscrow` (owner-only) |
@@ -718,6 +773,7 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/v1/health` | Health check |
+| GET | `/.well-known/ucp` | UCP provider profile and capability declaration |
 | POST | `/api/v1/escrows` | Create escrow (includes `verifier_panel`, quorum params, optional `milestones`, `zk_verifier`, `circuit_id`, `parent_escrow_id`) |
 | GET | `/api/v1/escrows` | List (query: role, address, status) |
 | GET | `/api/v1/escrows/{id}` | Get escrow (includes milestone details if applicable) |
@@ -725,6 +781,11 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 | POST | `/api/v1/ap2/fund` | Fund escrow via AP2 mandate (EIP-3009 gasless) |
 | POST | `/api/v1/ap2/validate` | Validate AP2 mandate against x402 facilitator |
 | GET | `/api/v1/ap2/mandates/{id}` | Get mandate details |
+| POST | `/api/v1/ucp/checkouts` | Create UCP checkout (`create_checkout`) |
+| GET | `/api/v1/ucp/checkouts/{checkout_id}` | Get UCP checkout projection (`get_checkout`) |
+| PATCH | `/api/v1/ucp/checkouts/{checkout_id}` | Update checkout via mapped operation (`update_checkout`) |
+| POST | `/api/v1/ucp/checkouts/{checkout_id}/complete` | Complete checkout flow (`complete_checkout`) |
+| POST | `/api/v1/ucp/checkouts/{checkout_id}/cancel` | Cancel checkout via escrow-native paths (`cancel_checkout`) |
 | POST | `/api/v1/escrows/{id}/deposit-stake` | Deposit worker stake |
 | POST | `/api/v1/escrows/{id}/deposit-verifier-stake` | Deposit verifier stake |
 | POST | `/api/v1/escrows/{id}/submit` | Submit work (optional `proof_hash`, `milestone_index` in body) |
@@ -796,6 +857,9 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 | `A2A_ENABLED` | No | `true` | Enable A2A settlement adapter routes |
 | `A2A_AGENT_NAME` | No | `Escrow Settlement Agent` | Agent card display name |
 | `A2A_AGENT_URL` | No | `http://localhost:{PORT}` | Agent card URL |
+| `UCP_ENABLED` | No | `false` | Enable UCP fulfillment adapter routes/tools/CLI surfaces |
+| `UCP_BASE_URL` | No | `http://localhost:{PORT}` | Public base URL used in `/.well-known/ucp` profile metadata |
+| `UCP_PROVIDER_NAME` | No | `Agent Escrow UCP Provider` | Provider display name in UCP profile |
 | `EVENTS_ENABLED` | No | `true` | Enable SSE/WebSocket event streaming and `subscribe_events` MCP tool |
 | `EVENTS_BUFFER_SIZE` | No | `64` | Per-subscriber channel buffer size |
 | `EVENTS_HEARTBEAT_INTERVAL` | No | `30s` | L0 heartbeat interval for liveness signals |
@@ -805,9 +869,10 @@ Checkpoint/resume implements standardized state snapshots for mid-task agent swa
 
 - **Single binary**: MCP + API + indexer share one process. No message queue or process manager required for V1.
 - **Pure Go SQLite**: `modernc.org/sqlite` avoids CGO, simplifying cross-compilation and CI.
-- **No ORM**: Six tables, stable schema. `database/sql` with hand-written queries.
+- **No ORM**: schema is explicit and migration-driven; `database/sql` with hand-written queries.
 - **ABI embedding**: `//go:embed` from files copied at build time (`make go-abi`).
-- **Shared logic**: MCP tools and HTTP handlers call the same chain + storage + indexer methods.
+- **Shared logic**: escrow lifecycle orchestration is centralized in `internal/escrow/service.go` and reused by HTTP, MCP, and UCP surfaces.
+- **UCP as adapter-only envelope**: UCP checkout semantics project onto escrow lifecycle state; UCP cannot bypass verification/dispute/refund invariants.
 - **Synchronous indexer after writes**: `RunOnce()` triggered after transaction submission for immediate event pickup.
 - **Dual-mode event ingestion**: CDP Webhooks for real-time factory events + polling for dynamically-deployed escrow contracts. Both paths deduplicate via `chain_logs` (tx_hash + log_index), so overlapping coverage is safe. Webhook mode is opt-in via `CDP_WEBHOOK_SECRET`.
 - **In-process event bus**: Lightweight pub/sub for real-time client streaming. No external message broker at V2 scale. Publishers (indexer, webhooks) call `Publish()`; subscribers receive on buffered channels with non-blocking sends. SSE as primary transport (proxy/CDN friendly, aligns with MCP SSE reference), WebSocket as secondary for future bidirectional use cases (L2/L3).

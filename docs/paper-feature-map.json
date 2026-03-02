@@ -229,8 +229,8 @@
       },
       {
         "id": "S6-UCP",
-        "status": "planned",
-        "notes": "UCP fulfillment provider remains the main V3 closeout item.",
+        "status": "implemented",
+        "notes": "UCP fulfillment provider implemented as adapter-only projection over shared escrow orchestration with REST/MCP/CLI parity.",
         "roadmap_items": [
           "22"
         ]
@@ -524,12 +524,12 @@
       "item_id": "22",
       "phase": "V3",
       "title": "UCP fulfillment provider",
-      "status": "planned",
+      "status": "implemented",
       "paper_refs": [
         "6"
       ],
-      "decision_vs_paper": "Planned to expose escrow as a fulfillment backend while preserving UCP interoperability boundaries.",
-      "residual_gap": "Entire item is pending."
+      "decision_vs_paper": "Implemented as a minimal adapter over existing escrow semantics, with checkout state projection anchored to escrow terminal settlement and shared orchestration used across transports.",
+      "residual_gap": "No material gap for V3 scope; broader protocol evolution remains V4+."
     },
     {
       "item_id": "23",
@@ -699,7 +699,6 @@
     }
   ],
   "recommended_execution_order": [
-    "22",
     "R1",
     "R2",
     "R3",

@@ -84,7 +84,7 @@ The CLI is a thin HTTP client over the existing API; business logic stays in the
 
 MCP remains first-class for MCP-native clients. Any MCP-compatible client (Claude, GPT, custom agents) can use escrow without Solidity or wallet libraries -- the server handles chain interaction.
 
-Default configuration (`EMERGENCY_ENABLED=true`, `EVENTS_ENABLED=true`, `A2A_ENABLED=true`) exposes tools for:
+Default configuration (`EMERGENCY_ENABLED=true`, `EVENTS_ENABLED=true`, `A2A_ENABLED=true`, `UCP_ENABLED=false`) exposes tools for:
 
 - Escrow lifecycle and dispute resolution (single-shot + milestone flows)
 - Verifier quorum + ZK-assisted approval paths
@@ -92,6 +92,7 @@ Default configuration (`EMERGENCY_ENABLED=true`, `EVENTS_ENABLED=true`, `A2A_ENA
 - Attestation chains and checkpoint/resume handoffs
 - DCT mint/delegate/revoke/introspect + authorization audit views
 - AP2/x402 mandate funding, event subscriptions, A2A discovery, and emergency controls
+- UCP checkout operations (`ucp_*`) when `UCP_ENABLED=true`
 
 For the full up-to-date MCP tool list, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -121,8 +122,11 @@ POST /api/v1/decompositions/{id}/finalize
 # Advanced flows
 POST /api/v1/dcts/mint
 POST /api/v1/ap2/fund
+POST /api/v1/ucp/checkouts
+PATCH /api/v1/ucp/checkouts/{checkout_id}
 GET  /api/v1/events
 GET  /.well-known/agent.json
+GET  /.well-known/ucp
 ```
 
 For the full endpoint catalog (including verifier quorum, ZK verify/approve, checkpoints, attestation chains, emergency, and A2A JSON-RPC), see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
@@ -133,7 +137,7 @@ For the full endpoint catalog (including verifier quorum, ZK verify/approve, che
 
 **V2 -- Market Primitives**: Complete (11/11 items). ERC20/USDC payments, worker stake, milestone-based escrow, backup agent clause, on-chain reputation, complexity floor, bidding protocol (Task_RFQ + Bid_Object), A2A settlement adapter, AP2 mandate-to-escrow bridge, real-time event subscriptions (SSE/WebSocket + MCP polling), and emergency response protocol.
 
-**V3 -- Delegation Intelligence**: Closeout in progress. Items `12`-`21` are complete (sealed bidding, DCT/authz, verifiable credentials, attestation chains, checkpoints, service tiers, ZK slot, quorum, stability controls, decomposition tooling). Remaining V3 item: `22` UCP fulfillment provider.
+**V3 -- Delegation Intelligence**: Complete. Items `12`-`22` are implemented, including the UCP fulfillment provider as an adapter over shared escrow orchestration with REST/MCP/CLI parity.
 
 **V4 -- Ethical Safeguards and Ecosystem Maturity**: Planned. Items `23`-`30` include curriculum routing, liability firebreaks, cognitive friction calibration, DID identity layer, insurance framework, governance safety floors, and newly explicit social-intelligence and user-training tracks.
 
@@ -142,7 +146,7 @@ Full roadmap sequencing: [`docs/ROADMAP.md`](docs/ROADMAP.md). Canonical machine
 ## Project Structure
 
 - `src/`, `test/`, `script/`: Solidity contracts, Foundry tests, and deployment scripts.
-- `go-server/`: single Go service (MCP server, HTTP API, indexer, bidding, A2A/AP2 adapters, storage, chain client).
+- `go-server/`: single Go service (MCP server, HTTP API, indexer, bidding, A2A/AP2/UCP adapters, storage, chain client).
 - `docs/`: architecture/spec/roadmap/setup/deploy docs plus PlantUML diagrams.
 - `demo/`: executable ETH/USDC/AP2 demos and on-chain run logs.
 - `scripts/`: utility scripts (for example faucet helpers).

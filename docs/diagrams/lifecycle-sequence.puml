@@ -34,6 +34,13 @@ actor "Worker" as worker
 participant "Factory" as factory
 participant "x402 Facilitator" as facilitator #E8EAF6
 
+note over buyer,worker #FFFDE7
+  UCP projection anchor:
+  completed -> settled
+  requires_escalation -> disputed
+  canceled -> cancelled/refunded
+end note
+
 == Task Creation ==
 
 note over buyer,factory #FFFDE7

@@ -29,6 +29,7 @@ func clearEnv(t *testing.T) {
 		"MCP_TRANSPORT", "CORS_ORIGINS",
 		"REQUEST_TIMEOUT", "TX_TIMEOUT",
 		"COMPLEXITY_FLOOR", "REBID_COOLDOWN_SECONDS", "REPUTATION_DAMPING_FACTOR",
+		"UCP_ENABLED", "UCP_BASE_URL", "UCP_PROVIDER_NAME",
 	} {
 		os.Unsetenv(key)
 	}
@@ -211,6 +212,12 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if cfg.ReputationDampingFactor != 0.9 {
 		t.Errorf("expected default damping factor 0.9, got %v", cfg.ReputationDampingFactor)
+	}
+	if cfg.UCPEnabled {
+		t.Errorf("expected UCP disabled by default")
+	}
+	if cfg.UCPProviderName == "" {
+		t.Errorf("expected default UCP provider name to be set")
 	}
 }
 

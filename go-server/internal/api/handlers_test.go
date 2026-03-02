@@ -60,6 +60,16 @@ func setupWithEmergency(t *testing.T) *testEnv {
 	return env
 }
 
+func setupWithUCP(t *testing.T) *testEnv {
+	t.Helper()
+	env := setup(t)
+	env.cfg.UCPEnabled = true
+	env.cfg.UCPBaseURL = "http://localhost:8080"
+	env.cfg.UCPProviderName = "Test UCP Provider"
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
+	return env
+}
+
 func (e *testEnv) request(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	var req *http.Request
@@ -2396,5 +2406,70 @@ func TestCheckpointList_EmptyReturnsArray(t *testing.T) {
 	}
 	if body := strings.TrimSpace(rr.Body.String()); body != "[]" {
 		t.Fatalf("expected empty array '[]', got %q", body)
+	}
+}
+
+func TestUCPWellKnown(t *testing.T) {
+	env := setupWithUCP(t)
+	rr := env.request(t, "GET", "/.well-known/ucp", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp := decodeJSON(t, rr)
+	if resp["version"] == "" {
+		t.Fatalf("expected version in response: %v", resp)
+	}
+}
+
+func TestUCPCreateAndGetCheckout(t *testing.T) {
+	env := setupWithUCP(t)
+	ctx := context.Background()
+
+	task, err := env.db.CreateTask(ctx, "UCP Task", "desc", "0xabc")
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
+		TaskID:                   task.ID,
+		ChainID:                  84532,
+		FactoryAddress:           env.cfg.FactoryAddress,
+		EscrowAddress:            "0x00000000000000000000000000000000000000e5",
+		EscrowID:                 task.ID,
+		Buyer:                    "0x1000000000000000000000000000000000000001",
+		Worker:                   "0x2000000000000000000000000000000000000002",
+		Verifier:                 "0x3000000000000000000000000000000000000003",
+		Arbitrator:               "0x4000000000000000000000000000000000000004",
+		Amount:                   "100",
+		WorkerStake:              "0",
+		VerifierStakePerVerifier: "0",
+		Token:                    "",
+		Status:                   "created",
+		SubmissionDeadline:       1700000000,
+		ReviewPeriodSeconds:      60,
+		DisputePeriodSeconds:     60,
+		ArbitratorTimeoutSeconds: 60,
+	})
+	if err != nil {
+		t.Fatalf("create escrow: %v", err)
+	}
+
+	createBody := fmt.Sprintf(`{"escrow_id":%d}`, escrow.ID)
+	createRR := env.request(t, "POST", "/api/v1/ucp/checkouts", createBody)
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", createRR.Code, createRR.Body.String())
+	}
+	createResp := decodeJSON(t, createRR)
+	checkoutID, _ := createResp["checkout_id"].(string)
+	if strings.TrimSpace(checkoutID) == "" {
+		t.Fatalf("expected checkout_id in response: %v", createResp)
+	}
+
+	getRR := env.request(t, "GET", "/api/v1/ucp/checkouts/"+checkoutID, "")
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", getRR.Code, getRR.Body.String())
+	}
+	getResp := decodeJSON(t, getRR)
+	if got, _ := getResp["checkout_id"].(string); got != checkoutID {
+		t.Fatalf("expected checkout_id=%s got=%v", checkoutID, getResp["checkout_id"])
 	}
 }
