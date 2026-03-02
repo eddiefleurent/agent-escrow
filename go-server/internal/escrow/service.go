@@ -2,6 +2,7 @@ package escrow
 
 import (
 	"context"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -28,6 +29,17 @@ const zeroAddress = "0x0000000000000000000000000000000000000000"
 // ErrValidation is returned when caller-provided input fails validation.
 // HTTP handlers should map this to a 4xx response; MCP tools may surface the message directly.
 var ErrValidation = errors.New("validation error")
+
+const (
+	escrowStatusPendingCreate       = "pending"
+	escrowStatusSubmittingCreateTx  = "submitting"
+	escrowStatusPendingConfirmation = "pending_confirmation"
+	escrowStatusCreateFinalized     = "created"
+)
+
+func IsValidation(err error) bool {
+	return errors.Is(err, ErrValidation)
+}
 
 // Service centralizes escrow lifecycle orchestration shared by API, MCP, and UCP.
 type Service struct {
@@ -100,6 +112,100 @@ type CreateEscrowResult struct {
 	MilestoneCount int
 }
 
+type createEscrowIntentMilestone struct {
+	Amount             string `json:"amount"`
+	SubmissionDeadline int64  `json:"submission_deadline"`
+}
+
+type createEscrowIntentPayload struct {
+	ChainID                  int64                         `json:"chain_id"`
+	FactoryAddress           string                        `json:"factory_address"`
+	TaskSpecHash             string                        `json:"task_spec_hash"`
+	Buyer                    string                        `json:"buyer"`
+	Worker                   string                        `json:"worker"`
+	Arbitrator               string                        `json:"arbitrator"`
+	VerifierPanel            []string                      `json:"verifier_panel"`
+	QuorumThreshold          uint8                         `json:"quorum_threshold"`
+	QuorumVerifierCount      uint8                         `json:"quorum_verifier_count"`
+	VerifierStakePerVerifier string                        `json:"verifier_stake_per_verifier"`
+	Amount                   string                        `json:"amount"`
+	WorkerStake              string                        `json:"worker_stake"`
+	SubmissionDeadline       uint64                        `json:"submission_deadline"`
+	ReviewPeriodSeconds      uint64                        `json:"review_period_seconds"`
+	DisputePeriodSeconds     uint64                        `json:"dispute_period_seconds"`
+	ArbitratorTimeoutSeconds uint64                        `json:"arbitrator_timeout_seconds"`
+	Token                    string                        `json:"token"`
+	ServiceTier              uint8                         `json:"service_tier"`
+	Milestones               []createEscrowIntentMilestone `json:"milestones"`
+	BackupWorker             string                        `json:"backup_worker"`
+	BackupDeadlineExtension  uint64                        `json:"backup_deadline_extension"`
+	ZKVerifier               string                        `json:"zk_verifier"`
+	CircuitID                string                        `json:"circuit_id"`
+	ParentEscrowID           int64                         `json:"parent_escrow_id"`
+	ParentEscrow             string                        `json:"parent_escrow"`
+}
+
+func pendingEscrowAddress(createIntentID string) string {
+	return "pending:" + strings.TrimPrefix(createIntentID, "0x")
+}
+
+func buildCreateEscrowIntentID(
+	input CreateEscrowInput,
+	chainID int64,
+	factory common.Address,
+	buyer common.Address,
+	worker common.Address,
+	arbitrator common.Address,
+	verifierPanel []string,
+) (string, error) {
+	milestones := make([]createEscrowIntentMilestone, len(input.Milestones))
+	for i, m := range input.Milestones {
+		milestones[i] = createEscrowIntentMilestone{
+			Amount:             m.Amount.String(),
+			SubmissionDeadline: input.MilestoneDeadlines[i],
+		}
+	}
+
+	parentEscrowID := int64(0)
+	if input.ParentEscrowID != nil {
+		parentEscrowID = *input.ParentEscrowID
+	}
+
+	payload := createEscrowIntentPayload{
+		ChainID:                  chainID,
+		FactoryAddress:           strings.ToLower(factory.Hex()),
+		TaskSpecHash:             strings.ToLower(input.TaskSpecHash.Hex()),
+		Buyer:                    strings.ToLower(buyer.Hex()),
+		Worker:                   strings.ToLower(worker.Hex()),
+		Arbitrator:               strings.ToLower(arbitrator.Hex()),
+		VerifierPanel:            verifierPanel,
+		QuorumThreshold:          input.QuorumThreshold,
+		QuorumVerifierCount:      input.QuorumVerifierCount,
+		VerifierStakePerVerifier: input.VerifierStakePerVerifier.String(),
+		Amount:                   input.Amount.String(),
+		WorkerStake:              input.WorkerStake.String(),
+		SubmissionDeadline:       input.SubmissionDeadline,
+		ReviewPeriodSeconds:      input.ReviewPeriodSeconds,
+		DisputePeriodSeconds:     input.DisputePeriodSeconds,
+		ArbitratorTimeoutSeconds: input.ArbitratorTimeoutSeconds,
+		Token:                    strings.ToLower(input.Token.Hex()),
+		ServiceTier:              input.ServiceTier,
+		Milestones:               milestones,
+		BackupWorker:             strings.ToLower(input.BackupWorker.Hex()),
+		BackupDeadlineExtension:  input.BackupDeadlineExtension,
+		ZKVerifier:               strings.ToLower(input.ZKVerifier.Hex()),
+		CircuitID:                strings.ToLower(fmt.Sprintf("0x%x", input.CircuitID)),
+		ParentEscrowID:           parentEscrowID,
+		ParentEscrow:             strings.ToLower(input.ParentEscrow.Hex()),
+	}
+
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal create intent payload: %w", err)
+	}
+	return crypto.Keccak256Hash(raw).Hex(), nil
+}
+
 func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*CreateEscrowResult, error) {
 	if s.Cfg == nil {
 		return nil, errors.New("escrow service misconfigured: missing config")
@@ -112,6 +218,14 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 	}
 	if input.QuorumVerifierCount > 7 {
 		return nil, fmt.Errorf("%w: quorum verifier count %d exceeds maximum of 7", ErrValidation, input.QuorumVerifierCount)
+	}
+	if input.QuorumThreshold == 0 || input.QuorumThreshold > input.QuorumVerifierCount {
+		return nil, fmt.Errorf(
+			"%w: quorum threshold must be > 0 and <= quorum verifier count (threshold=%d, quorum_verifier_count=%d)",
+			ErrValidation,
+			input.QuorumThreshold,
+			input.QuorumVerifierCount,
+		)
 	}
 	if len(input.VerifierPanel) < int(input.QuorumVerifierCount) {
 		return nil, fmt.Errorf("%w: verifier panel length %d is smaller than quorum verifier count %d", ErrValidation, len(input.VerifierPanel), input.QuorumVerifierCount)
@@ -128,20 +242,32 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 	if !common.IsHexAddress(input.Buyer) {
 		return nil, fmt.Errorf("%w: input.Buyer %q is not a valid hex address", ErrValidation, input.Buyer)
 	}
-	if common.HexToAddress(input.Buyer) == (common.Address{}) {
+	buyer := common.HexToAddress(input.Buyer)
+	if buyer == (common.Address{}) {
 		return nil, fmt.Errorf("%w: input.Buyer must not be the zero address", ErrValidation)
 	}
 	if !common.IsHexAddress(input.Worker) {
 		return nil, fmt.Errorf("%w: input.Worker %q is not a valid hex address", ErrValidation, input.Worker)
 	}
-	if common.HexToAddress(input.Worker) == (common.Address{}) {
+	worker := common.HexToAddress(input.Worker)
+	if worker == (common.Address{}) {
 		return nil, fmt.Errorf("%w: input.Worker must not be the zero address", ErrValidation)
 	}
 	if !common.IsHexAddress(input.Arbitrator) {
 		return nil, fmt.Errorf("%w: input.Arbitrator %q is not a valid hex address", ErrValidation, input.Arbitrator)
 	}
-	if common.HexToAddress(input.Arbitrator) == (common.Address{}) {
+	arbitrator := common.HexToAddress(input.Arbitrator)
+	if arbitrator == (common.Address{}) {
 		return nil, fmt.Errorf("%w: input.Arbitrator must not be the zero address", ErrValidation)
+	}
+	if buyer == worker {
+		return nil, fmt.Errorf("%w: buyer and worker must be distinct addresses", ErrValidation)
+	}
+	if buyer == arbitrator {
+		return nil, fmt.Errorf("%w: buyer and arbitrator must be distinct addresses", ErrValidation)
+	}
+	if worker == arbitrator {
+		return nil, fmt.Errorf("%w: worker and arbitrator must be distinct addresses", ErrValidation)
 	}
 	if !common.IsHexAddress(s.Cfg.FactoryAddress) {
 		return nil, fmt.Errorf("%w: s.Cfg.FactoryAddress %q is not a valid hex address", ErrValidation, s.Cfg.FactoryAddress)
@@ -158,6 +284,7 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 
 	var verifierPanel [7]common.Address
 	panelForJSON := make([]string, int(input.QuorumVerifierCount))
+	seenVerifiers := make(map[common.Address]int, int(input.QuorumVerifierCount))
 	for i := 0; i < int(input.QuorumVerifierCount); i++ {
 		if !common.IsHexAddress(input.VerifierPanel[i]) {
 			return nil, fmt.Errorf("%w: verifier_panel[%d] %q is not a valid hex address", ErrValidation, i, input.VerifierPanel[i])
@@ -166,6 +293,19 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 		if addr == (common.Address{}) {
 			return nil, fmt.Errorf("%w: input.VerifierPanel[%d] must not be the zero address", ErrValidation, i)
 		}
+		if addr == buyer {
+			return nil, fmt.Errorf("%w: verifier_panel[%d] must not match buyer", ErrValidation, i)
+		}
+		if addr == worker {
+			return nil, fmt.Errorf("%w: verifier_panel[%d] must not match worker", ErrValidation, i)
+		}
+		if addr == arbitrator {
+			return nil, fmt.Errorf("%w: verifier_panel[%d] must not match arbitrator", ErrValidation, i)
+		}
+		if priorIdx, exists := seenVerifiers[addr]; exists {
+			return nil, fmt.Errorf("%w: verifier_panel[%d] duplicates verifier_panel[%d]", ErrValidation, i, priorIdx)
+		}
+		seenVerifiers[addr] = i
 		verifierPanel[i] = addr
 		panelForJSON[i] = strings.ToLower(addr.Hex())
 	}
@@ -181,14 +321,22 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 	}
 
 	factory := common.HexToAddress(s.Cfg.FactoryAddress)
+	if input.QuorumThreshold == 0 || input.QuorumThreshold > input.QuorumVerifierCount {
+		return nil, fmt.Errorf(
+			"%w: quorum threshold must be > 0 and <= quorum verifier count (threshold=%d, quorum_verifier_count=%d)",
+			ErrValidation,
+			input.QuorumThreshold,
+			input.QuorumVerifierCount,
+		)
+	}
 	params := chain.CreateEscrowParams{
-		Buyer:                    common.HexToAddress(input.Buyer),
-		Worker:                   common.HexToAddress(input.Worker),
+		Buyer:                    buyer,
+		Worker:                   worker,
 		VerifierPanel:            verifierPanel,
 		QuorumThreshold:          input.QuorumThreshold,
 		QuorumVerifierCount:      input.QuorumVerifierCount,
 		VerifierStakePerVerifier: input.VerifierStakePerVerifier,
-		Arbitrator:               common.HexToAddress(input.Arbitrator),
+		Arbitrator:               arbitrator,
 		Amount:                   input.Amount,
 		WorkerStake:              input.WorkerStake,
 		SubmissionDeadline:       input.SubmissionDeadline,
@@ -206,15 +354,6 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 		ParentEscrow:             input.ParentEscrow,
 	}
 
-	chainTx, err := s.Chain.CreateEscrow(ctx, factory, params)
-	if err != nil {
-		return nil, fmt.Errorf("chain create escrow: %w", err)
-	}
-	receiptResult, err := chain.WaitMinedAndParseEscrow(ctx, s.Chain, chainTx.Hash())
-	if err != nil {
-		return nil, fmt.Errorf("wait escrow receipt: %w", err)
-	}
-
 	milestoneCount := 1
 	if len(input.Milestones) > 0 {
 		milestoneCount = len(input.Milestones)
@@ -223,6 +362,139 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 	if err != nil {
 		return nil, fmt.Errorf("marshal verifier panel: %w", err)
 	}
+	createIntentID, err := buildCreateEscrowIntentID(
+		input,
+		s.Cfg.ChainID,
+		factory,
+		buyer,
+		worker,
+		arbitrator,
+		panelForJSON,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("build create intent id: %w", err)
+	}
+
+	escrowRecord, err := s.DB.GetEscrowByCreateIntentID(ctx, createIntentID)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("get escrow by create intent: %w", err)
+		}
+		dbTx, txErr := s.DB.BeginTx(ctx)
+		if txErr != nil {
+			return nil, fmt.Errorf("begin db transaction: %w", txErr)
+		}
+		defer dbTx.Rollback()
+
+		task, txErr := s.DB.CreateTaskTx(ctx, dbTx, input.Title, input.Description, input.TaskSpecHash.Hex())
+		if txErr != nil {
+			return nil, fmt.Errorf("create task: %w", txErr)
+		}
+
+		escrowRecord, txErr = s.DB.CreateEscrowTx(ctx, dbTx, &storage.Escrow{
+			TaskID:                   task.ID,
+			ChainID:                  s.Cfg.ChainID,
+			FactoryAddress:           s.Cfg.FactoryAddress,
+			EscrowAddress:            pendingEscrowAddress(createIntentID),
+			EscrowID:                 0,
+			CreateIntentID:           createIntentID,
+			CreateTxHash:             "",
+			Buyer:                    input.Buyer,
+			Worker:                   input.Worker,
+			Verifier:                 panelForJSON[0],
+			VerifierPanelJSON:        string(panelJSONBytes),
+			QuorumThreshold:          int(input.QuorumThreshold),
+			QuorumVerifierCount:      int(input.QuorumVerifierCount),
+			VerifierStakePerVerifier: input.VerifierStakePerVerifier.String(),
+			Arbitrator:               input.Arbitrator,
+			Amount:                   input.Amount.String(),
+			WorkerStake:              input.WorkerStake.String(),
+			Token:                    input.Token.Hex(),
+			Status:                   escrowStatusPendingCreate,
+			SubmissionDeadline:       input.SubmissionDeadlineDB,
+			ReviewPeriodSeconds:      input.ReviewPeriodSecondsDB,
+			DisputePeriodSeconds:     input.DisputePeriodSecondsDB,
+			ArbitratorTimeoutSeconds: input.ArbitratorTimeoutSecondsDB,
+			MilestoneCount:           milestoneCount,
+			CurrentMilestone:         0,
+			BackupWorker:             input.BackupWorker.Hex(),
+			BackupDeadlineExtension:  input.BackupDeadlineDB,
+			ActiveWorker:             input.Worker,
+			ServiceTier:              int(input.ServiceTier),
+			ZKVerifier:               input.ZKVerifier.Hex(),
+			CircuitID:                fmt.Sprintf("0x%x", input.CircuitID),
+			ParentEscrowID:           input.ParentEscrowID,
+		})
+		if txErr != nil {
+			if errors.Is(txErr, storage.ErrDuplicateEscrowCreateIntent) {
+				if rbErr := dbTx.Rollback(); rbErr != nil {
+					return nil, fmt.Errorf("rollback duplicate create-intent transaction: %w", rbErr)
+				}
+				escrowRecord, err = s.DB.GetEscrowByCreateIntentID(ctx, createIntentID)
+				if err != nil {
+					return nil, fmt.Errorf("get escrow by create intent after duplicate: %w", err)
+				}
+			} else {
+				return nil, fmt.Errorf("create escrow db record: %w", txErr)
+			}
+		} else if txErr := dbTx.Commit(); txErr != nil {
+			return nil, fmt.Errorf("commit db transaction: %w", txErr)
+		}
+	}
+
+	if escrowRecord.Status == escrowStatusCreateFinalized && common.IsHexAddress(escrowRecord.EscrowAddress) && escrowRecord.EscrowID > 0 {
+		return &CreateEscrowResult{
+			EscrowID:       escrowRecord.ID,
+			TxHash:         escrowRecord.CreateTxHash,
+			TaskID:         escrowRecord.TaskID,
+			EscrowAddress:  escrowRecord.EscrowAddress,
+			ChainEscrowID:  escrowRecord.EscrowID,
+			MilestoneCount: escrowRecord.MilestoneCount,
+		}, nil
+	}
+
+	txHash := strings.TrimSpace(escrowRecord.CreateTxHash)
+	if txHash == "" {
+		transitioned, transitionErr := s.DB.TransitionEscrowStatus(
+			ctx,
+			escrowRecord.ID,
+			escrowStatusPendingCreate,
+			escrowStatusSubmittingCreateTx,
+		)
+		if transitionErr != nil {
+			return nil, fmt.Errorf("transition create status to submitting: %w", transitionErr)
+		}
+		if !transitioned {
+			latest, getErr := s.DB.GetEscrow(ctx, escrowRecord.ID)
+			if getErr != nil {
+				return nil, fmt.Errorf("get escrow after status transition conflict: %w", getErr)
+			}
+			escrowRecord = latest
+			txHash = strings.TrimSpace(escrowRecord.CreateTxHash)
+			if txHash == "" {
+				return nil, fmt.Errorf("escrow create request %s is already %s; retry after the in-flight attempt completes", createIntentID, escrowRecord.Status)
+			}
+		} else {
+			chainTx, chainErr := s.Chain.CreateEscrow(ctx, factory, params)
+			if chainErr != nil {
+				if resetErr := s.DB.UpdateEscrowStatus(ctx, escrowRecord.ID, escrowStatusPendingCreate); resetErr != nil {
+					slog.Warn("failed to reset pending escrow after createEscrow error", "escrow_id", escrowRecord.ID, "error", resetErr)
+				}
+				return nil, fmt.Errorf("chain create escrow: %w", chainErr)
+			}
+			txHash = chainTx.Hash().Hex()
+			if persistErr := s.DB.SetEscrowCreateTxHash(ctx, escrowRecord.ID, txHash, escrowStatusPendingConfirmation); persistErr != nil {
+				return nil, fmt.Errorf("persist create tx hash: %w", persistErr)
+			}
+		}
+	}
+	if txHash == "" {
+		return nil, fmt.Errorf("escrow create request %s has no transaction hash to resume", createIntentID)
+	}
+	receiptResult, err := chain.WaitMinedAndParseEscrow(ctx, s.Chain, common.HexToHash(txHash))
+	if err != nil {
+		return nil, fmt.Errorf("wait escrow receipt: %w", err)
+	}
 
 	dbTx, err := s.DB.BeginTx(ctx)
 	if err != nil {
@@ -230,45 +502,16 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 	}
 	defer dbTx.Rollback()
 
-	task, err := s.DB.CreateTaskTx(ctx, dbTx, input.Title, input.Description, input.TaskSpecHash.Hex())
+	err = s.DB.FinalizeEscrowCreateTx(
+		ctx,
+		dbTx,
+		escrowRecord.ID,
+		receiptResult.EscrowAddress.Hex(),
+		receiptResult.EscrowID,
+		escrowStatusCreateFinalized,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("create task: %w", err)
-	}
-
-	escrowRecord, err := s.DB.CreateEscrowTx(ctx, dbTx, &storage.Escrow{
-		TaskID:                   task.ID,
-		ChainID:                  s.Cfg.ChainID,
-		FactoryAddress:           s.Cfg.FactoryAddress,
-		EscrowAddress:            receiptResult.EscrowAddress.Hex(),
-		EscrowID:                 receiptResult.EscrowID,
-		Buyer:                    input.Buyer,
-		Worker:                   input.Worker,
-		Verifier:                 panelForJSON[0],
-		VerifierPanelJSON:        string(panelJSONBytes),
-		QuorumThreshold:          int(input.QuorumThreshold),
-		QuorumVerifierCount:      int(input.QuorumVerifierCount),
-		VerifierStakePerVerifier: input.VerifierStakePerVerifier.String(),
-		Arbitrator:               input.Arbitrator,
-		Amount:                   input.Amount.String(),
-		WorkerStake:              input.WorkerStake.String(),
-		Token:                    input.Token.Hex(),
-		Status:                   "created",
-		SubmissionDeadline:       input.SubmissionDeadlineDB,
-		ReviewPeriodSeconds:      input.ReviewPeriodSecondsDB,
-		DisputePeriodSeconds:     input.DisputePeriodSecondsDB,
-		ArbitratorTimeoutSeconds: input.ArbitratorTimeoutSecondsDB,
-		MilestoneCount:           milestoneCount,
-		CurrentMilestone:         0,
-		BackupWorker:             input.BackupWorker.Hex(),
-		BackupDeadlineExtension:  input.BackupDeadlineDB,
-		ActiveWorker:             input.Worker,
-		ServiceTier:              int(input.ServiceTier),
-		ZKVerifier:               input.ZKVerifier.Hex(),
-		CircuitID:                fmt.Sprintf("0x%x", input.CircuitID),
-		ParentEscrowID:           input.ParentEscrowID,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create escrow db record: %w", err)
+		return nil, fmt.Errorf("finalize escrow create record: %w", err)
 	}
 
 	for i, milestone := range input.Milestones {
@@ -292,8 +535,8 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 
 	return &CreateEscrowResult{
 		EscrowID:       escrowRecord.ID,
-		TxHash:         chainTx.Hash().Hex(),
-		TaskID:         task.ID,
+		TxHash:         txHash,
+		TaskID:         escrowRecord.TaskID,
 		EscrowAddress:  receiptResult.EscrowAddress.Hex(),
 		ChainEscrowID:  receiptResult.EscrowID,
 		MilestoneCount: milestoneCount,
@@ -485,7 +728,7 @@ func (s *Service) SubmitWork(ctx context.Context, escrow *storage.Escrow, req Su
 	copy(hashBytes[:], hash.Bytes())
 	proofHash, err := ParseProofHashHex(req.ProofHash)
 	if err != nil {
-		return "", fmt.Errorf("invalid proof_hash: %w", err)
+		return "", fmt.Errorf("%w: invalid proof_hash: %w", ErrValidation, err)
 	}
 
 	addr := common.HexToAddress(escrow.EscrowAddress)
@@ -538,7 +781,7 @@ func (s *Service) ApproveWork(ctx context.Context, escrow *storage.Escrow, role 
 			s.runIndexerOnce(ctx)
 			return tx.Hash().Hex(), nil
 		default:
-			return "", errors.New("role must be 'buyer' or 'verifier'")
+			return "", fmt.Errorf("%w: role must be 'buyer' or 'verifier'", ErrValidation)
 		}
 	}
 
@@ -558,7 +801,7 @@ func (s *Service) ApproveWork(ctx context.Context, escrow *storage.Escrow, role 
 		s.runIndexerOnce(ctx)
 		return tx.Hash().Hex(), nil
 	default:
-		return "", errors.New("role must be 'buyer' or 'verifier'")
+		return "", fmt.Errorf("%w: role must be 'buyer' or 'verifier'", ErrValidation)
 	}
 }
 
@@ -649,7 +892,7 @@ func (s *Service) DisputeWork(ctx context.Context, escrow *storage.Escrow, role,
 			s.runIndexerOnce(ctx)
 			return tx.Hash().Hex(), nil
 		default:
-			return "", errors.New("role must be 'buyer', 'verifier', or 'worker'")
+			return "", fmt.Errorf("%w: role must be 'buyer', 'verifier', or 'worker'", ErrValidation)
 		}
 	}
 
@@ -676,13 +919,13 @@ func (s *Service) DisputeWork(ctx context.Context, escrow *storage.Escrow, role,
 		s.runIndexerOnce(ctx)
 		return tx.Hash().Hex(), nil
 	default:
-		return "", errors.New("role must be 'buyer', 'verifier', or 'worker'")
+		return "", fmt.Errorf("%w: role must be 'buyer', 'verifier', or 'worker'", ErrValidation)
 	}
 }
 
 func (s *Service) ResolveDispute(ctx context.Context, escrow *storage.Escrow, workerAwardBps uint16, resolutionURI string, milestoneIndex *int) (string, error) {
 	if workerAwardBps > 10_000 {
-		return "", errors.New("worker_award_bps must be between 0 and 10000")
+		return "", fmt.Errorf("%w: worker_award_bps must be between 0 and 10000", ErrValidation)
 	}
 	resolvedMilestone, err := validateMilestoneIndex(escrow.MilestoneCount, milestoneIndex)
 	if err != nil {
@@ -773,7 +1016,7 @@ func (s *Service) CancelBeforeFunding(ctx context.Context, escrow *storage.Escro
 
 func (s *Service) AbortRemainingMilestones(ctx context.Context, escrow *storage.Escrow) (string, error) {
 	if escrow.MilestoneCount <= 1 {
-		return "", errors.New("abort_remaining_milestones is only available for multi-milestone escrows")
+		return "", fmt.Errorf("%w: abort_remaining_milestones is only available for multi-milestone escrows", ErrValidation)
 	}
 	tx, err := s.Chain.AbortRemainingMilestones(ctx, common.HexToAddress(escrow.EscrowAddress))
 	if err != nil {
@@ -785,10 +1028,10 @@ func (s *Service) AbortRemainingMilestones(ctx context.Context, escrow *storage.
 
 func (s *Service) ActivateBackup(ctx context.Context, escrow *storage.Escrow) (string, error) {
 	if escrow.BackupWorker == "" || escrow.BackupWorker == zeroAddress {
-		return "", errors.New("this escrow has no backup worker designated")
+		return "", fmt.Errorf("%w: this escrow has no backup worker designated", ErrValidation)
 	}
 	if escrow.BackupActivated {
-		return "", errors.New("backup already activated")
+		return "", fmt.Errorf("%w: backup already activated", ErrValidation)
 	}
 	tx, err := s.Chain.ActivateBackup(ctx, common.HexToAddress(escrow.EscrowAddress))
 	if err != nil {
@@ -801,15 +1044,15 @@ func (s *Service) ActivateBackup(ctx context.Context, escrow *storage.Escrow) (s
 func validateMilestoneIndex(milestoneCount int, milestoneIndex *int) (*int, error) {
 	if milestoneCount > 1 {
 		if milestoneIndex == nil {
-			return nil, errors.New("milestone_index required for multi-milestone escrow")
+			return nil, fmt.Errorf("%w: milestone_index required for multi-milestone escrow", ErrValidation)
 		}
 		if *milestoneIndex < 0 || *milestoneIndex >= milestoneCount {
-			return nil, fmt.Errorf("milestone_index %d out of range [0, %d)", *milestoneIndex, milestoneCount)
+			return nil, fmt.Errorf("%w: milestone_index %d out of range [0, %d)", ErrValidation, *milestoneIndex, milestoneCount)
 		}
 		return milestoneIndex, nil
 	}
 	if milestoneIndex != nil {
-		return nil, errors.New("milestone_index is not valid for single-milestone escrows")
+		return nil, fmt.Errorf("%w: milestone_index is not valid for single-milestone escrows", ErrValidation)
 	}
 	return nil, nil
 }
@@ -819,10 +1062,10 @@ func validateOptionalMilestoneIndex(milestoneCount int, milestoneIndex *int) (*i
 		return nil, nil
 	}
 	if milestoneCount <= 1 {
-		return nil, errors.New("milestone_index is not valid for single-milestone escrows")
+		return nil, fmt.Errorf("%w: milestone_index is not valid for single-milestone escrows", ErrValidation)
 	}
 	if *milestoneIndex < 0 || *milestoneIndex >= milestoneCount {
-		return nil, fmt.Errorf("milestone_index %d out of range [0, %d)", *milestoneIndex, milestoneCount)
+		return nil, fmt.Errorf("%w: milestone_index %d out of range [0, %d)", ErrValidation, *milestoneIndex, milestoneCount)
 	}
 	return milestoneIndex, nil
 }
@@ -836,10 +1079,10 @@ func (s *Service) validateAndPersistAttestationChain(ctx context.Context, escrow
 	if len(childEscrows) > 0 {
 		atts, parseErr := attestation.ParseCompletionAttestations(chainJSON)
 		if parseErr != nil {
-			return fmt.Errorf("invalid attestation_chain_json: %w", parseErr)
+			return fmt.Errorf("%w: invalid attestation_chain_json: %w", ErrValidation, parseErr)
 		}
 		if len(atts) == 0 {
-			return errors.New("attestation_chain_json required when escrow has sub-delegated child escrows")
+			return fmt.Errorf("%w: attestation_chain_json required when escrow has sub-delegated child escrows", ErrValidation)
 		}
 		childIDs := make([]int64, len(childEscrows))
 		for i, child := range childEscrows {
@@ -847,7 +1090,7 @@ func (s *Service) validateAndPersistAttestationChain(ctx context.Context, escrow
 		}
 		validation := attestation.ValidateChain(atts, childIDs, time.Now())
 		if !validation.Valid {
-			return fmt.Errorf("attestation chain validation failed: %s", strings.Join(validation.Reasons, "; "))
+			return fmt.Errorf("%w: attestation chain validation failed: %s", ErrValidation, strings.Join(validation.Reasons, "; "))
 		}
 		return s.persistAttestationChain(ctx, escrowID, milestoneIndex, validation, atts)
 	}
@@ -855,12 +1098,12 @@ func (s *Service) validateAndPersistAttestationChain(ctx context.Context, escrow
 	if chainJSON != "" && chainJSON != "[]" {
 		atts, parseErr := attestation.ParseCompletionAttestations(chainJSON)
 		if parseErr != nil {
-			return fmt.Errorf("invalid attestation_chain_json: %w", parseErr)
+			return fmt.Errorf("%w: invalid attestation_chain_json: %w", ErrValidation, parseErr)
 		}
 		if len(atts) > 0 {
 			validation := attestation.ValidateChain(atts, nil, time.Now())
 			if !validation.Valid {
-				return fmt.Errorf("attestation chain validation failed: %s", strings.Join(validation.Reasons, "; "))
+				return fmt.Errorf("%w: attestation chain validation failed: %s", ErrValidation, strings.Join(validation.Reasons, "; "))
 			}
 			return s.persistAttestationChain(ctx, escrowID, milestoneIndex, validation, atts)
 		}

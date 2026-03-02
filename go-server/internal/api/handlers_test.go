@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -241,6 +242,87 @@ func TestCreateEscrow_ChainError(t *testing.T) {
 	}
 }
 
+func TestCreateEscrow_DuplicateCoreRolesRejectedByService(t *testing.T) {
+	env := setup(t)
+
+	body := `{
+		"title": "Test", "description": "x",
+		"buyer": "0x1000000000000000000000000000000000000001",
+		"worker": "0x1000000000000000000000000000000000000001",
+		"verifier_panel": ["0x3000000000000000000000000000000000000003"],
+		"quorum_threshold": 1,
+		"quorum_verifier_count": 1,
+		"verifier_stake_per_verifier": "0",
+		"arbitrator": "0x4000000000000000000000000000000000000004",
+		"amount": "100", "submission_deadline": "1700000000",
+		"review_period_seconds": "86400", "dispute_period_seconds": "172800",
+		"arbitrator_timeout_seconds": "604800"
+	}`
+
+	rr := env.request(t, "POST", "/api/v1/escrows", body)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp := decodeJSON(t, rr)
+	msg, _ := resp["error"].(string)
+	if !strings.Contains(msg, "buyer and worker must be distinct addresses") {
+		t.Fatalf("expected duplicate core role validation message, got: %s", msg)
+	}
+	if len(env.mock.SentTxs) != 0 {
+		t.Fatalf("expected no on-chain create submission, got %d tx records", len(env.mock.SentTxs))
+	}
+}
+
+func TestCreateEscrow_RetryInFlightPendingDoesNotResubmit(t *testing.T) {
+	env := setup(t)
+	env.mock.CreateEscrowErr = errors.New("transient send failure")
+
+	body := `{
+		"title": "In-flight Retry", "description": "x",
+		"buyer": "0x1000000000000000000000000000000000000001",
+		"worker": "0x2000000000000000000000000000000000000002",
+		"verifier_panel": ["0x3000000000000000000000000000000000000003"],
+		"quorum_threshold": 1,
+		"quorum_verifier_count": 1,
+		"verifier_stake_per_verifier": "0",
+		"arbitrator": "0x4000000000000000000000000000000000000004",
+		"amount": "100", "submission_deadline": "1700000000",
+		"review_period_seconds": "86400", "dispute_period_seconds": "172800",
+		"arbitrator_timeout_seconds": "604800"
+	}`
+
+	first := env.request(t, "POST", "/api/v1/escrows", body)
+	if first.Code != http.StatusInternalServerError {
+		t.Fatalf("expected first attempt 500, got %d: %s", first.Code, first.Body.String())
+	}
+
+	ctx := context.Background()
+	escrows, err := env.db.ListEscrows(ctx, "", "", "")
+	if err != nil {
+		t.Fatalf("list escrows: %v", err)
+	}
+	if len(escrows) != 1 {
+		t.Fatalf("expected one pending escrow record, got %d", len(escrows))
+	}
+	if err := env.db.UpdateEscrowStatus(ctx, escrows[0].ID, "submitting"); err != nil {
+		t.Fatalf("set in-flight submitting status: %v", err)
+	}
+
+	env.mock.CreateEscrowErr = nil
+	env.mock.Receipt = chain.MakeEscrowCreatedReceipt(
+		1,
+		common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12"),
+		common.HexToAddress("0x1000000000000000000000000000000000000001"),
+	)
+	second := env.request(t, "POST", "/api/v1/escrows", body)
+	if second.Code != http.StatusInternalServerError {
+		t.Fatalf("expected second attempt 500 while in-flight, got %d: %s", second.Code, second.Body.String())
+	}
+	if len(env.mock.SentTxs) != 0 {
+		t.Fatalf("expected no createEscrow re-submission, got %d tx records", len(env.mock.SentTxs))
+	}
+}
+
 func TestCreateEscrow_InvalidJSON(t *testing.T) {
 	env := setup(t)
 
@@ -437,6 +519,36 @@ func TestSubmitWork_Success(t *testing.T) {
 	rr := env.request(t, "POST", "/api/v1/escrows/1/submit", `{"submission_uri": "ipfs://result"}`)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestSubmitWork_InternalFailureReturns500(t *testing.T) {
+	env := setup(t)
+	env.mock.SubmitErr = errors.New("rpc submit failed")
+	ctx := context.Background()
+
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
+		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
+		EscrowAddress: "0xEscrowAddr",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Amount: "100", Status: "funded",
+	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
+
+	rr := env.request(t, "POST", "/api/v1/escrows/1/submit", `{"submission_uri": "ipfs://result"}`)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp := decodeJSON(t, rr)
+	msg, _ := resp["error"].(string)
+	if msg != "internal server error" {
+		t.Fatalf("expected generic internal error message, got: %s", msg)
 	}
 }
 

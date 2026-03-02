@@ -17,6 +17,8 @@ type Escrow struct {
 	FactoryAddress           string
 	EscrowAddress            string
 	EscrowID                 int64
+	CreateIntentID           string `json:"-"`
+	CreateTxHash             string `json:"-"`
 	Buyer                    string
 	Worker                   string
 	Verifier                 string // Legacy single-verifier mirror (first panel member) for backward compatibility in older RFQ flows

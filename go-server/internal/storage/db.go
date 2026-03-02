@@ -85,6 +85,9 @@ var migration024SQL string
 //go:embed migrations/025_add_ucp_sessions.sql
 var migration025SQL string
 
+//go:embed migrations/026_add_escrow_create_intent.sql
+var migration026SQL string
+
 type DB struct {
 	db *sql.DB
 }
@@ -140,6 +143,7 @@ func Open(dsn string) (*DB, error) {
 		{"023", migration023SQL},
 		{"024", migration024SQL},
 		{"025", migration025SQL},
+		{"026", migration026SQL},
 	}
 
 	for _, m := range migrations {

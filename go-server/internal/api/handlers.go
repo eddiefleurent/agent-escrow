@@ -404,11 +404,11 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		TaskSpecHash: specHash,
 	})
 	if err != nil {
-		if errors.Is(err, escrowservice.ErrValidation) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		if escrowservice.IsValidation(err) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": validationMessage(err)})
 			return
 		}
-		slog.Error("create escrow failed", "error", err)
+		slog.Error("create escrow failed", "method", r.Method, "path", r.URL.Path, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
@@ -675,7 +675,7 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 		AttestationChainJSON: req.AttestationChainJSON,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		handleEscrowServiceActionError(w, r, "submit_work", id, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
@@ -706,7 +706,7 @@ func (h *Handlers) ApproveWork(w http.ResponseWriter, r *http.Request) {
 	}
 	txHash, err := h.escrowService().ApproveWork(r.Context(), escrow, req.Role, req.MilestoneIndex)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		handleEscrowServiceActionError(w, r, "approve_work", id, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
@@ -742,7 +742,7 @@ func (h *Handlers) VerifyAndApprove(w http.ResponseWriter, r *http.Request) {
 	}
 	txHash, err := h.escrowService().VerifyAndApprove(r.Context(), escrow, proofBytes, req.MilestoneIndex)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		handleEscrowServiceActionError(w, r, "verify_and_approve", id, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
@@ -778,7 +778,7 @@ func (h *Handlers) CastVerifierVote(w http.ResponseWriter, r *http.Request) {
 	}
 	txHash, err := h.escrowService().CastVerifierVote(r.Context(), escrow, *req.Approve, req.ReasonURI, req.MilestoneIndex)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		handleEscrowServiceActionError(w, r, "cast_verifier_vote", id, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
@@ -810,7 +810,7 @@ func (h *Handlers) DisputeWork(w http.ResponseWriter, r *http.Request) {
 	}
 	txHash, err := h.escrowService().DisputeWork(r.Context(), escrow, req.Role, req.ReasonURI, req.MilestoneIndex)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		handleEscrowServiceActionError(w, r, "dispute_work", id, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
@@ -848,7 +848,7 @@ func (h *Handlers) ResolveDispute(w http.ResponseWriter, r *http.Request) {
 	}
 	txHash, err := h.escrowService().ResolveDispute(r.Context(), escrow, uint16(bps), req.ResolutionURI, req.MilestoneIndex)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		handleEscrowServiceActionError(w, r, "resolve_dispute", id, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
@@ -868,7 +868,7 @@ func (h *Handlers) AbortRemainingMilestones(w http.ResponseWriter, r *http.Reque
 	}
 	txHash, err := h.escrowService().AbortRemainingMilestones(r.Context(), escrow)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		handleEscrowServiceActionError(w, r, "abort_remaining_milestones", id, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
@@ -888,7 +888,7 @@ func (h *Handlers) ActivateBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	txHash, err := h.escrowService().ActivateBackup(r.Context(), escrow)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		handleEscrowServiceActionError(w, r, "activate_backup", id, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
@@ -2043,6 +2043,32 @@ func (h *Handlers) GetLatestCheckpoint(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, cp)
+}
+
+func validationMessage(err error) string {
+	msg := strings.TrimSpace(err.Error())
+	prefix := escrowservice.ErrValidation.Error() + ":"
+	msg = strings.TrimSpace(strings.TrimPrefix(msg, prefix))
+	if msg == "" {
+		return "invalid request"
+	}
+	return msg
+}
+
+func handleEscrowServiceActionError(w http.ResponseWriter, r *http.Request, action string, escrowID int64, err error) {
+	if escrowservice.IsValidation(err) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": validationMessage(err)})
+		return
+	}
+	slog.Error(
+		"escrow action failed",
+		"action", action,
+		"escrow_id", escrowID,
+		"method", r.Method,
+		"path", r.URL.Path,
+		"error", err,
+	)
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

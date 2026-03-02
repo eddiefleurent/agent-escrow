@@ -76,6 +76,8 @@ func (d *DB) GetTask(ctx context.Context, id int64) (*Task, error) {
 
 // Escrow queries
 
+var ErrDuplicateEscrowCreateIntent = errors.New("duplicate escrow create intent")
+
 func createEscrowOn(ctx context.Context, q dbExecer, e *Escrow) (*Escrow, error) {
 	msCount := e.MilestoneCount
 	if msCount == 0 {
@@ -94,9 +96,10 @@ func createEscrowOn(ctx context.Context, q dbExecer, e *Escrow) (*Escrow, error)
 		circuitID = "0x0000000000000000000000000000000000000000000000000000000000000000"
 	}
 	res, err := q.ExecContext(ctx,
-		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, verifier_panel_json, quorum_threshold, quorum_verifier_count, verifier_stake_per_verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, service_tier, zk_verifier, circuit_id, parent_escrow_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, create_intent_id, create_tx_hash, buyer, worker, verifier, verifier_panel_json, quorum_threshold, quorum_verifier_count, verifier_stake_per_verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, service_tier, zk_verifier, circuit_id, parent_escrow_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.TaskID, e.ChainID, e.FactoryAddress, e.EscrowAddress, e.EscrowID,
+		e.CreateIntentID, e.CreateTxHash,
 		e.Buyer, e.Worker, e.Verifier, e.VerifierPanelJSON, e.QuorumThreshold, e.QuorumVerifierCount, e.VerifierStakePerVerifier,
 		e.Arbitrator, e.Amount, e.WorkerStake, e.Token, e.Status,
 		e.SubmissionDeadline, e.ReviewPeriodSeconds, e.DisputePeriodSeconds, e.ArbitratorTimeoutSeconds,
@@ -105,6 +108,9 @@ func createEscrowOn(ctx context.Context, q dbExecer, e *Escrow) (*Escrow, error)
 		e.ServiceTier, zkVerifier, circuitID, e.ParentEscrowID,
 	)
 	if err != nil {
+		if isSQLiteUniqueConstraint(err, "escrows.create_intent_id") {
+			return nil, fmt.Errorf("insert escrow: %w", ErrDuplicateEscrowCreateIntent)
+		}
 		return nil, fmt.Errorf("insert escrow: %w", err)
 	}
 	id, err := res.LastInsertId()
@@ -127,7 +133,7 @@ func (d *DB) CreateEscrowTx(ctx context.Context, tx *sql.Tx, e *Escrow) (*Escrow
 	return createEscrowOn(ctx, tx, e)
 }
 
-const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, verifier_panel_json, quorum_threshold, quorum_verifier_count, verifier_stake_per_verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, service_tier, zk_verifier, circuit_id, parent_escrow_id, created_at, updated_at`
+const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, create_intent_id, create_tx_hash, buyer, worker, verifier, verifier_panel_json, quorum_threshold, quorum_verifier_count, verifier_stake_per_verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, service_tier, zk_verifier, circuit_id, parent_escrow_id, created_at, updated_at`
 
 func scanEscrow(scanner interface{ Scan(...any) error }) (*Escrow, error) {
 	e := &Escrow{}
@@ -135,6 +141,7 @@ func scanEscrow(scanner interface{ Scan(...any) error }) (*Escrow, error) {
 	var backupActivatedInt, frozenInt int
 	var parentEscrowID sql.NullInt64
 	err := scanner.Scan(&e.ID, &e.TaskID, &e.ChainID, &e.FactoryAddress, &e.EscrowAddress, &e.EscrowID,
+		&e.CreateIntentID, &e.CreateTxHash,
 		&e.Buyer, &e.Worker, &e.Verifier, &e.VerifierPanelJSON, &e.QuorumThreshold, &e.QuorumVerifierCount, &e.VerifierStakePerVerifier,
 		&e.Arbitrator, &e.Amount, &e.WorkerStake, &e.Token, &e.Status,
 		&e.SubmissionDeadline, &e.ReviewPeriodSeconds, &e.DisputePeriodSeconds, &e.ArbitratorTimeoutSeconds,
@@ -180,6 +187,15 @@ func (d *DB) GetEscrowByAddress(ctx context.Context, addr string) (*Escrow, erro
 	return e, nil
 }
 
+func (d *DB) GetEscrowByCreateIntentID(ctx context.Context, createIntentID string) (*Escrow, error) {
+	row := d.db.QueryRowContext(ctx, `SELECT `+escrowColumns+` FROM escrows WHERE create_intent_id = ?`, createIntentID)
+	e, err := scanEscrow(row)
+	if err != nil {
+		return nil, fmt.Errorf("get escrow by create intent: %w", err)
+	}
+	return e, nil
+}
+
 func (d *DB) GetEscrowByOnChainID(ctx context.Context, chainID, escrowID int64) (*Escrow, error) {
 	row := d.db.QueryRowContext(ctx,
 		`SELECT `+escrowColumns+` FROM escrows WHERE chain_id = ? AND escrow_id = ?`,
@@ -198,6 +214,46 @@ func (d *DB) UpdateEscrowStatus(ctx context.Context, id int64, status string) er
 	)
 	if err != nil {
 		return fmt.Errorf("UpdateEscrowStatus: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) TransitionEscrowStatus(ctx context.Context, id int64, fromStatus, toStatus string) (bool, error) {
+	res, err := d.db.ExecContext(
+		ctx,
+		`UPDATE escrows SET status = ?, updated_at = datetime('now') WHERE id = ? AND status = ?`,
+		toStatus, id, fromStatus,
+	)
+	if err != nil {
+		return false, fmt.Errorf("TransitionEscrowStatus: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("TransitionEscrowStatus rows affected: %w", err)
+	}
+	return rows == 1, nil
+}
+
+func (d *DB) SetEscrowCreateTxHash(ctx context.Context, id int64, txHash, status string) error {
+	_, err := d.db.ExecContext(
+		ctx,
+		`UPDATE escrows SET create_tx_hash = ?, status = ?, updated_at = datetime('now') WHERE id = ?`,
+		txHash, status, id,
+	)
+	if err != nil {
+		return fmt.Errorf("SetEscrowCreateTxHash: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) FinalizeEscrowCreateTx(ctx context.Context, tx *sql.Tx, id int64, escrowAddress string, escrowID int64, status string) error {
+	_, err := tx.ExecContext(
+		ctx,
+		`UPDATE escrows SET escrow_address = ?, escrow_id = ?, status = ?, updated_at = datetime('now') WHERE id = ?`,
+		escrowAddress, escrowID, status, id,
+	)
+	if err != nil {
+		return fmt.Errorf("FinalizeEscrowCreateTx: %w", err)
 	}
 	return nil
 }
