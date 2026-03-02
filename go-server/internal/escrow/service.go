@@ -805,7 +805,8 @@ func (s *Service) SubmitWork(ctx context.Context, escrow *storage.Escrow, req Su
 	hash := crypto.Keccak256Hash([]byte(req.SubmissionURI))
 	var hashBytes [32]byte
 	copy(hashBytes[:], hash.Bytes())
-	if err := s.validateAndPersistAttestationChain(ctx, escrow.ID, milestoneIndex, req.AttestationChainJSON); err != nil {
+	validatedAttestationChain, err := s.validateAttestationChain(ctx, escrow.ID, req.AttestationChainJSON)
+	if err != nil {
 		return "", err
 	}
 
@@ -813,22 +814,27 @@ func (s *Service) SubmitWork(ctx context.Context, escrow *storage.Escrow, req Su
 	if err != nil {
 		return "", err
 	}
+	var tx *types.Transaction
 	if milestoneIndex != nil {
 		msIdxU8, convErr := numconv.IntToUint8(*milestoneIndex, "milestone_index")
 		if convErr != nil {
 			return "", convErr
 		}
-		tx, err := s.Chain.SubmitMilestone(ctx, addr, msIdxU8, hashBytes, req.SubmissionURI, proofHash)
+		tx, err = s.Chain.SubmitMilestone(ctx, addr, msIdxU8, hashBytes, req.SubmissionURI, proofHash)
 		if err != nil {
 			return "", fmt.Errorf("submit milestone: %w", err)
 		}
-		s.runIndexerOnce(ctx)
-		return tx.Hash().Hex(), nil
+	} else {
+		tx, err = s.Chain.Submit(ctx, addr, hashBytes, req.SubmissionURI, proofHash)
+		if err != nil {
+			return "", fmt.Errorf("submit: %w", err)
+		}
 	}
 
-	tx, err := s.Chain.Submit(ctx, addr, hashBytes, req.SubmissionURI, proofHash)
-	if err != nil {
-		return "", fmt.Errorf("submit: %w", err)
+	if validatedAttestationChain != nil {
+		if err := s.persistAttestationChain(ctx, escrow.ID, milestoneIndex, validatedAttestationChain.validation, validatedAttestationChain.attestations); err != nil {
+			return "", fmt.Errorf("persist attestation chain: %w", err)
+		}
 	}
 	s.runIndexerOnce(ctx)
 	return tx.Hash().Hex(), nil
@@ -1184,19 +1190,24 @@ func validateOptionalMilestoneIndex(milestoneCount int, milestoneIndex *int) (*i
 	return milestoneIndex, nil
 }
 
-func (s *Service) validateAndPersistAttestationChain(ctx context.Context, escrowID int64, milestoneIndex *int, chainJSON string) error {
+type validatedAttestationChain struct {
+	validation   attestation.ChainValidationResult
+	attestations []attestation.CompletionAttestation
+}
+
+func (s *Service) validateAttestationChain(ctx context.Context, escrowID int64, chainJSON string) (*validatedAttestationChain, error) {
 	childEscrows, err := s.DB.ListChildEscrows(ctx, escrowID)
 	if err != nil {
-		return fmt.Errorf("failed to check child escrows: %w", err)
+		return nil, fmt.Errorf("failed to check child escrows: %w", err)
 	}
 
 	if len(childEscrows) > 0 {
 		atts, parseErr := attestation.ParseCompletionAttestations(chainJSON)
 		if parseErr != nil {
-			return fmt.Errorf("%w: invalid attestation_chain_json: %w", ErrValidation, parseErr)
+			return nil, fmt.Errorf("%w: invalid attestation_chain_json: %w", ErrValidation, parseErr)
 		}
 		if len(atts) == 0 {
-			return fmt.Errorf("%w: attestation_chain_json required when escrow has sub-delegated child escrows", ErrValidation)
+			return nil, fmt.Errorf("%w: attestation_chain_json required when escrow has sub-delegated child escrows", ErrValidation)
 		}
 		childIDs := make([]int64, len(childEscrows))
 		for i, child := range childEscrows {
@@ -1204,25 +1215,31 @@ func (s *Service) validateAndPersistAttestationChain(ctx context.Context, escrow
 		}
 		validation := attestation.ValidateChain(atts, childIDs, time.Now())
 		if !validation.Valid {
-			return fmt.Errorf("%w: attestation chain validation failed: %s", ErrValidation, strings.Join(validation.Reasons, "; "))
+			return nil, fmt.Errorf("%w: attestation chain validation failed: %s", ErrValidation, strings.Join(validation.Reasons, "; "))
 		}
-		return s.persistAttestationChain(ctx, escrowID, milestoneIndex, validation, atts)
+		return &validatedAttestationChain{
+			validation:   validation,
+			attestations: atts,
+		}, nil
 	}
 
 	if chainJSON != "" && chainJSON != "[]" {
 		atts, parseErr := attestation.ParseCompletionAttestations(chainJSON)
 		if parseErr != nil {
-			return fmt.Errorf("%w: invalid attestation_chain_json: %w", ErrValidation, parseErr)
+			return nil, fmt.Errorf("%w: invalid attestation_chain_json: %w", ErrValidation, parseErr)
 		}
 		if len(atts) > 0 {
 			validation := attestation.ValidateChain(atts, nil, time.Now())
 			if !validation.Valid {
-				return fmt.Errorf("%w: attestation chain validation failed: %s", ErrValidation, strings.Join(validation.Reasons, "; "))
+				return nil, fmt.Errorf("%w: attestation chain validation failed: %s", ErrValidation, strings.Join(validation.Reasons, "; "))
 			}
-			return s.persistAttestationChain(ctx, escrowID, milestoneIndex, validation, atts)
+			return &validatedAttestationChain{
+				validation:   validation,
+				attestations: atts,
+			}, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func (s *Service) persistAttestationChain(ctx context.Context, escrowID int64, milestoneIndex *int, validation attestation.ChainValidationResult, atts []attestation.CompletionAttestation) error {
