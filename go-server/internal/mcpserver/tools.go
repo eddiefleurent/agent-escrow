@@ -2454,7 +2454,6 @@ func normalizeToken(token string) string {
 	return token
 }
 
-
 // parseOptionalMilestoneIndex converts a raw string arg into a *int milestone
 // index, validating it is within [0, maxCount). Returns nil, nil for empty input.
 func parseOptionalMilestoneIndex(raw string, maxCount int) (*int, error) {

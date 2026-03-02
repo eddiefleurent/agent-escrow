@@ -126,16 +126,28 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 		return nil, fmt.Errorf("%w: amount must not be negative", ErrValidation)
 	}
 	if !common.IsHexAddress(input.Buyer) {
-		return nil, fmt.Errorf("%w: buyer %q is not a valid hex address", ErrValidation, input.Buyer)
+		return nil, fmt.Errorf("%w: input.Buyer %q is not a valid hex address", ErrValidation, input.Buyer)
+	}
+	if common.HexToAddress(input.Buyer) == (common.Address{}) {
+		return nil, fmt.Errorf("%w: input.Buyer must not be the zero address", ErrValidation)
 	}
 	if !common.IsHexAddress(input.Worker) {
-		return nil, fmt.Errorf("%w: worker %q is not a valid hex address", ErrValidation, input.Worker)
+		return nil, fmt.Errorf("%w: input.Worker %q is not a valid hex address", ErrValidation, input.Worker)
+	}
+	if common.HexToAddress(input.Worker) == (common.Address{}) {
+		return nil, fmt.Errorf("%w: input.Worker must not be the zero address", ErrValidation)
 	}
 	if !common.IsHexAddress(input.Arbitrator) {
-		return nil, fmt.Errorf("%w: arbitrator %q is not a valid hex address", ErrValidation, input.Arbitrator)
+		return nil, fmt.Errorf("%w: input.Arbitrator %q is not a valid hex address", ErrValidation, input.Arbitrator)
+	}
+	if common.HexToAddress(input.Arbitrator) == (common.Address{}) {
+		return nil, fmt.Errorf("%w: input.Arbitrator must not be the zero address", ErrValidation)
 	}
 	if !common.IsHexAddress(s.Cfg.FactoryAddress) {
-		return nil, fmt.Errorf("%w: factory address %q is not a valid hex address", ErrValidation, s.Cfg.FactoryAddress)
+		return nil, fmt.Errorf("%w: s.Cfg.FactoryAddress %q is not a valid hex address", ErrValidation, s.Cfg.FactoryAddress)
+	}
+	if common.HexToAddress(s.Cfg.FactoryAddress) == (common.Address{}) {
+		return nil, fmt.Errorf("%w: s.Cfg.FactoryAddress must not be the zero address", ErrValidation)
 	}
 	if input.VerifierStakePerVerifier == nil {
 		input.VerifierStakePerVerifier = big.NewInt(0)
@@ -151,8 +163,21 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 			return nil, fmt.Errorf("%w: verifier_panel[%d] %q is not a valid hex address", ErrValidation, i, input.VerifierPanel[i])
 		}
 		addr := common.HexToAddress(input.VerifierPanel[i])
+		if addr == (common.Address{}) {
+			return nil, fmt.Errorf("%w: input.VerifierPanel[%d] must not be the zero address", ErrValidation, i)
+		}
 		verifierPanel[i] = addr
 		panelForJSON[i] = strings.ToLower(addr.Hex())
+	}
+
+	// Pre-validate all milestones before any chain or DB side-effects.
+	for i, milestone := range input.Milestones {
+		if milestone.Amount == nil {
+			return nil, fmt.Errorf("%w: milestone %d: amount is required", ErrValidation, i)
+		}
+		if milestone.Amount.Sign() < 0 {
+			return nil, fmt.Errorf("%w: milestone %d: amount must not be negative", ErrValidation, i)
+		}
 	}
 
 	factory := common.HexToAddress(s.Cfg.FactoryAddress)
@@ -181,18 +206,13 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 		ParentEscrow:             input.ParentEscrow,
 	}
 
-	tx, err := s.Chain.CreateEscrow(ctx, factory, params)
+	chainTx, err := s.Chain.CreateEscrow(ctx, factory, params)
 	if err != nil {
 		return nil, fmt.Errorf("chain create escrow: %w", err)
 	}
-	receiptResult, err := chain.WaitMinedAndParseEscrow(ctx, s.Chain, tx.Hash())
+	receiptResult, err := chain.WaitMinedAndParseEscrow(ctx, s.Chain, chainTx.Hash())
 	if err != nil {
 		return nil, fmt.Errorf("wait escrow receipt: %w", err)
-	}
-
-	task, err := s.DB.CreateTask(ctx, input.Title, input.Description, input.TaskSpecHash.Hex())
-	if err != nil {
-		return nil, fmt.Errorf("create task: %w", err)
 	}
 
 	milestoneCount := 1
@@ -204,7 +224,18 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 		return nil, fmt.Errorf("marshal verifier panel: %w", err)
 	}
 
-	escrowRecord, err := s.DB.CreateEscrow(ctx, &storage.Escrow{
+	dbTx, err := s.DB.BeginTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin db transaction: %w", err)
+	}
+	defer dbTx.Rollback()
+
+	task, err := s.DB.CreateTaskTx(ctx, dbTx, input.Title, input.Description, input.TaskSpecHash.Hex())
+	if err != nil {
+		return nil, fmt.Errorf("create task: %w", err)
+	}
+
+	escrowRecord, err := s.DB.CreateEscrowTx(ctx, dbTx, &storage.Escrow{
 		TaskID:                   task.ID,
 		ChainID:                  s.Cfg.ChainID,
 		FactoryAddress:           s.Cfg.FactoryAddress,
@@ -241,13 +272,7 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 	}
 
 	for i, milestone := range input.Milestones {
-		if milestone.Amount == nil {
-			return nil, fmt.Errorf("milestone %d: amount is required", i)
-		}
-		if milestone.Amount.Sign() < 0 {
-			return nil, fmt.Errorf("milestone %d: amount must not be negative", i)
-		}
-		_, err := s.DB.CreateMilestone(ctx, &storage.MilestoneRecord{
+		_, err := s.DB.CreateMilestoneTx(ctx, dbTx, &storage.MilestoneRecord{
 			EscrowID:           escrowRecord.ID,
 			MilestoneIndex:     i,
 			Amount:             milestone.Amount.String(),
@@ -259,11 +284,15 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 		}
 	}
 
+	if err := dbTx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit db transaction: %w", err)
+	}
+
 	s.runIndexerOnce(ctx)
 
 	return &CreateEscrowResult{
 		EscrowID:       escrowRecord.ID,
-		TxHash:         tx.Hash().Hex(),
+		TxHash:         chainTx.Hash().Hex(),
 		TaskID:         task.ID,
 		EscrowAddress:  receiptResult.EscrowAddress.Hex(),
 		ChainEscrowID:  receiptResult.EscrowID,
@@ -377,7 +406,7 @@ func (s *Service) FundEscrow(ctx context.Context, escrow *storage.Escrow) (strin
 func (s *Service) DepositWorkerStake(ctx context.Context, escrow *storage.Escrow) (string, error) {
 	stakeAmount, ok := new(big.Int).SetString(escrow.WorkerStake, 10)
 	if !ok || stakeAmount.Sign() <= 0 {
-		return "", errors.New("this escrow does not require a worker stake")
+		return "", fmt.Errorf("%w: this escrow does not require a worker stake", ErrValidation)
 	}
 	return s.processStakeDeposit(ctx, common.HexToAddress(escrow.EscrowAddress), escrow.Token, stakeAmount, s.Chain.DepositStake)
 }
@@ -385,7 +414,7 @@ func (s *Service) DepositWorkerStake(ctx context.Context, escrow *storage.Escrow
 func (s *Service) DepositVerifierStake(ctx context.Context, escrow *storage.Escrow) (string, error) {
 	stakeAmount, ok := new(big.Int).SetString(escrow.VerifierStakePerVerifier, 10)
 	if !ok || stakeAmount.Sign() <= 0 {
-		return "", errors.New("this escrow does not require verifier stake")
+		return "", fmt.Errorf("%w: this escrow does not require verifier stake", ErrValidation)
 	}
 	return s.processStakeDeposit(ctx, common.HexToAddress(escrow.EscrowAddress), escrow.Token, stakeAmount, s.Chain.DepositVerifierStake)
 }
