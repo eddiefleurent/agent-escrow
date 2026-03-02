@@ -1217,16 +1217,21 @@ func (s *Server) handleUCPCreateCheckout(ctx context.Context, _ *mcp.CallToolReq
 		IdempotencyKey: strings.TrimSpace(args.IdempotencyKey),
 		AutoFund:       args.AutoFund,
 	}
-	if raw := strings.TrimSpace(args.EscrowID.String()); raw != "" {
-		escrowRec, err := s.resolveEscrowID(ctx, raw)
+	hasEscrowID := strings.TrimSpace(args.EscrowID.String()) != ""
+	hasCreateJSON := strings.TrimSpace(args.CreateEscrowJSON) != ""
+	if hasEscrowID && hasCreateJSON {
+		return textResult("provide exactly one of escrow_id or create_escrow_json, not both"), nil, nil
+	}
+	if hasEscrowID {
+		escrowRec, err := s.resolveEscrowID(ctx, strings.TrimSpace(args.EscrowID.String()))
 		if err != nil {
 			return textResult(fmt.Sprintf("invalid escrow_id: %v", err)), nil, nil
 		}
 		req.EscrowID = &escrowRec.ID
 	}
-	if raw := strings.TrimSpace(args.CreateEscrowJSON); raw != "" {
+	if hasCreateJSON {
 		var payload ucppkg.CreateEscrowPayload
-		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		if err := json.Unmarshal([]byte(strings.TrimSpace(args.CreateEscrowJSON)), &payload); err != nil {
 			return textResult(fmt.Sprintf("invalid create_escrow_json: %v", err)), nil, nil
 		}
 		req.CreateEscrow = &payload
@@ -1256,6 +1261,9 @@ func (s *Server) handleUCPUpdateCheckout(ctx context.Context, _ *mcp.CallToolReq
 		v, parseErr := strconv.ParseUint(raw, 10, 16)
 		if parseErr != nil {
 			return textResult(fmt.Sprintf("invalid worker_award_bps: %v", parseErr)), nil, nil
+		}
+		if v > 10000 {
+			return textResult("invalid worker_award_bps: must be between 0 and 10000"), nil, nil
 		}
 		tmp := uint16(v)
 		workerAwardBps = &tmp
@@ -1320,6 +1328,9 @@ func parseOptionalFlexibleInt(v FlexibleString, field string) (*int, error) {
 	n, err := strconv.Atoi(raw)
 	if err != nil {
 		return nil, fmt.Errorf("invalid %s: %w", field, err)
+	}
+	if n < 0 {
+		return nil, fmt.Errorf("invalid %s: negative value", field)
 	}
 	return &n, nil
 }

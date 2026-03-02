@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -115,7 +116,8 @@ func (h *Handler) writeUCPError(w http.ResponseWriter, err error) {
 	case errors.Is(err, sql.ErrNoRows):
 		h.writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 	default:
-		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("ucp internal error", "error", err)
+		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}
 }
 

@@ -219,6 +219,9 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.UCPProviderName == "" {
 		t.Errorf("expected default UCP provider name to be set")
 	}
+	if cfg.UCPBaseURL != "http://localhost:8080" {
+		t.Errorf("expected default UCP base URL http://localhost:8080, got %q", cfg.UCPBaseURL)
+	}
 }
 
 func TestLoad_CustomPort(t *testing.T) {

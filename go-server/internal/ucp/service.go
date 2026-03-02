@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"strconv"
 	"strings"
@@ -92,7 +93,10 @@ func (s *Service) BuildWellKnownProfile() WellKnownProfile {
 func (s *Service) CreateCheckout(ctx context.Context, req CreateCheckoutRequest) (*Checkout, error) {
 	return s.withIdempotency(ctx, req.IdempotencyKey, "create_checkout", req, func() (*Checkout, error) {
 		if req.EscrowID == nil && req.CreateEscrow == nil {
-			return nil, fmt.Errorf("%w: either escrow_id or create_escrow is required", ErrInvalidRequest)
+			return nil, fmt.Errorf("%w: provide exactly one of escrow_id or create_escrow", ErrInvalidRequest)
+		}
+		if req.EscrowID != nil && req.CreateEscrow != nil {
+			return nil, fmt.Errorf("%w: provide exactly one of escrow_id or create_escrow", ErrInvalidRequest)
 		}
 
 		checkoutID := strings.TrimSpace(req.CheckoutID)
@@ -175,6 +179,7 @@ func (s *Service) GetCheckout(ctx context.Context, checkoutID string) (*Checkout
 	}
 	projected := ProjectStatus(escrowRec.Status)
 	if session.UCPStatus != string(projected) {
+		session.UCPStatus = string(projected)
 		if err := s.DB.UpdateUCPSessionProjection(
 			ctx,
 			session.CheckoutID,
@@ -183,8 +188,8 @@ func (s *Service) GetCheckout(ctx context.Context, checkoutID string) (*Checkout
 			session.LastOperation,
 			session.LastRequestHash,
 			session.LastTxHash,
-		); err == nil {
-			session.UCPStatus = string(projected)
+		); err != nil {
+			slog.Error("failed to persist ucp status projection", "checkout_id", session.CheckoutID, "projected", projected, "error", err)
 		}
 	}
 	return composeCheckout(session, escrowRec), nil
@@ -614,6 +619,9 @@ func (s *Service) createEscrowFromPayload(ctx context.Context, payload *CreateEs
 		msAmount, ok := new(big.Int).SetString(m.Amount, 10)
 		if !ok {
 			return nil, fmt.Errorf("%w: invalid milestone amount", ErrInvalidRequest)
+		}
+		if msAmount.Sign() < 0 {
+			return nil, fmt.Errorf("%w: negative milestone amount", ErrInvalidRequest)
 		}
 		msDeadline, err := strconv.ParseUint(m.SubmissionDeadline, 10, 64)
 		if err != nil {

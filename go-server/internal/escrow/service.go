@@ -752,7 +752,7 @@ func validateOptionalMilestoneIndex(milestoneCount int, milestoneIndex *int) (*i
 		return nil, nil
 	}
 	if milestoneCount <= 1 {
-		return nil, nil
+		return nil, fmt.Errorf("milestone_index is not valid for single-milestone escrows")
 	}
 	if *milestoneIndex < 0 || *milestoneIndex >= milestoneCount {
 		return nil, fmt.Errorf("milestone_index %d out of range [0, %d)", *milestoneIndex, milestoneCount)

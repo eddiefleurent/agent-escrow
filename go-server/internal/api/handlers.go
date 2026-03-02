@@ -400,7 +400,8 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		TaskSpecHash: specHash,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("create escrow failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 
@@ -535,7 +536,8 @@ func (h *Handlers) ListEscrows(w http.ResponseWriter, r *http.Request) {
 
 	escrows, err := h.db.ListEscrows(r.Context(), role, address, status)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("list escrows failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 
@@ -557,7 +559,8 @@ func (h *Handlers) FundEscrow(w http.ResponseWriter, r *http.Request) {
 
 	txHash, err := h.escrowService().FundEscrow(r.Context(), escrow)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("fund escrow failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
@@ -615,7 +618,8 @@ func (h *Handlers) WithdrawStake(w http.ResponseWriter, r *http.Request) {
 	}
 	txHash, err := h.escrowService().WithdrawStake(r.Context(), escrow)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("withdraw stake failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
@@ -979,7 +983,8 @@ func (h *Handlers) ListDecompositions(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	items, err := h.decompositionService().ListDecompositions(r.Context(), buyer, status)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("list decompositions failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 	if items == nil {
@@ -999,7 +1004,8 @@ func (h *Handlers) GetDecomposition(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		} else {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			slog.Error("get decomposition failed", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		}
 		return
 	}
@@ -1261,7 +1267,8 @@ func (h *Handlers) ListRFQs(w http.ResponseWriter, r *http.Request) {
 
 	rfqs, err := h.db.ListRFQs(r.Context(), status, buyer)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("list rfqs failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 
@@ -1350,7 +1357,8 @@ func (h *Handlers) CancelRFQ(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.db.UpdateRFQStatus(r.Context(), id, "cancelled"); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("cancel rfq: update status failed", "rfq_id", id, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 	if err := h.db.RejectPendingBids(r.Context(), id, 0); err != nil {
@@ -1487,7 +1495,8 @@ func (h *Handlers) ListBids(w http.ResponseWriter, r *http.Request) {
 
 	bids, err := h.db.ListBidsByRFQ(r.Context(), rfqID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("list bids failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 

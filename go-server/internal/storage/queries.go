@@ -1612,6 +1612,7 @@ const bidCommitColumns = `id, rfq_id, bidder, commitment, nonce, status, reveale
 var (
 	ErrDuplicateBidCommitNonce      = errors.New("duplicate bid commit nonce")
 	ErrDuplicateBidCommitCommitment = errors.New("duplicate bid commit commitment")
+	ErrDuplicateUCPIdempotencyKey   = errors.New("duplicate ucp idempotency key")
 )
 
 func scanBidCommit(scanner interface{ Scan(...any) error }) (*BidCommit, error) {
@@ -2445,6 +2446,9 @@ func (d *DB) CreateUCPIdempotency(ctx context.Context, rec *UCPIdempotency) erro
 		rec.CheckoutID,
 	)
 	if err != nil {
+		if isSQLiteUniqueConstraint(err, "ucp_idempotency.idempotency_key") {
+			return fmt.Errorf("insert ucp_idempotency: %w", ErrDuplicateUCPIdempotencyKey)
+		}
 		return fmt.Errorf("insert ucp_idempotency: %w", err)
 	}
 	return nil

@@ -2416,8 +2416,9 @@ func TestUCPWellKnown(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
 	resp := decodeJSON(t, rr)
-	if resp["version"] == "" {
-		t.Fatalf("expected version in response: %v", resp)
+	version, ok := resp["version"].(string)
+	if !ok || version == "" {
+		t.Fatalf("expected non-empty version string in response, got: %v", resp)
 	}
 }
 

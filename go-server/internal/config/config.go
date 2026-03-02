@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -206,14 +207,24 @@ func Load() (*Config, error) {
 		ucpEnabled = v
 	}
 
-	ucpBaseURL := os.Getenv("UCP_BASE_URL")
+	ucpBaseURL := strings.TrimSpace(os.Getenv("UCP_BASE_URL"))
 	if ucpBaseURL == "" {
 		ucpBaseURL = fmt.Sprintf("http://localhost:%d", port)
 	}
 
-	ucpProviderName := os.Getenv("UCP_PROVIDER_NAME")
+	ucpProviderName := strings.TrimSpace(os.Getenv("UCP_PROVIDER_NAME"))
 	if ucpProviderName == "" {
 		ucpProviderName = "Agent Escrow UCP Provider"
+	}
+
+	if ucpEnabled {
+		if ucpProviderName == "" {
+			return nil, errors.New("UCP_PROVIDER_NAME must be set when UCP is enabled")
+		}
+		parsed, err := parseURL(ucpBaseURL)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return nil, fmt.Errorf("UCP_BASE_URL must be a valid URL with scheme and host, got %q", ucpBaseURL)
+		}
 	}
 
 	x402Enabled := false
@@ -415,4 +426,8 @@ func validateEthAddress(s string) error {
 		return fmt.Errorf("expected 20 bytes (40 hex chars), got %d bytes", len(b))
 	}
 	return nil
+}
+
+func parseURL(raw string) (*url.URL, error) {
+	return url.Parse(raw)
 }
