@@ -749,7 +749,7 @@ func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolReques
 	var milestones []chain.MilestoneParam
 	for _, m := range args.Milestones {
 		msAmount, ok := new(big.Int).SetString(m.Amount.String(), 10)
-		if !ok {
+		if !ok || msAmount.Sign() < 0 {
 			return textResult("invalid milestone amount: " + m.Amount.String()), nil, nil
 		}
 		msDeadline, err := strconv.ParseUint(m.SubmissionDeadline.String(), 10, 64)

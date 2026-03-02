@@ -565,7 +565,7 @@ func (s *Service) createEscrowFromPayload(ctx context.Context, payload *CreateEs
 	}
 
 	amount, ok := new(big.Int).SetString(payload.Amount, 10)
-	if !ok {
+	if !ok || amount.Sign() < 0 {
 		return nil, fmt.Errorf("%w: invalid amount", ErrInvalidRequest)
 	}
 	if err := chain.ValidateComplexityFloor(amount, s.Escrow.Cfg.ComplexityFloor); err != nil {

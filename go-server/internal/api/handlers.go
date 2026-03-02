@@ -214,7 +214,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 	var milestones []chain.MilestoneParam
 	for _, m := range req.Milestones {
 		msAmount, ok := new(big.Int).SetString(m.Amount, 10)
-		if !ok {
+		if !ok || msAmount.Sign() < 0 {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid milestone amount"})
 			return
 		}

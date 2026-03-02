@@ -15,6 +15,9 @@ type Handler struct {
 }
 
 func NewHandler(svc *Service) *Handler {
+	if svc == nil {
+		panic("ucp.NewHandler: nil service")
+	}
 	return &Handler{Service: svc}
 }
 

@@ -106,6 +106,9 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 	if input.QuorumVerifierCount == 0 {
 		return nil, errors.New("quorum verifier count must be > 0")
 	}
+	if input.QuorumVerifierCount > 7 {
+		return nil, fmt.Errorf("quorum verifier count %d exceeds maximum of 7", input.QuorumVerifierCount)
+	}
 	if len(input.VerifierPanel) < int(input.QuorumVerifierCount) {
 		return nil, fmt.Errorf("verifier panel length %d is smaller than quorum verifier count %d", len(input.VerifierPanel), input.QuorumVerifierCount)
 	}
@@ -219,6 +222,12 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 	}
 
 	for i, milestone := range input.Milestones {
+		if milestone.Amount == nil {
+			return nil, fmt.Errorf("milestone %d: amount is required", i)
+		}
+		if milestone.Amount.Sign() < 0 {
+			return nil, fmt.Errorf("milestone %d: amount must not be negative", i)
+		}
 		_, err := s.DB.CreateMilestone(ctx, &storage.MilestoneRecord{
 			EscrowID:           escrowRecord.ID,
 			MilestoneIndex:     i,
