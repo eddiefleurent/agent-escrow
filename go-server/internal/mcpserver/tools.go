@@ -1001,13 +1001,9 @@ func (s *Server) handleSubmitWork(ctx context.Context, req *mcp.CallToolRequest,
 		)), nil, nil
 	}
 
-	var milestoneIdxPtr *int
-	if args.MilestoneIndex.String() != "" {
-		msVal, msErr := strconv.Atoi(args.MilestoneIndex.String())
-		if msErr != nil {
-			return textResult(fmt.Sprintf("invalid milestone_index: %v", msErr)), nil, nil
-		}
-		milestoneIdxPtr = &msVal
+	milestoneIdxPtr, err := parseEscrowMilestoneIndex(args.MilestoneIndex.String(), escrow)
+	if err != nil {
+		return textResult(err.Error()), nil, nil
 	}
 	txHash, err := s.escrowService().SubmitWork(ctx, escrow, escrowservice.SubmitRequest{
 		SubmissionURI:        args.SubmissionURI,
@@ -1026,13 +1022,9 @@ func (s *Server) handleApproveWork(ctx context.Context, req *mcp.CallToolRequest
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
-	var milestoneIdx *int
-	if args.MilestoneIndex.String() != "" {
-		ms, err := strconv.Atoi(args.MilestoneIndex.String())
-		if err != nil {
-			return textResult(fmt.Sprintf("invalid milestone_index: %v", err)), nil, nil
-		}
-		milestoneIdx = &ms
+	milestoneIdx, err := parseEscrowMilestoneIndex(args.MilestoneIndex.String(), escrow)
+	if err != nil {
+		return textResult(err.Error()), nil, nil
 	}
 	txHash, err := s.escrowService().ApproveWork(ctx, escrow, args.Role, milestoneIdx)
 	if err != nil {
@@ -1050,13 +1042,9 @@ func (s *Server) handleVerifyAndApprove(ctx context.Context, req *mcp.CallToolRe
 	if err != nil {
 		return textResult(fmt.Sprintf("invalid proof: %v", err)), nil, nil
 	}
-	var milestoneIdx *int
-	if args.MilestoneIndex.String() != "" {
-		ms, convErr := strconv.Atoi(args.MilestoneIndex.String())
-		if convErr != nil {
-			return textResult(fmt.Sprintf("invalid milestone_index: %v", convErr)), nil, nil
-		}
-		milestoneIdx = &ms
+	milestoneIdx, err := parseEscrowMilestoneIndex(args.MilestoneIndex.String(), escrow)
+	if err != nil {
+		return textResult(err.Error()), nil, nil
 	}
 	txHash, err := s.escrowService().VerifyAndApprove(ctx, escrow, proofBytes, milestoneIdx)
 	if err != nil {
@@ -1077,13 +1065,9 @@ func (s *Server) handleCastVerifierVote(ctx context.Context, req *mcp.CallToolRe
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
-	var milestoneIdx *int
-	if args.MilestoneIndex.String() != "" {
-		ms, convErr := strconv.Atoi(args.MilestoneIndex.String())
-		if convErr != nil {
-			return textResult(fmt.Sprintf("invalid milestone_index: %v", convErr)), nil, nil
-		}
-		milestoneIdx = &ms
+	milestoneIdx, err := parseEscrowMilestoneIndex(args.MilestoneIndex.String(), escrow)
+	if err != nil {
+		return textResult(err.Error()), nil, nil
 	}
 	txHash, err := s.escrowService().CastVerifierVote(ctx, escrow, *args.Approve, args.ReasonURI, milestoneIdx)
 	if err != nil {
@@ -1097,13 +1081,9 @@ func (s *Server) handleDisputeWork(ctx context.Context, req *mcp.CallToolRequest
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
-	var milestoneIdx *int
-	if args.MilestoneIndex.String() != "" {
-		ms, convErr := strconv.Atoi(args.MilestoneIndex.String())
-		if convErr != nil {
-			return textResult(fmt.Sprintf("invalid milestone_index: %v", convErr)), nil, nil
-		}
-		milestoneIdx = &ms
+	milestoneIdx, err := parseEscrowMilestoneIndex(args.MilestoneIndex.String(), escrow)
+	if err != nil {
+		return textResult(err.Error()), nil, nil
 	}
 	txHash, err := s.escrowService().DisputeWork(ctx, escrow, args.Role, args.ReasonURI, milestoneIdx)
 	if err != nil {
@@ -1128,13 +1108,9 @@ func (s *Server) handleResolveDispute(ctx context.Context, req *mcp.CallToolRequ
 	if err != nil {
 		return textResult(fmt.Sprintf("not found: %v", err)), nil, nil
 	}
-	var milestoneIdx *int
-	if args.MilestoneIndex.String() != "" {
-		ms, convErr := strconv.Atoi(args.MilestoneIndex.String())
-		if convErr != nil {
-			return textResult(fmt.Sprintf("invalid milestone_index: %v", convErr)), nil, nil
-		}
-		milestoneIdx = &ms
+	milestoneIdx, err := parseEscrowMilestoneIndex(args.MilestoneIndex.String(), escrow)
+	if err != nil {
+		return textResult(err.Error()), nil, nil
 	}
 	txHash, err := s.escrowService().ResolveDispute(ctx, escrow, uint16(bps), args.ResolutionURI, milestoneIdx)
 	if err != nil {
@@ -1219,8 +1195,8 @@ func (s *Server) handleUCPCreateCheckout(ctx context.Context, _ *mcp.CallToolReq
 	}
 	hasEscrowID := strings.TrimSpace(args.EscrowID.String()) != ""
 	hasCreateJSON := strings.TrimSpace(args.CreateEscrowJSON) != ""
-	if hasEscrowID && hasCreateJSON {
-		return textResult("provide exactly one of escrow_id or create_escrow_json, not both"), nil, nil
+	if hasEscrowID == hasCreateJSON {
+		return textResult("provide exactly one of escrow_id or create_escrow_json"), nil, nil
 	}
 	if hasEscrowID {
 		escrowRec, err := s.resolveEscrowID(ctx, strings.TrimSpace(args.EscrowID.String()))
@@ -2440,6 +2416,14 @@ func (s *Server) handleListEmergencyActions(ctx context.Context, _ *mcp.CallTool
 		return textResult(fmt.Sprintf("db error: %v", err)), nil, nil
 	}
 	return jsonResult(map[string]any{"actions": actions, "count": len(actions)})
+}
+
+func parseEscrowMilestoneIndex(raw string, escrow *storage.Escrow) (*int, error) {
+	idx, err := parseOptionalMilestoneIndex(strings.TrimSpace(raw), escrow.MilestoneCount)
+	if err != nil {
+		return nil, err
+	}
+	return idx, nil
 }
 
 func parseProofHashHex(raw string) ([32]byte, error) {
