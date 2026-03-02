@@ -161,7 +161,7 @@ func TestEscrowCreateIntentQueries(t *testing.T) {
 	if !transitioned {
 		t.Fatal("expected status transition to succeed")
 	}
-	if err := db.SetEscrowCreateTxHash(ctx, escrow.ID, "0xabc", "pending_confirmation"); err != nil {
+	if err := db.SetEscrowCreateTxHash(ctx, escrow.ID, "0xabc", "submitting", "pending_confirmation"); err != nil {
 		t.Fatalf("set create tx hash: %v", err)
 	}
 
@@ -181,7 +181,7 @@ func TestSetEscrowCreateTxHash_NoRows(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 
-	err := db.SetEscrowCreateTxHash(ctx, 99999, "0xabc", "pending_confirmation")
+	err := db.SetEscrowCreateTxHash(ctx, 99999, "0xabc", "submitting", "pending_confirmation")
 	if err == nil {
 		t.Fatal("expected error when escrow row does not exist")
 	}

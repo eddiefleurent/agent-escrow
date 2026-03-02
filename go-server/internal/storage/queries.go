@@ -234,11 +234,11 @@ func (d *DB) TransitionEscrowStatus(ctx context.Context, id int64, fromStatus, t
 	return rows == 1, nil
 }
 
-func (d *DB) SetEscrowCreateTxHash(ctx context.Context, id int64, txHash, status string) error {
+func (d *DB) SetEscrowCreateTxHash(ctx context.Context, id int64, txHash, fromStatus, toStatus string) error {
 	res, err := d.db.ExecContext(
 		ctx,
-		`UPDATE escrows SET create_tx_hash = ?, status = ?, updated_at = datetime('now') WHERE id = ?`,
-		txHash, status, id,
+		`UPDATE escrows SET create_tx_hash = ?, status = ?, updated_at = datetime('now') WHERE id = ? AND status = ?`,
+		txHash, toStatus, id, fromStatus,
 	)
 	if err != nil {
 		return fmt.Errorf("SetEscrowCreateTxHash: %w", err)
@@ -248,7 +248,7 @@ func (d *DB) SetEscrowCreateTxHash(ctx context.Context, id int64, txHash, status
 		return fmt.Errorf("SetEscrowCreateTxHash rows affected: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("SetEscrowCreateTxHash: no row with id %d: %w", id, sql.ErrNoRows)
+		return fmt.Errorf("SetEscrowCreateTxHash id=%d expected_status=%s: %w", id, fromStatus, sql.ErrNoRows)
 	}
 	return nil
 }
@@ -267,7 +267,7 @@ func (d *DB) FinalizeEscrowCreateTx(ctx context.Context, tx *sql.Tx, id int64, e
 		return fmt.Errorf("FinalizeEscrowCreateTx rows affected: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("FinalizeEscrowCreateTx id=%d: not in pending_confirmation state or not found", id)
+		return fmt.Errorf("FinalizeEscrowCreateTx id=%d: not in pending_confirmation state or not found: %w", id, sql.ErrNoRows)
 	}
 	return nil
 }

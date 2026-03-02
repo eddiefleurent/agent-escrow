@@ -479,7 +479,7 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 				return nil, fmt.Errorf("chain create escrow: %w", chainErr)
 			}
 			txHash = chainTx.Hash().Hex()
-			persistErr := s.DB.SetEscrowCreateTxHash(ctx, escrowRecord.ID, txHash, escrowStatusPendingConfirmation)
+			persistErr := s.DB.SetEscrowCreateTxHash(ctx, escrowRecord.ID, txHash, escrowStatusSubmittingCreateTx, escrowStatusPendingConfirmation)
 			if persistErr != nil {
 				const maxPersistAttempts = 3
 				lastErr := persistErr
@@ -506,7 +506,7 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 						)
 					case <-timer.C:
 					}
-					lastErr = s.DB.SetEscrowCreateTxHash(ctx, escrowRecord.ID, txHash, escrowStatusPendingConfirmation)
+					lastErr = s.DB.SetEscrowCreateTxHash(ctx, escrowRecord.ID, txHash, escrowStatusSubmittingCreateTx, escrowStatusPendingConfirmation)
 					if lastErr == nil {
 						break
 					}
