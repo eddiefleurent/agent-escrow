@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"sync"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
@@ -9,6 +10,7 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
+	ucppkg "github.com/eddiefleurent/agent-escrow/go-server/internal/ucp"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -18,6 +20,9 @@ type Server struct {
 	idx   *indexer.Indexer
 	cfg   *config.Config
 	bus   *events.EventBus
+
+	ucpOnce sync.Once
+	ucpSvc  *ucppkg.Service
 }
 
 // Serve starts the MCP server over stdio. The bus parameter may be nil when

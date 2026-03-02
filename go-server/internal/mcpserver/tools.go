@@ -1340,15 +1340,18 @@ func (s *Server) escrowService() *escrowservice.Service {
 }
 
 func (s *Server) ucpService() *ucppkg.Service {
-	providerName := s.cfg.UCPProviderName
-	if strings.TrimSpace(providerName) == "" {
-		providerName = "Agent Escrow UCP Provider"
-	}
-	providerURL := s.cfg.UCPBaseURL
-	if strings.TrimSpace(providerURL) == "" {
-		providerURL = fmt.Sprintf("http://localhost:%d", s.cfg.Port)
-	}
-	return ucppkg.NewService(s.db, s.escrowService(), providerName, providerURL)
+	s.ucpOnce.Do(func() {
+		providerName := s.cfg.UCPProviderName
+		if strings.TrimSpace(providerName) == "" {
+			providerName = "Agent Escrow UCP Provider"
+		}
+		providerURL := s.cfg.UCPBaseURL
+		if strings.TrimSpace(providerURL) == "" {
+			providerURL = fmt.Sprintf("http://localhost:%d", s.cfg.Port)
+		}
+		s.ucpSvc = ucppkg.NewService(s.db, s.escrowService(), providerName, providerURL)
+	})
+	return s.ucpSvc
 }
 
 func (s *Server) dctService() *dct.Service {
