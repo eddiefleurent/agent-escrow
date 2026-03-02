@@ -615,6 +615,17 @@ func (s *Service) createEscrowFromPayload(ctx context.Context, payload *CreateEs
 	buyerAddr := common.HexToAddress(payload.Buyer)
 	workerAddr := common.HexToAddress(payload.Worker)
 	arbitratorAddr := common.HexToAddress(payload.Arbitrator)
+
+	if buyerAddr == workerAddr {
+		return nil, fmt.Errorf("%w: buyer must not equal worker", ErrInvalidRequest)
+	}
+	if buyerAddr == arbitratorAddr {
+		return nil, fmt.Errorf("%w: buyer must not equal arbitrator", ErrInvalidRequest)
+	}
+	if workerAddr == arbitratorAddr {
+		return nil, fmt.Errorf("%w: worker must not equal arbitrator", ErrInvalidRequest)
+	}
+
 	panelForJSON := make([]string, payload.QuorumVerifierCount)
 	seenVerifier := make(map[common.Address]bool, payload.QuorumVerifierCount)
 	for i := 0; i < payload.QuorumVerifierCount; i++ {
