@@ -255,6 +255,9 @@ func (s *Service) UpdateCheckout(ctx context.Context, checkoutID string, req Upd
 			if req.WorkerAwardBps == nil {
 				return nil, fmt.Errorf("%w: worker_award_bps is required for resolve", ErrInvalidRequest)
 			}
+			if *req.WorkerAwardBps > 10000 {
+				return nil, fmt.Errorf("%w: worker_award_bps must be between 0 and 10000", ErrInvalidRequest)
+			}
 			txHash, err = s.Escrow.ResolveDispute(ctx, escrowRec, *req.WorkerAwardBps, req.ResolutionURI, req.MilestoneIndex)
 		case "claim_timeout_refund":
 			txHash, err = s.Escrow.ClaimTimeoutRefund(ctx, escrowRec, req.MilestoneIndex)
