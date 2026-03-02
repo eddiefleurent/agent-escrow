@@ -124,6 +124,8 @@ POST /api/v1/dcts/mint
 POST /api/v1/ap2/fund
 POST /api/v1/ucp/checkouts
 PATCH /api/v1/ucp/checkouts/{checkout_id}
+POST /api/v1/ucp/checkouts/{checkout_id}/complete
+POST /api/v1/ucp/checkouts/{checkout_id}/cancel
 GET  /api/v1/events
 GET  /.well-known/agent.json
 GET  /.well-known/ucp
