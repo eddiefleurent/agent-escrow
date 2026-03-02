@@ -177,6 +177,19 @@ func TestEscrowCreateIntentQueries(t *testing.T) {
 	}
 }
 
+func TestSetEscrowCreateTxHash_NoRows(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	err := db.SetEscrowCreateTxHash(ctx, 99999, "0xabc", "pending_confirmation")
+	if err == nil {
+		t.Fatal("expected error when escrow row does not exist")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected sql.ErrNoRows, got %v", err)
+	}
+}
+
 func TestCreateEscrow_DuplicateCreateIntent(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()

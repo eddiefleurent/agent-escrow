@@ -14,6 +14,7 @@ import (
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
+	escrowservice "github.com/eddiefleurent/agent-escrow/go-server/internal/escrow"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/ethereum/go-ethereum/common"
@@ -495,6 +496,66 @@ func TestFundEscrow_NotFound(t *testing.T) {
 	rr := env.request(t, "POST", "/api/v1/escrows/999/fund", "")
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+}
+
+func TestFundEscrow_ValidationErrorReturns400(t *testing.T) {
+	env := setup(t)
+	env.mock.FundErr = fmt.Errorf("%w: escrow is not fundable in current state", escrowservice.ErrValidation)
+	ctx := context.Background()
+
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
+		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
+		EscrowAddress: "0xEscrowAddr",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Amount: "1000000000000000000", Status: "created",
+	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
+
+	rr := env.request(t, "POST", "/api/v1/escrows/1/fund", "")
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp := decodeJSON(t, rr)
+	msg, _ := resp["error"].(string)
+	if !strings.Contains(msg, "validation error") {
+		t.Fatalf("expected validation error message, got: %s", msg)
+	}
+}
+
+func TestWithdrawStake_ValidationErrorReturns400(t *testing.T) {
+	env := setup(t)
+	env.mock.WithdrawStakeErr = fmt.Errorf("%w: stake is not yet withdrawable", escrowservice.ErrValidation)
+	ctx := context.Background()
+
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
+		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
+		EscrowAddress: "0xEscrowAddr",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Amount: "1000000000000000000", Status: "funded",
+	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
+
+	rr := env.request(t, "POST", "/api/v1/escrows/1/withdraw-stake", "")
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp := decodeJSON(t, rr)
+	msg, _ := resp["error"].(string)
+	if !strings.Contains(msg, "validation error") {
+		t.Fatalf("expected validation error message, got: %s", msg)
 	}
 }
 

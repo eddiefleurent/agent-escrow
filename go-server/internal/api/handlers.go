@@ -567,8 +567,7 @@ func (h *Handlers) FundEscrow(w http.ResponseWriter, r *http.Request) {
 
 	txHash, err := h.escrowService().FundEscrow(r.Context(), escrow)
 	if err != nil {
-		slog.Error("fund escrow failed", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		handleEscrowServiceActionError(w, r, "fund_escrow", id, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
@@ -636,8 +635,7 @@ func (h *Handlers) WithdrawStake(w http.ResponseWriter, r *http.Request) {
 	}
 	txHash, err := h.escrowService().WithdrawStake(r.Context(), escrow)
 	if err != nil {
-		slog.Error("withdraw stake failed", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		handleEscrowServiceActionError(w, r, "withdraw_stake", id, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})

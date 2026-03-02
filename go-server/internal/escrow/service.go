@@ -321,14 +321,6 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 	}
 
 	factory := common.HexToAddress(s.Cfg.FactoryAddress)
-	if input.QuorumThreshold == 0 || input.QuorumThreshold > input.QuorumVerifierCount {
-		return nil, fmt.Errorf(
-			"%w: quorum threshold must be > 0 and <= quorum verifier count (threshold=%d, quorum_verifier_count=%d)",
-			ErrValidation,
-			input.QuorumThreshold,
-			input.QuorumVerifierCount,
-		)
-	}
 	params := chain.CreateEscrowParams{
 		Buyer:                    buyer,
 		Worker:                   worker,
@@ -483,8 +475,54 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 				return nil, fmt.Errorf("chain create escrow: %w", chainErr)
 			}
 			txHash = chainTx.Hash().Hex()
-			if persistErr := s.DB.SetEscrowCreateTxHash(ctx, escrowRecord.ID, txHash, escrowStatusPendingConfirmation); persistErr != nil {
-				return nil, fmt.Errorf("persist create tx hash: %w", persistErr)
+			persistErr := s.DB.SetEscrowCreateTxHash(ctx, escrowRecord.ID, txHash, escrowStatusPendingConfirmation)
+			if persistErr != nil {
+				const maxPersistAttempts = 3
+				lastErr := persistErr
+				for attempt := 2; attempt <= maxPersistAttempts; attempt++ {
+					slog.Warn(
+						"persist create tx hash failed; retrying",
+						"escrow_id", escrowRecord.ID,
+						"create_intent_id", createIntentID,
+						"attempt", attempt-1,
+						"max_attempts", maxPersistAttempts,
+						"error", lastErr,
+					)
+					backoff := time.Duration(attempt-1) * 200 * time.Millisecond
+					timer := time.NewTimer(backoff)
+					select {
+					case <-ctx.Done():
+						timer.Stop()
+						return nil, fmt.Errorf(
+							"on-chain create submitted but tx-hash persistence failed (create_intent_id=%s, status=%s, tx_hash=%s): %w",
+							createIntentID,
+							escrowStatusSubmittingCreateTx,
+							txHash,
+							ctx.Err(),
+						)
+					case <-timer.C:
+					}
+					lastErr = s.DB.SetEscrowCreateTxHash(ctx, escrowRecord.ID, txHash, escrowStatusPendingConfirmation)
+					if lastErr == nil {
+						break
+					}
+				}
+				if lastErr != nil {
+					status := escrowStatusSubmittingCreateTx
+					latest, getErr := s.DB.GetEscrow(ctx, escrowRecord.ID)
+					if getErr != nil {
+						slog.Warn("failed to load escrow after tx-hash persistence failure", "escrow_id", escrowRecord.ID, "error", getErr)
+					} else if strings.TrimSpace(latest.Status) != "" {
+						status = latest.Status
+					}
+					return nil, fmt.Errorf(
+						"on-chain create submitted but tx-hash persistence failed (create_intent_id=%s, status=%s, tx_hash=%s): %w",
+						createIntentID,
+						status,
+						txHash,
+						lastErr,
+					)
+				}
 			}
 		}
 	}

@@ -7,7 +7,6 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/ap2"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
-	escrowservice "github.com/eddiefleurent/agent-escrow/go-server/internal/escrow"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
@@ -134,7 +133,7 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 
 	// UCP fulfillment adapter routes (roadmap item 22).
 	if cfg.UCPEnabled {
-		escrowSvc := escrowservice.NewService(db, chainClient, idx, cfg)
+		escrowSvc := h.escrowService()
 		ucpSvc := ucppkg.NewService(db, escrowSvc, cfg.UCPProviderName, cfg.UCPBaseURL)
 		ucpHandler := ucppkg.NewHandler(ucpSvc)
 		mux.HandleFunc("GET /.well-known/ucp", ucpHandler.WellKnown)

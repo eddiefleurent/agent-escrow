@@ -235,13 +235,20 @@ func (d *DB) TransitionEscrowStatus(ctx context.Context, id int64, fromStatus, t
 }
 
 func (d *DB) SetEscrowCreateTxHash(ctx context.Context, id int64, txHash, status string) error {
-	_, err := d.db.ExecContext(
+	res, err := d.db.ExecContext(
 		ctx,
 		`UPDATE escrows SET create_tx_hash = ?, status = ?, updated_at = datetime('now') WHERE id = ?`,
 		txHash, status, id,
 	)
 	if err != nil {
 		return fmt.Errorf("SetEscrowCreateTxHash: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("SetEscrowCreateTxHash rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("SetEscrowCreateTxHash: no row with id %d: %w", id, sql.ErrNoRows)
 	}
 	return nil
 }
