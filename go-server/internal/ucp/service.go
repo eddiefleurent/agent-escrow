@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	escrowservice "github.com/eddiefleurent/agent-escrow/go-server/internal/escrow"
@@ -28,18 +29,55 @@ var (
 )
 
 type Service struct {
-	DB           *storage.DB
-	Escrow       *escrowservice.Service
-	ProviderName string
-	ProviderURL  string
+	DB              *storage.DB
+	Escrow          *escrowservice.Service
+	ProviderName    string
+	ProviderURL     string
+	idempotencyKeys idempotencyGuard
 }
 
 func NewService(db *storage.DB, escrowSvc *escrowservice.Service, providerName, providerURL string) *Service {
 	return &Service{
-		DB:           db,
-		Escrow:       escrowSvc,
-		ProviderName: providerName,
-		ProviderURL:  providerURL,
+		DB:              db,
+		Escrow:          escrowSvc,
+		ProviderName:    providerName,
+		ProviderURL:     providerURL,
+		idempotencyKeys: idempotencyGuard{locks: make(map[string]*guardEntry)},
+	}
+}
+
+// idempotencyGuard serializes operations on the same idempotency key so that
+// concurrent duplicate requests cannot both execute the underlying fn().
+// Different keys are fully parallel; memory is freed when no waiters remain.
+type idempotencyGuard struct {
+	mu    sync.Mutex
+	locks map[string]*guardEntry
+}
+
+type guardEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func (g *idempotencyGuard) acquire(key string) func() {
+	g.mu.Lock()
+	e, ok := g.locks[key]
+	if !ok {
+		e = &guardEntry{}
+		g.locks[key] = e
+	}
+	e.refs++
+	g.mu.Unlock()
+
+	e.mu.Lock()
+	return func() {
+		e.mu.Unlock()
+		g.mu.Lock()
+		e.refs--
+		if e.refs == 0 {
+			delete(g.locks, key)
+		}
+		g.mu.Unlock()
 	}
 }
 
@@ -470,6 +508,9 @@ func (s *Service) withIdempotency(
 		return fn()
 	}
 	requestHash := hashRequest(operation, request)
+
+	unlock := s.idempotencyKeys.acquire(idempotencyKey)
+	defer unlock()
 
 	existing, err := s.DB.GetUCPIdempotency(ctx, idempotencyKey)
 	if err == nil {
