@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/attestation"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
 	escrowservice "github.com/eddiefleurent/agent-escrow/go-server/internal/escrow"
@@ -610,6 +612,74 @@ func TestSubmitWork_InternalFailureReturns500(t *testing.T) {
 	msg, _ := resp["error"].(string)
 	if msg != "internal server error" {
 		t.Fatalf("expected generic internal error message, got: %s", msg)
+	}
+}
+
+func TestSubmitWork_InvalidProofHashDoesNotPersistAttestationChain(t *testing.T) {
+	env := setup(t)
+	ctx := context.Background()
+
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
+		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Amount: "100", Status: "funded",
+	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
+
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("generate attestation key: %v", err)
+	}
+	now := time.Now().Unix()
+	att := attestation.CompletionAttestation{
+		Profile:      attestation.CompletionAttestationV1,
+		LinkID:       "link-1",
+		FromAddress:  crypto.PubkeyToAddress(key.PublicKey).Hex(),
+		ToAddress:    "0x0000000000000000000000000000000000000002",
+		TaskSpecHash: "0xabc",
+		OutcomeHash:  "0xdef",
+		IssuedAt:     now - 60,
+		ExpiresAt:    now + 3600,
+		Nonce:        "n1",
+	}
+	msgHash := crypto.Keccak256Hash([]byte(attestation.CanonicalCompletionMessage(&att)))
+	sig, err := crypto.Sign(msgHash.Bytes(), key)
+	if err != nil {
+		t.Fatalf("sign attestation: %v", err)
+	}
+	att.Signature = "0x" + hex.EncodeToString(sig)
+
+	chainJSONBytes, err := json.Marshal([]attestation.CompletionAttestation{att})
+	if err != nil {
+		t.Fatalf("marshal attestation chain: %v", err)
+	}
+	reqBodyBytes, err := json.Marshal(map[string]any{
+		"submission_uri":         "ipfs://result",
+		"proof_hash":             "0x1",
+		"attestation_chain_json": string(chainJSONBytes),
+	})
+	if err != nil {
+		t.Fatalf("marshal submit request: %v", err)
+	}
+
+	rr := env.request(t, "POST", "/api/v1/escrows/1/submit", string(reqBodyBytes))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	chains, err := env.db.GetAttestationChainsByEscrow(ctx, escrow.ID)
+	if err != nil {
+		t.Fatalf("list attestation chains: %v", err)
+	}
+	if len(chains) != 0 {
+		t.Fatalf("expected no persisted attestation chains on invalid proof_hash, got %d", len(chains))
 	}
 }
 

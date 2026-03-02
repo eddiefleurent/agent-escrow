@@ -74,13 +74,13 @@ func setupCLITestEnv(t *testing.T) *cliTestEnv {
 		TxTimeout:        90 * time.Second,
 		EmergencyEnabled: true,
 		UCPEnabled:       true,
-		UCPBaseURL:       "http://localhost:8080",
 		UCPProviderName:  "Test UCP Provider",
 	}
 	idx := indexer.New(db, mock, cfg.FactoryAddress)
 	router := cliTestAuthMiddleware(api.NewRouter(db, mock, idx, cfg, nil))
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
+	cfg.UCPBaseURL = server.URL
 
 	return &cliTestEnv{db: db, server: server}
 }
@@ -485,7 +485,7 @@ func TestCLIUCPCreateGetUpdate(t *testing.T) {
 	if err := json.Unmarshal([]byte(updateOut), &updateResp); err != nil {
 		t.Fatalf("unmarshal ucp update output: %v\n%s", err, updateOut)
 	}
-	if got, _ := updateResp["last_operation"].(string); strings.TrimSpace(got) == "" {
-		t.Fatalf("expected last_operation after ucp update: %v", updateResp)
+	if got, _ := updateResp["last_operation"].(string); strings.TrimSpace(got) != "fund" {
+		t.Fatalf("expected last_operation to be %q after ucp update, got %q (resp=%v)", "fund", got, updateResp)
 	}
 }

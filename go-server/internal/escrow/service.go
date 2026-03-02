@@ -239,26 +239,17 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 	if input.Amount.Sign() < 0 {
 		return nil, fmt.Errorf("%w: amount must not be negative", ErrValidation)
 	}
-	if !common.IsHexAddress(input.Buyer) {
-		return nil, fmt.Errorf("%w: input.Buyer %q is not a valid hex address", ErrValidation, input.Buyer)
+	buyer, err := parseAddress("input.Buyer", input.Buyer)
+	if err != nil {
+		return nil, err
 	}
-	buyer := common.HexToAddress(input.Buyer)
-	if buyer == (common.Address{}) {
-		return nil, fmt.Errorf("%w: input.Buyer must not be the zero address", ErrValidation)
+	worker, err := parseAddress("input.Worker", input.Worker)
+	if err != nil {
+		return nil, err
 	}
-	if !common.IsHexAddress(input.Worker) {
-		return nil, fmt.Errorf("%w: input.Worker %q is not a valid hex address", ErrValidation, input.Worker)
-	}
-	worker := common.HexToAddress(input.Worker)
-	if worker == (common.Address{}) {
-		return nil, fmt.Errorf("%w: input.Worker must not be the zero address", ErrValidation)
-	}
-	if !common.IsHexAddress(input.Arbitrator) {
-		return nil, fmt.Errorf("%w: input.Arbitrator %q is not a valid hex address", ErrValidation, input.Arbitrator)
-	}
-	arbitrator := common.HexToAddress(input.Arbitrator)
-	if arbitrator == (common.Address{}) {
-		return nil, fmt.Errorf("%w: input.Arbitrator must not be the zero address", ErrValidation)
+	arbitrator, err := parseAddress("input.Arbitrator", input.Arbitrator)
+	if err != nil {
+		return nil, err
 	}
 	if buyer == worker {
 		return nil, fmt.Errorf("%w: buyer and worker must be distinct addresses", ErrValidation)
@@ -269,11 +260,9 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 	if worker == arbitrator {
 		return nil, fmt.Errorf("%w: worker and arbitrator must be distinct addresses", ErrValidation)
 	}
-	if !common.IsHexAddress(s.Cfg.FactoryAddress) {
-		return nil, fmt.Errorf("%w: s.Cfg.FactoryAddress %q is not a valid hex address", ErrValidation, s.Cfg.FactoryAddress)
-	}
-	if common.HexToAddress(s.Cfg.FactoryAddress) == (common.Address{}) {
-		return nil, fmt.Errorf("%w: s.Cfg.FactoryAddress must not be the zero address", ErrValidation)
+	factory, err := parseAddress("s.Cfg.FactoryAddress", s.Cfg.FactoryAddress)
+	if err != nil {
+		return nil, err
 	}
 	if input.VerifierStakePerVerifier == nil {
 		input.VerifierStakePerVerifier = big.NewInt(0)
@@ -324,7 +313,6 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 		}
 	}
 
-	factory := common.HexToAddress(s.Cfg.FactoryAddress)
 	params := chain.CreateEscrowParams{
 		Buyer:                    buyer,
 		Worker:                   worker,
@@ -810,16 +798,15 @@ func (s *Service) SubmitWork(ctx context.Context, escrow *storage.Escrow, req Su
 	if err != nil {
 		return "", err
 	}
-	if err := s.validateAndPersistAttestationChain(ctx, escrow.ID, milestoneIndex, req.AttestationChainJSON); err != nil {
-		return "", err
-	}
-
-	hash := crypto.Keccak256Hash([]byte(req.SubmissionURI))
-	var hashBytes [32]byte
-	copy(hashBytes[:], hash.Bytes())
 	proofHash, err := ParseProofHashHex(req.ProofHash)
 	if err != nil {
 		return "", fmt.Errorf("%w: invalid proof_hash: %w", ErrValidation, err)
+	}
+	hash := crypto.Keccak256Hash([]byte(req.SubmissionURI))
+	var hashBytes [32]byte
+	copy(hashBytes[:], hash.Bytes())
+	if err := s.validateAndPersistAttestationChain(ctx, escrow.ID, milestoneIndex, req.AttestationChainJSON); err != nil {
+		return "", err
 	}
 
 	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
