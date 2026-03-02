@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"strconv"
 	"strings"
@@ -110,6 +111,12 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 	}
 	if len(input.Milestones) != len(input.MilestoneDeadlines) {
 		return nil, fmt.Errorf("milestone metadata mismatch: %d milestones vs %d deadlines", len(input.Milestones), len(input.MilestoneDeadlines))
+	}
+	if input.Amount == nil {
+		return nil, errors.New("amount is required")
+	}
+	if input.Amount.Sign() < 0 {
+		return nil, errors.New("amount must not be negative")
 	}
 	if input.VerifierStakePerVerifier == nil {
 		input.VerifierStakePerVerifier = big.NewInt(0)
@@ -744,6 +751,9 @@ func validateMilestoneIndex(milestoneCount int, milestoneIndex *int) (*int, erro
 		}
 		return milestoneIndex, nil
 	}
+	if milestoneIndex != nil {
+		return nil, errors.New("milestone_index is not valid for single-milestone escrows")
+	}
 	return nil, nil
 }
 
@@ -752,7 +762,7 @@ func validateOptionalMilestoneIndex(milestoneCount int, milestoneIndex *int) (*i
 		return nil, nil
 	}
 	if milestoneCount <= 1 {
-		return nil, fmt.Errorf("milestone_index is not valid for single-milestone escrows")
+		return nil, errors.New("milestone_index is not valid for single-milestone escrows")
 	}
 	if *milestoneIndex < 0 || *milestoneIndex >= milestoneCount {
 		return nil, fmt.Errorf("milestone_index %d out of range [0, %d)", *milestoneIndex, milestoneCount)
@@ -845,6 +855,8 @@ func (s *Service) persistAttestationChain(ctx context.Context, escrowID int64, m
 
 func (s *Service) runIndexerOnce(ctx context.Context) {
 	if s.Idx != nil {
-		_ = s.Idx.RunOnce(ctx)
+		if err := s.Idx.RunOnce(ctx); err != nil {
+			slog.Warn("indexer RunOnce failed", "error", err)
+		}
 	}
 }
