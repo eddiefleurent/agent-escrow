@@ -10,6 +10,7 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
+	ucppkg "github.com/eddiefleurent/agent-escrow/go-server/internal/ucp"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/x402"
 )
 
@@ -128,6 +129,19 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 		a2aHandler := a2a.NewHandler(a2aSvc)
 		mux.HandleFunc("GET /.well-known/agent.json", a2aHandler.ServeAgentCard)
 		mux.HandleFunc("POST /a2a", a2aHandler.HandleJSONRPC)
+	}
+
+	// UCP fulfillment adapter routes (roadmap item 22).
+	if cfg.UCPEnabled {
+		escrowSvc := h.escrowService()
+		ucpSvc := ucppkg.NewService(db, escrowSvc, cfg.UCPProviderName, cfg.UCPBaseURL)
+		ucpHandler := ucppkg.NewHandler(ucpSvc)
+		mux.HandleFunc("GET /.well-known/ucp", ucpHandler.WellKnown)
+		mux.HandleFunc("POST /api/v1/ucp/checkouts", ucpHandler.CreateCheckout)
+		mux.HandleFunc("GET /api/v1/ucp/checkouts/{checkout_id}", ucpHandler.GetCheckout)
+		mux.HandleFunc("PATCH /api/v1/ucp/checkouts/{checkout_id}", ucpHandler.UpdateCheckout)
+		mux.HandleFunc("POST /api/v1/ucp/checkouts/{checkout_id}/complete", ucpHandler.CompleteCheckout)
+		mux.HandleFunc("POST /api/v1/ucp/checkouts/{checkout_id}/cancel", ucpHandler.CancelCheckout)
 	}
 
 	var handler http.Handler = mux

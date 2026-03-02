@@ -73,11 +73,14 @@ func setupCLITestEnv(t *testing.T) *cliTestEnv {
 		RequestTimeout:   10 * time.Second,
 		TxTimeout:        90 * time.Second,
 		EmergencyEnabled: true,
+		UCPEnabled:       true,
+		UCPProviderName:  "Test UCP Provider",
 	}
 	idx := indexer.New(db, mock, cfg.FactoryAddress)
 	router := cliTestAuthMiddleware(api.NewRouter(db, mock, idx, cfg, nil))
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
+	cfg.UCPBaseURL = server.URL
 
 	return &cliTestEnv{db: db, server: server}
 }
@@ -176,12 +179,12 @@ func TestCLIEscrowVerifyApprove(t *testing.T) {
 	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID:                   task.ID,
 		ChainID:                  84532,
-		FactoryAddress:           "0xF",
-		EscrowAddress:            "0xE3",
-		Buyer:                    "0xB",
-		Worker:                   "0xW",
-		Verifier:                 "0xV",
-		Arbitrator:               "0xA",
+		FactoryAddress:           "0x00000000000000000000000000000000000000FF",
+		EscrowAddress:            "0x000000000000000000000000000000000000E3E3",
+		Buyer:                    "0x00000000000000000000000000000000000000B0",
+		Worker:                   "0x00000000000000000000000000000000000000C0",
+		Verifier:                 "0x1111111111111111111111111111111111111111",
+		Arbitrator:               "0x00000000000000000000000000000000000000A0",
 		Amount:                   "100",
 		Status:                   "submitted",
 		SubmissionDeadline:       1700000000,
@@ -402,5 +405,87 @@ func TestCLICheckpointLatest(t *testing.T) {
 	}
 	if resp["state_snapshot_uri"] != "ipfs://latest" {
 		t.Fatalf("expected latest URI, got %v", resp["state_snapshot_uri"])
+	}
+}
+
+func TestCLIUCPProfile(t *testing.T) {
+	env := setupCLITestEnv(t)
+	stdout, stderr, err := runCLI(t, env.server.URL, "ucp", "profile")
+	if err != nil {
+		t.Fatalf("execute ucp profile: %v stderr=%s", err, stderr)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(stdout), &resp); err != nil {
+		t.Fatalf("unmarshal ucp profile output: %v\n%s", err, stdout)
+	}
+	if got, _ := resp["version"].(string); strings.TrimSpace(got) == "" {
+		t.Fatalf("expected version in ucp profile response: %v", resp)
+	}
+}
+
+func TestCLIUCPCreateGetUpdate(t *testing.T) {
+	env := setupCLITestEnv(t)
+	ctx := context.Background()
+
+	task, err := env.db.CreateTask(ctx, "Task", "desc", "0xabc")
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
+		TaskID:                   task.ID,
+		ChainID:                  84532,
+		FactoryAddress:           "0xF",
+		EscrowAddress:            "0x00000000000000000000000000000000000000E5",
+		Buyer:                    "0x00000000000000000000000000000000000000b0",
+		Worker:                   "0x00000000000000000000000000000000000000c0",
+		Verifier:                 "0x00000000000000000000000000000000000000d0",
+		Arbitrator:               "0x00000000000000000000000000000000000000e0",
+		Amount:                   "100",
+		Status:                   "created",
+		SubmissionDeadline:       1700000000,
+		ReviewPeriodSeconds:      60,
+		DisputePeriodSeconds:     60,
+		ArbitratorTimeoutSeconds: 60,
+	})
+	if err != nil {
+		t.Fatalf("create escrow: %v", err)
+	}
+
+	createPayload := `{"escrow_id":` + strconv.FormatInt(escrow.ID, 10) + `}`
+	createOut, createErr, err := runCLI(t, env.server.URL, "ucp", "create", "--data", createPayload)
+	if err != nil {
+		t.Fatalf("execute ucp create: %v stderr=%s", err, createErr)
+	}
+	var createResp map[string]any
+	if err := json.Unmarshal([]byte(createOut), &createResp); err != nil {
+		t.Fatalf("unmarshal ucp create output: %v\n%s", err, createOut)
+	}
+	checkoutID, _ := createResp["checkout_id"].(string)
+	if strings.TrimSpace(checkoutID) == "" {
+		t.Fatalf("expected checkout_id in response: %v", createResp)
+	}
+
+	getOut, getErr, err := runCLI(t, env.server.URL, "ucp", "get", checkoutID)
+	if err != nil {
+		t.Fatalf("execute ucp get: %v stderr=%s", err, getErr)
+	}
+	var getResp map[string]any
+	if err := json.Unmarshal([]byte(getOut), &getResp); err != nil {
+		t.Fatalf("unmarshal ucp get output: %v\n%s", err, getOut)
+	}
+	if got, _ := getResp["checkout_id"].(string); got != checkoutID {
+		t.Fatalf("expected checkout_id=%s, got %v", checkoutID, getResp["checkout_id"])
+	}
+
+	updateOut, updateErr, err := runCLI(t, env.server.URL, "ucp", "update", checkoutID, "--data", `{"operation":"fund"}`)
+	if err != nil {
+		t.Fatalf("execute ucp update: %v stderr=%s", err, updateErr)
+	}
+	var updateResp map[string]any
+	if err := json.Unmarshal([]byte(updateOut), &updateResp); err != nil {
+		t.Fatalf("unmarshal ucp update output: %v\n%s", err, updateOut)
+	}
+	if got, _ := updateResp["last_operation"].(string); strings.TrimSpace(got) != "fund" {
+		t.Fatalf("expected last_operation to be %q after ucp update, got %q (resp=%v)", "fund", got, updateResp)
 	}
 }

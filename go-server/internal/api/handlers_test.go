@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,8 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/attestation"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
+	escrowservice "github.com/eddiefleurent/agent-escrow/go-server/internal/escrow"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/ethereum/go-ethereum/common"
@@ -60,6 +64,16 @@ func setupWithEmergency(t *testing.T) *testEnv {
 	return env
 }
 
+func setupWithUCP(t *testing.T) *testEnv {
+	t.Helper()
+	env := setup(t)
+	env.cfg.UCPEnabled = true
+	env.cfg.UCPBaseURL = "http://localhost:8080"
+	env.cfg.UCPProviderName = "Test UCP Provider"
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
+	return env
+}
+
 func (e *testEnv) request(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	var req *http.Request
@@ -81,6 +95,39 @@ func decodeJSON(t *testing.T, rr *httptest.ResponseRecorder) map[string]any {
 		t.Fatalf("decode response: %v\nbody: %s", err, rr.Body.String())
 	}
 	return m
+}
+
+func makeValidCompletionAttestationChainJSON(t *testing.T) string {
+	t.Helper()
+
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("generate attestation key: %v", err)
+	}
+	now := time.Now().Unix()
+	att := attestation.CompletionAttestation{
+		Profile:      attestation.CompletionAttestationV1,
+		LinkID:       "link-1",
+		FromAddress:  crypto.PubkeyToAddress(key.PublicKey).Hex(),
+		ToAddress:    "0x0000000000000000000000000000000000000002",
+		TaskSpecHash: "0xabc",
+		OutcomeHash:  "0xdef",
+		IssuedAt:     now - 60,
+		ExpiresAt:    now + 3600,
+		Nonce:        "n1",
+	}
+	msgHash := crypto.Keccak256Hash([]byte(attestation.CanonicalCompletionMessage(&att)))
+	sig, err := crypto.Sign(msgHash.Bytes(), key)
+	if err != nil {
+		t.Fatalf("sign attestation: %v", err)
+	}
+	att.Signature = "0x" + hex.EncodeToString(sig)
+
+	chainJSONBytes, err := json.Marshal([]attestation.CompletionAttestation{att})
+	if err != nil {
+		t.Fatalf("marshal attestation chain: %v", err)
+	}
+	return string(chainJSONBytes)
 }
 
 func createSealedRFQFixture(t *testing.T, env *testEnv, now, commitDeadline, revealDeadline int64) *storage.RFQ {
@@ -231,6 +278,87 @@ func TestCreateEscrow_ChainError(t *testing.T) {
 	}
 }
 
+func TestCreateEscrow_DuplicateCoreRolesRejectedByService(t *testing.T) {
+	env := setup(t)
+
+	body := `{
+		"title": "Test", "description": "x",
+		"buyer": "0x1000000000000000000000000000000000000001",
+		"worker": "0x1000000000000000000000000000000000000001",
+		"verifier_panel": ["0x3000000000000000000000000000000000000003"],
+		"quorum_threshold": 1,
+		"quorum_verifier_count": 1,
+		"verifier_stake_per_verifier": "0",
+		"arbitrator": "0x4000000000000000000000000000000000000004",
+		"amount": "100", "submission_deadline": "1700000000",
+		"review_period_seconds": "86400", "dispute_period_seconds": "172800",
+		"arbitrator_timeout_seconds": "604800"
+	}`
+
+	rr := env.request(t, "POST", "/api/v1/escrows", body)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp := decodeJSON(t, rr)
+	msg, _ := resp["error"].(string)
+	if !strings.Contains(msg, "buyer and worker must be distinct addresses") {
+		t.Fatalf("expected duplicate core role validation message, got: %s", msg)
+	}
+	if len(env.mock.SentTxs) != 0 {
+		t.Fatalf("expected no on-chain create submission, got %d tx records", len(env.mock.SentTxs))
+	}
+}
+
+func TestCreateEscrow_RetryInFlightPendingDoesNotResubmit(t *testing.T) {
+	env := setup(t)
+	env.mock.CreateEscrowErr = errors.New("transient send failure")
+
+	body := `{
+		"title": "In-flight Retry", "description": "x",
+		"buyer": "0x1000000000000000000000000000000000000001",
+		"worker": "0x2000000000000000000000000000000000000002",
+		"verifier_panel": ["0x3000000000000000000000000000000000000003"],
+		"quorum_threshold": 1,
+		"quorum_verifier_count": 1,
+		"verifier_stake_per_verifier": "0",
+		"arbitrator": "0x4000000000000000000000000000000000000004",
+		"amount": "100", "submission_deadline": "1700000000",
+		"review_period_seconds": "86400", "dispute_period_seconds": "172800",
+		"arbitrator_timeout_seconds": "604800"
+	}`
+
+	first := env.request(t, "POST", "/api/v1/escrows", body)
+	if first.Code != http.StatusInternalServerError {
+		t.Fatalf("expected first attempt 500, got %d: %s", first.Code, first.Body.String())
+	}
+
+	ctx := context.Background()
+	escrows, err := env.db.ListEscrows(ctx, "", "", "")
+	if err != nil {
+		t.Fatalf("list escrows: %v", err)
+	}
+	if len(escrows) != 1 {
+		t.Fatalf("expected one pending escrow record, got %d", len(escrows))
+	}
+	if err := env.db.UpdateEscrowStatus(ctx, escrows[0].ID, "submitting"); err != nil {
+		t.Fatalf("set in-flight submitting status: %v", err)
+	}
+
+	env.mock.CreateEscrowErr = nil
+	env.mock.Receipt = chain.MakeEscrowCreatedReceipt(
+		1,
+		common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12"),
+		common.HexToAddress("0x1000000000000000000000000000000000000001"),
+	)
+	second := env.request(t, "POST", "/api/v1/escrows", body)
+	if second.Code != http.StatusInternalServerError {
+		t.Fatalf("expected second attempt 500 while in-flight, got %d: %s", second.Code, second.Body.String())
+	}
+	if len(env.mock.SentTxs) != 0 {
+		t.Fatalf("expected no createEscrow re-submission, got %d tx records", len(env.mock.SentTxs))
+	}
+}
+
 func TestCreateEscrow_InvalidJSON(t *testing.T) {
 	env := setup(t)
 
@@ -378,7 +506,7 @@ func TestFundEscrow_Success(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "1000000000000000000", Status: "created",
 	})
@@ -406,6 +534,66 @@ func TestFundEscrow_NotFound(t *testing.T) {
 	}
 }
 
+func TestFundEscrow_ValidationErrorReturns400(t *testing.T) {
+	env := setup(t)
+	env.mock.FundErr = fmt.Errorf("%w: escrow is not fundable in current state", escrowservice.ErrValidation)
+	ctx := context.Background()
+
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
+		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Amount: "1000000000000000000", Status: "created",
+	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
+
+	rr := env.request(t, "POST", "/api/v1/escrows/1/fund", "")
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp := decodeJSON(t, rr)
+	msg, _ := resp["error"].(string)
+	if !strings.Contains(msg, "validation error") {
+		t.Fatalf("expected validation error message, got: %s", msg)
+	}
+}
+
+func TestWithdrawStake_ValidationErrorReturns400(t *testing.T) {
+	env := setup(t)
+	env.mock.WithdrawStakeErr = fmt.Errorf("%w: stake is not yet withdrawable", escrowservice.ErrValidation)
+	ctx := context.Background()
+
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
+		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Amount: "1000000000000000000", Status: "funded",
+	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
+
+	rr := env.request(t, "POST", "/api/v1/escrows/1/withdraw-stake", "")
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp := decodeJSON(t, rr)
+	msg, _ := resp["error"].(string)
+	if !strings.Contains(msg, "validation error") {
+		t.Fatalf("expected validation error message, got: %s", msg)
+	}
+}
+
 func TestSubmitWork_Success(t *testing.T) {
 	env := setup(t)
 	ctx := context.Background()
@@ -416,7 +604,7 @@ func TestSubmitWork_Success(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "funded",
 	})
@@ -430,6 +618,165 @@ func TestSubmitWork_Success(t *testing.T) {
 	}
 }
 
+func TestSubmitWork_InternalFailureReturns500(t *testing.T) {
+	env := setup(t)
+	env.mock.SubmitErr = errors.New("rpc submit failed")
+	ctx := context.Background()
+
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
+		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Amount: "100", Status: "funded",
+	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
+
+	rr := env.request(t, "POST", "/api/v1/escrows/1/submit", `{"submission_uri": "ipfs://result"}`)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp := decodeJSON(t, rr)
+	msg, _ := resp["error"].(string)
+	if msg != "internal server error" {
+		t.Fatalf("expected generic internal error message, got: %s", msg)
+	}
+}
+
+func TestSubmitWork_InvalidProofHashDoesNotPersistAttestationChain(t *testing.T) {
+	env := setup(t)
+	ctx := context.Background()
+
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
+		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Amount: "100", Status: "funded",
+	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
+
+	reqBodyBytes, err := json.Marshal(map[string]any{
+		"submission_uri":         "ipfs://result",
+		"proof_hash":             "0x1",
+		"attestation_chain_json": makeValidCompletionAttestationChainJSON(t),
+	})
+	if err != nil {
+		t.Fatalf("marshal submit request: %v", err)
+	}
+
+	rr := env.request(t, "POST", "/api/v1/escrows/1/submit", string(reqBodyBytes))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	chains, err := env.db.GetAttestationChainsByEscrow(ctx, escrow.ID)
+	if err != nil {
+		t.Fatalf("list attestation chains: %v", err)
+	}
+	if len(chains) != 0 {
+		t.Fatalf("expected no persisted attestation chains on invalid proof_hash, got %d", len(chains))
+	}
+}
+
+func TestSubmitWork_SubmitFailureDoesNotPersistAttestationChain(t *testing.T) {
+	env := setup(t)
+	env.mock.SubmitErr = errors.New("rpc submit failed")
+	ctx := context.Background()
+
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
+		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
+		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
+		Amount: "100", Status: "funded",
+	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
+
+	reqBodyBytes, err := json.Marshal(map[string]any{
+		"submission_uri":         "ipfs://result",
+		"attestation_chain_json": makeValidCompletionAttestationChainJSON(t),
+	})
+	if err != nil {
+		t.Fatalf("marshal submit request: %v", err)
+	}
+
+	rr := env.request(t, "POST", "/api/v1/escrows/1/submit", string(reqBodyBytes))
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	chains, err := env.db.GetAttestationChainsByEscrow(ctx, escrow.ID)
+	if err != nil {
+		t.Fatalf("list attestation chains: %v", err)
+	}
+	if len(chains) != 0 {
+		t.Fatalf("expected no persisted attestation chains on submit failure, got %d", len(chains))
+	}
+}
+
+func TestSubmitWork_SubmitMilestoneFailureDoesNotPersistAttestationChain(t *testing.T) {
+	env := setup(t)
+	env.mock.SubmitMilestoneErr = errors.New("rpc submit milestone failed")
+	ctx := context.Background()
+
+	task, err := env.db.CreateTask(ctx, "Task", "", "0x1")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
+		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
+		EscrowAddress:  "0x000000000000000000000000000000000000E3E0",
+		Buyer:          "0xB",
+		Worker:         "0xW",
+		Verifier:       "0xV",
+		Arbitrator:     "0xA",
+		Amount:         "100",
+		Status:         "funded",
+		MilestoneCount: 2,
+	})
+	if err != nil {
+		t.Fatalf("setup escrow: %v", err)
+	}
+
+	reqBodyBytes, err := json.Marshal(map[string]any{
+		"submission_uri":         "ipfs://result",
+		"milestone_index":        0,
+		"attestation_chain_json": makeValidCompletionAttestationChainJSON(t),
+	})
+	if err != nil {
+		t.Fatalf("marshal submit request: %v", err)
+	}
+
+	rr := env.request(t, "POST", "/api/v1/escrows/1/submit", string(reqBodyBytes))
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	chains, err := env.db.GetAttestationChainsByEscrow(ctx, escrow.ID)
+	if err != nil {
+		t.Fatalf("list attestation chains: %v", err)
+	}
+	if len(chains) != 0 {
+		t.Fatalf("expected no persisted attestation chains on submit milestone failure, got %d", len(chains))
+	}
+}
+
 func TestApproveWork_Buyer(t *testing.T) {
 	env := setup(t)
 	ctx := context.Background()
@@ -440,7 +787,7 @@ func TestApproveWork_Buyer(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
@@ -464,7 +811,7 @@ func TestApproveWork_Verifier(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
@@ -488,7 +835,7 @@ func TestApproveWork_InvalidRole(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
@@ -512,7 +859,7 @@ func TestDisputeWork_Buyer(t *testing.T) {
 	}
 	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr1",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E1",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
@@ -537,7 +884,7 @@ func TestDisputeWork_Verifier(t *testing.T) {
 	}
 	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr2",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E2",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
@@ -562,7 +909,7 @@ func TestDisputeWork_Worker(t *testing.T) {
 	}
 	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr3",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E3",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
@@ -587,7 +934,7 @@ func TestDisputeWork_InvalidRole(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "submitted",
 	})
@@ -611,7 +958,7 @@ func TestResolveDispute_Success(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "disputed",
 	})
@@ -753,7 +1100,7 @@ func TestTimeout_POST_UsesLongerTxTimeout(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "1000000000000000000", Status: "created",
 	})
@@ -784,7 +1131,7 @@ func TestTimeout_POST_TxTimeoutExceeded(t *testing.T) {
 	}
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xF",
-		EscrowAddress: "0xEscrowAddr",
+		EscrowAddress: "0x000000000000000000000000000000000000E3E0",
 		Buyer:         "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "1000000000000000000", Status: "created",
 	})
@@ -2396,5 +2743,71 @@ func TestCheckpointList_EmptyReturnsArray(t *testing.T) {
 	}
 	if body := strings.TrimSpace(rr.Body.String()); body != "[]" {
 		t.Fatalf("expected empty array '[]', got %q", body)
+	}
+}
+
+func TestUCPWellKnown(t *testing.T) {
+	env := setupWithUCP(t)
+	rr := env.request(t, "GET", "/.well-known/ucp", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp := decodeJSON(t, rr)
+	version, ok := resp["version"].(string)
+	if !ok || version == "" {
+		t.Fatalf("expected non-empty version string in response, got: %v", resp)
+	}
+}
+
+func TestUCPCreateAndGetCheckout(t *testing.T) {
+	env := setupWithUCP(t)
+	ctx := context.Background()
+
+	task, err := env.db.CreateTask(ctx, "UCP Task", "desc", "0xabc")
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{
+		TaskID:                   task.ID,
+		ChainID:                  84532,
+		FactoryAddress:           env.cfg.FactoryAddress,
+		EscrowAddress:            "0x00000000000000000000000000000000000000e5",
+		EscrowID:                 task.ID,
+		Buyer:                    "0x1000000000000000000000000000000000000001",
+		Worker:                   "0x2000000000000000000000000000000000000002",
+		Verifier:                 "0x3000000000000000000000000000000000000003",
+		Arbitrator:               "0x4000000000000000000000000000000000000004",
+		Amount:                   "100",
+		WorkerStake:              "0",
+		VerifierStakePerVerifier: "0",
+		Token:                    "",
+		Status:                   "created",
+		SubmissionDeadline:       1700000000,
+		ReviewPeriodSeconds:      60,
+		DisputePeriodSeconds:     60,
+		ArbitratorTimeoutSeconds: 60,
+	})
+	if err != nil {
+		t.Fatalf("create escrow: %v", err)
+	}
+
+	createBody := fmt.Sprintf(`{"escrow_id":%d}`, escrow.ID)
+	createRR := env.request(t, "POST", "/api/v1/ucp/checkouts", createBody)
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", createRR.Code, createRR.Body.String())
+	}
+	createResp := decodeJSON(t, createRR)
+	checkoutID, _ := createResp["checkout_id"].(string)
+	if strings.TrimSpace(checkoutID) == "" {
+		t.Fatalf("expected checkout_id in response: %v", createResp)
+	}
+
+	getRR := env.request(t, "GET", "/api/v1/ucp/checkouts/"+checkoutID, "")
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", getRR.Code, getRR.Body.String())
+	}
+	getResp := decodeJSON(t, getRR)
+	if got, _ := getResp["checkout_id"].(string); got != checkoutID {
+		t.Fatalf("expected checkout_id=%s got=%v", checkoutID, getResp["checkout_id"])
 	}
 }

@@ -120,6 +120,118 @@ func TestGetEscrowByAddress(t *testing.T) {
 	}
 }
 
+func TestEscrowCreateIntentQueries(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	task, err := db.CreateTask(ctx, "Task", "", "0x123")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	escrow, err := db.CreateEscrow(ctx, &Escrow{
+		TaskID:         task.ID,
+		ChainID:        84532,
+		FactoryAddress: "0xFactory",
+		EscrowAddress:  "pending:intent-1",
+		EscrowID:       0,
+		CreateIntentID: "intent-1",
+		Buyer:          "0xBuyer",
+		Worker:         "0xWorker",
+		Verifier:       "0xVerifier",
+		Arbitrator:     "0xArbitrator",
+		Amount:         "100",
+		Status:         "pending",
+	})
+	if err != nil {
+		t.Fatalf("create escrow: %v", err)
+	}
+
+	got, err := db.GetEscrowByCreateIntentID(ctx, "intent-1")
+	if err != nil {
+		t.Fatalf("get by create intent: %v", err)
+	}
+	if got.ID != escrow.ID {
+		t.Fatalf("expected escrow id %d, got %d", escrow.ID, got.ID)
+	}
+
+	transitioned, err := db.TransitionEscrowStatus(ctx, escrow.ID, "pending", "submitting")
+	if err != nil {
+		t.Fatalf("transition status: %v", err)
+	}
+	if !transitioned {
+		t.Fatal("expected status transition to succeed")
+	}
+	if err := db.SetEscrowCreateTxHash(ctx, escrow.ID, "0xabc", "submitting", "pending_confirmation"); err != nil {
+		t.Fatalf("set create tx hash: %v", err)
+	}
+
+	updated, err := db.GetEscrow(ctx, escrow.ID)
+	if err != nil {
+		t.Fatalf("get escrow after update: %v", err)
+	}
+	if updated.Status != "pending_confirmation" {
+		t.Fatalf("expected status pending_confirmation, got %q", updated.Status)
+	}
+	if updated.CreateTxHash != "0xabc" {
+		t.Fatalf("expected create_tx_hash 0xabc, got %q", updated.CreateTxHash)
+	}
+}
+
+func TestSetEscrowCreateTxHash_NoRows(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	err := db.SetEscrowCreateTxHash(ctx, 99999, "0xabc", "submitting", "pending_confirmation")
+	if err == nil {
+		t.Fatal("expected error when escrow row does not exist")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected sql.ErrNoRows, got %v", err)
+	}
+}
+
+func TestCreateEscrow_DuplicateCreateIntent(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	task, err := db.CreateTask(ctx, "Task", "", "0x123")
+	if err != nil {
+		t.Fatalf("setup task: %v", err)
+	}
+	_, err = db.CreateEscrow(ctx, &Escrow{
+		TaskID:         task.ID,
+		ChainID:        84532,
+		FactoryAddress: "0xFactory",
+		EscrowAddress:  "pending:intent-dup-1",
+		CreateIntentID: "intent-dup",
+		Buyer:          "0xBuyer",
+		Worker:         "0xWorker",
+		Verifier:       "0xVerifier",
+		Arbitrator:     "0xArbitrator",
+		Amount:         "100",
+		Status:         "pending",
+	})
+	if err != nil {
+		t.Fatalf("create first escrow: %v", err)
+	}
+	_, err = db.CreateEscrow(ctx, &Escrow{
+		TaskID:         task.ID,
+		ChainID:        84532,
+		FactoryAddress: "0xFactory",
+		EscrowAddress:  "pending:intent-dup-2",
+		CreateIntentID: "intent-dup",
+		Buyer:          "0xBuyer",
+		Worker:         "0xWorker",
+		Verifier:       "0xVerifier",
+		Arbitrator:     "0xArbitrator",
+		Amount:         "100",
+		Status:         "pending",
+	})
+	if !errors.Is(err, ErrDuplicateEscrowCreateIntent) {
+		t.Fatalf("expected ErrDuplicateEscrowCreateIntent, got %v", err)
+	}
+}
+
 func TestUpdateEscrowStatus(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()

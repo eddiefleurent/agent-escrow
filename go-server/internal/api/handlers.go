@@ -12,18 +12,18 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/eddiefleurent/agent-escrow/go-server/internal/attestation"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/bidding"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/decomposition"
+	escrowservice "github.com/eddiefleurent/agent-escrow/go-server/internal/escrow"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/numconv"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
@@ -32,6 +32,9 @@ type Handlers struct {
 	chain chain.ChainClient
 	idx   *indexer.Indexer
 	cfg   *config.Config
+
+	escrowOnce sync.Once
+	escrowSvc  *escrowservice.Service
 }
 
 func (h *Handlers) Health(w http.ResponseWriter, r *http.Request) {
@@ -158,8 +161,6 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 	buyerAddr := common.HexToAddress(req.Buyer)
 	workerAddr := common.HexToAddress(req.Worker)
 	arbitratorAddr := common.HexToAddress(req.Arbitrator)
-	var verifierPanel [7]common.Address
-	panelForJSON := make([]string, req.QuorumVerifierCount)
 	seenVerifierPanel := make(map[common.Address]bool, req.QuorumVerifierCount)
 	for i := 0; i < req.QuorumVerifierCount; i++ {
 		if !isValidAddress(req.VerifierPanel[i]) {
@@ -176,8 +177,6 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		seenVerifierPanel[addr] = true
-		verifierPanel[i] = addr
-		panelForJSON[i] = strings.ToLower(addr.Hex())
 	}
 
 	workerStakeVal := big.NewInt(0)
@@ -219,7 +218,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 	var milestones []chain.MilestoneParam
 	for _, m := range req.Milestones {
 		msAmount, ok := new(big.Int).SetString(m.Amount, 10)
-		if !ok {
+		if !ok || msAmount.Sign() < 0 {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid milestone amount"})
 			return
 		}
@@ -360,120 +359,67 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	factory := common.HexToAddress(h.cfg.FactoryAddress)
-	params := chain.CreateEscrowParams{
-		Buyer:                    common.HexToAddress(req.Buyer),
-		Worker:                   common.HexToAddress(req.Worker),
-		VerifierPanel:            verifierPanel,
+	result, err := h.escrowService().CreateEscrow(r.Context(), escrowservice.CreateEscrowInput{
+		Title:       req.Title,
+		Description: req.Description,
+
+		Buyer:         req.Buyer,
+		Worker:        req.Worker,
+		Arbitrator:    req.Arbitrator,
+		VerifierPanel: req.VerifierPanel,
+
 		QuorumThreshold:          quorumThreshold,
 		QuorumVerifierCount:      quorumVerifierCount,
 		VerifierStakePerVerifier: verifierStakePerVerifierVal,
-		Arbitrator:               common.HexToAddress(req.Arbitrator),
-		Amount:                   amount,
-		WorkerStake:              workerStakeVal,
+
+		Amount:      amount,
+		WorkerStake: workerStakeVal,
+
 		SubmissionDeadline:       deadline,
 		ReviewPeriodSeconds:      review,
 		DisputePeriodSeconds:     dispute,
-		TaskSpecHash:             specHash,
 		ArbitratorTimeoutSeconds: arbTimeout,
-		Token:                    tokenAddr,
-		ServiceTier:              serviceTier,
-		Milestones:               milestones,
-		BackupWorker:             backupWorkerAddr,
-		BackupDeadlineExtension:  backupDeadlineExt,
-		ZKVerifier:               zkVerifier,
-		CircuitID:                circuitID,
-		ParentEscrow:             parentEscrowAddr,
-	}
 
-	tx, err := h.chain.CreateEscrow(r.Context(), factory, params)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-		return
-	}
+		SubmissionDeadlineDB:       submissionDeadline,
+		ReviewPeriodSecondsDB:      reviewPeriod,
+		DisputePeriodSecondsDB:     disputePeriod,
+		ArbitratorTimeoutSecondsDB: arbitratorTimeout,
 
-	result, err := chain.WaitMinedAndParseEscrow(r.Context(), h.chain, tx.Hash())
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("receipt: %v", err)})
-		return
-	}
+		Token:       tokenAddr,
+		ServiceTier: serviceTier,
 
-	task, err := h.db.CreateTask(r.Context(), req.Title, req.Description, specHash.Hex())
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("db: %v", err)})
-		return
-	}
+		Milestones:         milestones,
+		MilestoneDeadlines: msDeadlinesInt64,
 
-	milestoneCount := 1
-	if len(milestones) > 0 {
-		milestoneCount = len(milestones)
-	}
-	panelJSONBytes, err := json.Marshal(panelForJSON)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("marshal verifier panel: %v", err)})
-		return
-	}
+		BackupWorker:            backupWorkerAddr,
+		BackupDeadlineExtension: backupDeadlineExt,
+		BackupDeadlineDB:        backupDeadline,
 
-	escrow, err := h.db.CreateEscrow(r.Context(), &storage.Escrow{
-		TaskID:                   task.ID,
-		ChainID:                  h.cfg.ChainID,
-		FactoryAddress:           h.cfg.FactoryAddress,
-		EscrowAddress:            result.EscrowAddress.Hex(),
-		EscrowID:                 result.EscrowID,
-		Buyer:                    req.Buyer,
-		Worker:                   req.Worker,
-		Verifier:                 strings.ToLower(verifierPanel[0].Hex()),
-		VerifierPanelJSON:        string(panelJSONBytes),
-		QuorumThreshold:          req.QuorumThreshold,
-		QuorumVerifierCount:      req.QuorumVerifierCount,
-		VerifierStakePerVerifier: verifierStakePerVerifierVal.String(),
-		Arbitrator:               req.Arbitrator,
-		Amount:                   req.Amount,
-		WorkerStake:              workerStakeVal.String(),
-		Token:                    tokenAddr.Hex(),
-		Status:                   "created",
-		SubmissionDeadline:       submissionDeadline,
-		ReviewPeriodSeconds:      reviewPeriod,
-		DisputePeriodSeconds:     disputePeriod,
-		ArbitratorTimeoutSeconds: arbitratorTimeout,
-		MilestoneCount:           milestoneCount,
-		CurrentMilestone:         0,
-		BackupWorker:             backupWorkerAddr.Hex(),
-		BackupDeadlineExtension:  backupDeadline,
-		ActiveWorker:             req.Worker,
-		ServiceTier:              req.ServiceTier,
-		ZKVerifier:               zkVerifier.Hex(),
-		CircuitID:                fmt.Sprintf("0x%x", circuitID),
-		ParentEscrowID:           req.ParentEscrowID,
+		ZKVerifier: zkVerifier,
+		CircuitID:  circuitID,
+
+		ParentEscrowID: req.ParentEscrowID,
+		ParentEscrow:   parentEscrowAddr,
+
+		TaskSpecHash: specHash,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("db: %v", err)})
+		if escrowservice.IsValidation(err) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": validationMessage(err)})
+			return
+		}
+		slog.Error("create escrow failed", "method", r.Method, "path", r.URL.Path, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 
-	for i, m := range milestones {
-		_, err := h.db.CreateMilestone(r.Context(), &storage.MilestoneRecord{
-			EscrowID:           escrow.ID,
-			MilestoneIndex:     i,
-			Amount:             m.Amount.String(),
-			SubmissionDeadline: msDeadlinesInt64[i],
-			Status:             "pending",
-		})
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("db milestone %d: %v", i, err)})
-			return
-		}
-	}
-
-	_ = h.idx.RunOnce(r.Context())
-
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"escrow_id":       escrow.ID,
-		"task_id":         task.ID,
-		"tx_hash":         tx.Hash().Hex(),
-		"escrow_address":  result.EscrowAddress.Hex(),
-		"chain_escrow_id": result.EscrowID,
-		"milestone_count": milestoneCount,
+		"escrow_id":       result.EscrowID,
+		"task_id":         result.TaskID,
+		"tx_hash":         result.TxHash,
+		"escrow_address":  result.EscrowAddress,
+		"chain_escrow_id": result.ChainEscrowID,
+		"milestone_count": result.MilestoneCount,
 	})
 }
 
@@ -598,7 +544,8 @@ func (h *Handlers) ListEscrows(w http.ResponseWriter, r *http.Request) {
 
 	escrows, err := h.db.ListEscrows(r.Context(), role, address, status)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("list escrows failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 
@@ -618,95 +565,12 @@ func (h *Handlers) FundEscrow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	amount, ok := new(big.Int).SetString(escrow.Amount, 10)
-	if !ok {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "malformed escrow amount in database"})
-		return
-	}
-
-	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
-	isERC20 := escrow.Token != "" && escrow.Token != "0x0000000000000000000000000000000000000000"
-
-	if isERC20 {
-		tokenAddr := common.HexToAddress(escrow.Token)
-		approveTx, err := h.chain.ApproveERC20(r.Context(), tokenAddr, escrowAddr, amount)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("approve: %v", err)})
-			return
-		}
-		approveReceipt, err := chain.WaitMined(r.Context(), h.chain, approveTx.Hash())
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("approve receipt: %v", err)})
-			return
-		}
-		if approveReceipt.Status != 1 {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "approve transaction reverted"})
-			return
-		}
-		tx, err := h.chain.Fund(r.Context(), escrowAddr, nil)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-			return
-		}
-		_ = h.idx.RunOnce(r.Context())
-		writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
-		return
-	}
-
-	tx, err := h.chain.Fund(r.Context(), escrowAddr, amount)
+	txHash, err := h.escrowService().FundEscrow(r.Context(), escrow)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
+		handleEscrowServiceActionError(w, r, "fund_escrow", id, err)
 		return
 	}
-
-	_ = h.idx.RunOnce(r.Context())
-	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
-}
-
-// execStakeDeposit handles the ERC20-approve-then-deposit or ETH-deposit flow shared by
-// DepositStake and DepositVerifierStake. deposit is the chain method to call.
-func (h *Handlers) execStakeDeposit(
-	ctx context.Context,
-	w http.ResponseWriter,
-	escrowAddr common.Address,
-	stakeAmount *big.Int,
-	token string,
-	deposit func(context.Context, common.Address, *big.Int) (*types.Transaction, error),
-) {
-	isERC20 := token != "" && token != "0x0000000000000000000000000000000000000000"
-	if isERC20 {
-		tokenAddr := common.HexToAddress(token)
-		approveTx, err := h.chain.ApproveERC20(ctx, tokenAddr, escrowAddr, stakeAmount)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("approve: %v", err)})
-			return
-		}
-		approveReceipt, err := chain.WaitMined(ctx, h.chain, approveTx.Hash())
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("approve receipt: %v", err)})
-			return
-		}
-		if approveReceipt.Status != 1 {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "approve transaction reverted"})
-			return
-		}
-		tx, err := deposit(ctx, escrowAddr, nil)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-			return
-		}
-		_ = h.idx.RunOnce(ctx)
-		writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
-		return
-	}
-
-	tx, err := deposit(ctx, escrowAddr, stakeAmount)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-		return
-	}
-	_ = h.idx.RunOnce(ctx)
-	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
 }
 
 func (h *Handlers) DepositStake(w http.ResponseWriter, r *http.Request) {
@@ -720,12 +584,12 @@ func (h *Handlers) DepositStake(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
-	stakeAmount, ok := new(big.Int).SetString(escrow.WorkerStake, 10)
-	if !ok || stakeAmount.Sign() <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "this escrow does not require a worker stake"})
+	txHash, err := h.escrowService().DepositWorkerStake(r.Context(), escrow)
+	if err != nil {
+		handleEscrowServiceActionError(w, r, "deposit_worker_stake", id, err)
 		return
 	}
-	h.execStakeDeposit(r.Context(), w, common.HexToAddress(escrow.EscrowAddress), stakeAmount, escrow.Token, h.chain.DepositStake)
+	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
 }
 
 func (h *Handlers) DepositVerifierStake(w http.ResponseWriter, r *http.Request) {
@@ -739,12 +603,12 @@ func (h *Handlers) DepositVerifierStake(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
-	stakeAmount, ok := new(big.Int).SetString(escrow.VerifierStakePerVerifier, 10)
-	if !ok || stakeAmount.Sign() <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "this escrow does not require verifier stake"})
+	txHash, err := h.escrowService().DepositVerifierStake(r.Context(), escrow)
+	if err != nil {
+		handleEscrowServiceActionError(w, r, "deposit_verifier_stake", id, err)
 		return
 	}
-	h.execStakeDeposit(r.Context(), w, common.HexToAddress(escrow.EscrowAddress), stakeAmount, escrow.Token, h.chain.DepositVerifierStake)
+	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
 }
 
 // WithdrawStake claims verifier stake owed to the caller after quorum settlement or refund.
@@ -759,13 +623,12 @@ func (h *Handlers) WithdrawStake(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
-	tx, err := h.chain.WithdrawStake(r.Context(), common.HexToAddress(escrow.EscrowAddress))
+	txHash, err := h.escrowService().WithdrawStake(r.Context(), escrow)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
+		handleEscrowServiceActionError(w, r, "withdraw_stake", id, err)
 		return
 	}
-	_ = h.idx.RunOnce(r.Context())
-	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
 }
 
 type submitRequest struct {
@@ -773,59 +636,6 @@ type submitRequest struct {
 	ProofHash            string `json:"proof_hash,omitempty"`
 	MilestoneIndex       *int   `json:"milestone_index,omitempty"`
 	AttestationChainJSON string `json:"attestation_chain_json,omitempty"`
-}
-
-// persistAttestationChain persists an attestation chain and its links inside a single
-// transaction. It writes an appropriate HTTP error response and returns true if an
-// error occurred; the caller should return immediately in that case.
-func (h *Handlers) persistAttestationChain(ctx context.Context, w http.ResponseWriter, escrowID int64, milestoneIndex *int, chainResult attestation.ChainValidationResult, atts []attestation.CompletionAttestation) bool {
-	tx, txErr := h.db.BeginTx(ctx)
-	if txErr != nil {
-		slog.Error("failed to begin attestation persistence transaction", "escrow_id", escrowID, "error", txErr)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist attestation chain"})
-		return true
-	}
-	defer tx.Rollback()
-
-	acRecord, acErr := h.db.CreateAttestationChainTx(ctx, tx, &storage.AttestationChain{
-		EscrowID:                escrowID,
-		MilestoneIndex:          milestoneIndex,
-		RootHash:                chainResult.RootHash,
-		Verified:                chainResult.Valid,
-		VerificationSummaryJSON: attestation.MarshalChainValidationResult(chainResult),
-	})
-	if acErr != nil {
-		slog.Error("failed to persist attestation chain", "escrow_id", escrowID, "error", acErr)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist attestation chain"})
-		return true
-	}
-	for _, att := range atts {
-		_, linkErr := h.db.CreateAttestationLinkTx(ctx, tx, &storage.AttestationLink{
-			ChainID:       acRecord.ID,
-			LinkID:        att.LinkID,
-			ParentLinkID:  att.ParentLinkID,
-			FromAddress:   att.FromAddress,
-			ToAddress:     att.ToAddress,
-			ChildEscrowID: att.ChildEscrowID,
-			TaskSpecHash:  att.TaskSpecHash,
-			OutcomeHash:   att.OutcomeHash,
-			IssuedAt:      att.IssuedAt,
-			ExpiresAt:     att.ExpiresAt,
-			Nonce:         att.Nonce,
-			Signature:     att.Signature,
-		})
-		if linkErr != nil {
-			slog.Error("failed to persist attestation link", "chain_id", acRecord.ID, "link_id", att.LinkID, "error", linkErr)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist attestation chain"})
-			return true
-		}
-	}
-	if commitErr := tx.Commit(); commitErr != nil {
-		slog.Error("failed to commit attestation persistence transaction", "escrow_id", escrowID, "chain_id", acRecord.ID, "error", commitErr)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist attestation chain"})
-		return true
-	}
-	return false
 }
 
 func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
@@ -846,109 +656,17 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
-
-	if escrow.MilestoneCount > 1 {
-		if req.MilestoneIndex == nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "milestone_index required for multi-milestone escrow"})
-			return
-		}
-		msIdx := *req.MilestoneIndex
-		if msIdx < 0 || msIdx >= escrow.MilestoneCount {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdx, escrow.MilestoneCount)})
-			return
-		}
-	}
-
-	// Attestation chain validation for sub-delegation (paper §4.8).
-	childEscrows, childErr := h.db.ListChildEscrows(r.Context(), id)
-	if childErr != nil {
-		slog.Error("failed to fetch child escrows", "escrow_id", id, "error", childErr)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to check child escrows"})
-		return
-	}
-	if len(childEscrows) > 0 {
-		atts, parseErr := attestation.ParseCompletionAttestations(req.AttestationChainJSON)
-		if parseErr != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid attestation_chain_json: %v", parseErr)})
-			return
-		}
-		if len(atts) == 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "attestation_chain_json required when escrow has sub-delegated child escrows"})
-			return
-		}
-		childIDs := make([]int64, len(childEscrows))
-		for i, ce := range childEscrows {
-			childIDs[i] = ce.ID
-		}
-		chainResult := attestation.ValidateChain(atts, childIDs, time.Now())
-		if !chainResult.Valid {
-			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error":   "attestation chain validation failed",
-				"reasons": strings.Join(chainResult.Reasons, "; "),
-			})
-			return
-		}
-		if h.persistAttestationChain(r.Context(), w, id, req.MilestoneIndex, chainResult, atts) {
-			return
-		}
-	} else if req.AttestationChainJSON != "" && req.AttestationChainJSON != "[]" {
-		// No child escrows but chain provided -- store it anyway for provenance.
-		atts, parseErr := attestation.ParseCompletionAttestations(req.AttestationChainJSON)
-		if parseErr != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid attestation_chain_json: %v", parseErr)})
-			return
-		}
-		if len(atts) > 0 {
-			chainResult := attestation.ValidateChain(atts, nil, time.Now())
-			if !chainResult.Valid {
-				writeJSON(w, http.StatusBadRequest, map[string]string{
-					"error":   "attestation chain validation failed",
-					"reasons": strings.Join(chainResult.Reasons, "; "),
-				})
-				return
-			}
-			if h.persistAttestationChain(r.Context(), w, id, req.MilestoneIndex, chainResult, atts) {
-				return
-			}
-		}
-	}
-
-	hash := crypto.Keccak256Hash([]byte(req.SubmissionURI))
-	var hashBytes [32]byte
-	copy(hashBytes[:], hash.Bytes())
-	proofHash, err := parseProofHashHex(req.ProofHash)
+	txHash, err := h.escrowService().SubmitWork(r.Context(), escrow, escrowservice.SubmitRequest{
+		SubmissionURI:        req.SubmissionURI,
+		ProofHash:            req.ProofHash,
+		MilestoneIndex:       req.MilestoneIndex,
+		AttestationChainJSON: req.AttestationChainJSON,
+	})
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid proof_hash: %v", err)})
+		handleEscrowServiceActionError(w, r, "submit_work", id, err)
 		return
 	}
-
-	addr := common.HexToAddress(escrow.EscrowAddress)
-
-	if escrow.MilestoneCount > 1 {
-		msIdx := *req.MilestoneIndex
-		msIdxU8, convErr := numconv.IntToUint8(msIdx, "milestone_index")
-		if convErr != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": convErr.Error()})
-			return
-		}
-		tx, err := h.chain.SubmitMilestone(r.Context(), addr, msIdxU8, hashBytes, req.SubmissionURI, proofHash)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-			return
-		}
-		_ = h.idx.RunOnce(r.Context())
-		writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
-		return
-	}
-
-	tx, err := h.chain.Submit(r.Context(), addr, hashBytes, req.SubmissionURI, proofHash)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-		return
-	}
-
-	_ = h.idx.RunOnce(r.Context())
-	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
 }
 
 type approveRequest struct {
@@ -974,71 +692,11 @@ func (h *Handlers) ApproveWork(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
-
-	addr := common.HexToAddress(escrow.EscrowAddress)
-
-	if escrow.MilestoneCount > 1 {
-		if req.MilestoneIndex == nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "milestone_index required for multi-milestone escrow"})
-			return
-		}
-		msIdxVal := *req.MilestoneIndex
-		if msIdxVal < 0 || msIdxVal >= escrow.MilestoneCount {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdxVal, escrow.MilestoneCount)})
-			return
-		}
-		msIdx, convErr := numconv.IntToUint8(msIdxVal, "milestone_index")
-		if convErr != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": convErr.Error()})
-			return
-		}
-		var txHash string
-		switch req.Role {
-		case "buyer":
-			tx, err := h.chain.ApproveMilestoneByBuyer(r.Context(), addr, msIdx)
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-				return
-			}
-			txHash = tx.Hash().Hex()
-		case "verifier":
-			tx, err := h.chain.CastMilestoneVerifierVote(r.Context(), addr, msIdx, true, "")
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-				return
-			}
-			txHash = tx.Hash().Hex()
-		default:
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "role must be 'buyer' or 'verifier'"})
-			return
-		}
-		_ = h.idx.RunOnce(r.Context())
-		writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
+	txHash, err := h.escrowService().ApproveWork(r.Context(), escrow, req.Role, req.MilestoneIndex)
+	if err != nil {
+		handleEscrowServiceActionError(w, r, "approve_work", id, err)
 		return
 	}
-
-	var txHash string
-	switch req.Role {
-	case "buyer":
-		tx, err := h.chain.ApproveByBuyer(r.Context(), addr)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-			return
-		}
-		txHash = tx.Hash().Hex()
-	case "verifier":
-		tx, err := h.chain.CastVerifierVote(r.Context(), addr, true, "")
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-			return
-		}
-		txHash = tx.Hash().Hex()
-	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "role must be 'buyer' or 'verifier'"})
-		return
-	}
-
-	_ = h.idx.RunOnce(r.Context())
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
 }
 
@@ -1059,7 +717,7 @@ func (h *Handlers) VerifyAndApprove(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
-	proofBytes, err := parseProofHexBytes(req.Proof)
+	proofBytes, err := escrowservice.ParseProofHexBytes(req.Proof)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid proof: %v", err)})
 		return
@@ -1070,40 +728,12 @@ func (h *Handlers) VerifyAndApprove(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
-	addr := common.HexToAddress(escrow.EscrowAddress)
-
-	if escrow.MilestoneCount > 1 {
-		if req.MilestoneIndex == nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "milestone_index required for multi-milestone escrow"})
-			return
-		}
-		msIdxVal := *req.MilestoneIndex
-		if msIdxVal < 0 || msIdxVal >= escrow.MilestoneCount {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdxVal, escrow.MilestoneCount)})
-			return
-		}
-		msIdx, convErr := numconv.IntToUint8(msIdxVal, "milestone_index")
-		if convErr != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": convErr.Error()})
-			return
-		}
-		tx, err := h.chain.VerifyAndApproveMilestone(r.Context(), addr, msIdx, proofBytes)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-			return
-		}
-		_ = h.idx.RunOnce(r.Context())
-		writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
-		return
-	}
-
-	tx, err := h.chain.VerifyAndApprove(r.Context(), addr, proofBytes)
+	txHash, err := h.escrowService().VerifyAndApprove(r.Context(), escrow, proofBytes, req.MilestoneIndex)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
+		handleEscrowServiceActionError(w, r, "verify_and_approve", id, err)
 		return
 	}
-	_ = h.idx.RunOnce(r.Context())
-	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
 }
 
 type quorumVoteRequest struct {
@@ -1134,41 +764,12 @@ func (h *Handlers) CastVerifierVote(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
-	addr := common.HexToAddress(escrow.EscrowAddress)
-
-	if escrow.MilestoneCount > 1 {
-		if req.MilestoneIndex == nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "milestone_index required for multi-milestone escrow"})
-			return
-		}
-		msIdxVal := *req.MilestoneIndex
-		if msIdxVal < 0 || msIdxVal >= escrow.MilestoneCount {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdxVal, escrow.MilestoneCount)})
-			return
-		}
-		msIdx, convErr := numconv.IntToUint8(msIdxVal, "milestone_index")
-		if convErr != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": convErr.Error()})
-			return
-		}
-		tx, err := h.chain.CastMilestoneVerifierVote(r.Context(), addr, msIdx, *req.Approve, req.ReasonURI)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-			return
-		}
-		_ = h.idx.RunOnce(r.Context())
-		writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
-		return
-	}
-
-	tx, err := h.chain.CastVerifierVote(r.Context(), addr, *req.Approve, req.ReasonURI)
+	txHash, err := h.escrowService().CastVerifierVote(r.Context(), escrow, *req.Approve, req.ReasonURI, req.MilestoneIndex)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
+		handleEscrowServiceActionError(w, r, "cast_verifier_vote", id, err)
 		return
 	}
-
-	_ = h.idx.RunOnce(r.Context())
-	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
 }
 
 type disputeRequest struct {
@@ -1195,85 +796,11 @@ func (h *Handlers) DisputeWork(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
-
-	addr := common.HexToAddress(escrow.EscrowAddress)
-
-	if escrow.MilestoneCount > 1 {
-		if req.MilestoneIndex == nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "milestone_index required for multi-milestone escrow"})
-			return
-		}
-		msIdxVal := *req.MilestoneIndex
-		if msIdxVal < 0 || msIdxVal >= escrow.MilestoneCount {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdxVal, escrow.MilestoneCount)})
-			return
-		}
-		msIdx, convErr := numconv.IntToUint8(msIdxVal, "milestone_index")
-		if convErr != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": convErr.Error()})
-			return
-		}
-		var txHash string
-		switch req.Role {
-		case "buyer":
-			tx, err := h.chain.DisputeMilestone(r.Context(), addr, msIdx, req.ReasonURI)
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-				return
-			}
-			txHash = tx.Hash().Hex()
-		case "verifier":
-			tx, err := h.chain.CastMilestoneVerifierVote(r.Context(), addr, msIdx, false, req.ReasonURI)
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-				return
-			}
-			txHash = tx.Hash().Hex()
-		case "worker":
-			tx, err := h.chain.EscalateMilestoneSilence(r.Context(), addr, msIdx, req.ReasonURI)
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-				return
-			}
-			txHash = tx.Hash().Hex()
-		default:
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "role must be 'buyer', 'verifier', or 'worker'"})
-			return
-		}
-		_ = h.idx.RunOnce(r.Context())
-		writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
+	txHash, err := h.escrowService().DisputeWork(r.Context(), escrow, req.Role, req.ReasonURI, req.MilestoneIndex)
+	if err != nil {
+		handleEscrowServiceActionError(w, r, "dispute_work", id, err)
 		return
 	}
-
-	var txHash string
-	switch req.Role {
-	case "buyer":
-		tx, err := h.chain.Dispute(r.Context(), addr, req.ReasonURI)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-			return
-		}
-		txHash = tx.Hash().Hex()
-	case "verifier":
-		tx, err := h.chain.CastVerifierVote(r.Context(), addr, false, req.ReasonURI)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-			return
-		}
-		txHash = tx.Hash().Hex()
-	case "worker":
-		tx, err := h.chain.EscalateSilence(r.Context(), addr, req.ReasonURI)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-			return
-		}
-		txHash = tx.Hash().Hex()
-	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "role must be 'buyer', 'verifier', or 'worker'"})
-		return
-	}
-
-	_ = h.idx.RunOnce(r.Context())
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
 }
 
@@ -1307,42 +834,12 @@ func (h *Handlers) ResolveDispute(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
-
-	addr := common.HexToAddress(escrow.EscrowAddress)
-
-	if escrow.MilestoneCount > 1 {
-		if req.MilestoneIndex == nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "milestone_index required for multi-milestone escrow"})
-			return
-		}
-		msIdxVal := *req.MilestoneIndex
-		if msIdxVal < 0 || msIdxVal >= escrow.MilestoneCount {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("milestone_index %d out of range [0, %d)", msIdxVal, escrow.MilestoneCount)})
-			return
-		}
-		msIdx, convErr := numconv.IntToUint8(msIdxVal, "milestone_index")
-		if convErr != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": convErr.Error()})
-			return
-		}
-		tx, err := h.chain.ResolveMilestoneDispute(r.Context(), addr, msIdx, uint16(bps), req.ResolutionURI)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
-			return
-		}
-		_ = h.idx.RunOnce(r.Context())
-		writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
-		return
-	}
-
-	tx, err := h.chain.ResolveDispute(r.Context(), addr, uint16(bps), req.ResolutionURI)
+	txHash, err := h.escrowService().ResolveDispute(r.Context(), escrow, uint16(bps), req.ResolutionURI, req.MilestoneIndex)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
+		handleEscrowServiceActionError(w, r, "resolve_dispute", id, err)
 		return
 	}
-
-	_ = h.idx.RunOnce(r.Context())
-	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
 }
 
 func (h *Handlers) AbortRemainingMilestones(w http.ResponseWriter, r *http.Request) {
@@ -1357,20 +854,12 @@ func (h *Handlers) AbortRemainingMilestones(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
-
-	if escrow.MilestoneCount <= 1 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "abort_remaining_milestones is only available for multi-milestone escrows"})
-		return
-	}
-
-	tx, err := h.chain.AbortRemainingMilestones(r.Context(), common.HexToAddress(escrow.EscrowAddress))
+	txHash, err := h.escrowService().AbortRemainingMilestones(r.Context(), escrow)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
+		handleEscrowServiceActionError(w, r, "abort_remaining_milestones", id, err)
 		return
 	}
-
-	_ = h.idx.RunOnce(r.Context())
-	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
 }
 
 func (h *Handlers) ActivateBackup(w http.ResponseWriter, r *http.Request) {
@@ -1385,25 +874,12 @@ func (h *Handlers) ActivateBackup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
-
-	if escrow.BackupWorker == "" || escrow.BackupWorker == "0x0000000000000000000000000000000000000000" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "this escrow has no backup worker designated"})
-		return
-	}
-
-	if escrow.BackupActivated {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "backup already activated"})
-		return
-	}
-
-	tx, err := h.chain.ActivateBackup(r.Context(), common.HexToAddress(escrow.EscrowAddress))
+	txHash, err := h.escrowService().ActivateBackup(r.Context(), escrow)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("chain: %v", err)})
+		handleEscrowServiceActionError(w, r, "activate_backup", id, err)
 		return
 	}
-
-	_ = h.idx.RunOnce(r.Context())
-	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": tx.Hash().Hex()})
+	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
 }
 
 func (h *Handlers) GetReputation(w http.ResponseWriter, r *http.Request) {
@@ -1442,6 +918,13 @@ func (h *Handlers) GetReputation(w http.ResponseWriter, r *http.Request) {
 		"damping_factor": h.cfg.ReputationDampingFactor,
 		"roles":          views,
 	})
+}
+
+func (h *Handlers) escrowService() *escrowservice.Service {
+	h.escrowOnce.Do(func() {
+		h.escrowSvc = escrowservice.NewService(h.db, h.chain, h.idx, h.cfg)
+	})
+	return h.escrowSvc
 }
 
 func (h *Handlers) biddingService() *bidding.Service {
@@ -1509,7 +992,8 @@ func (h *Handlers) ListDecompositions(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	items, err := h.decompositionService().ListDecompositions(r.Context(), buyer, status)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("list decompositions failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 	if items == nil {
@@ -1529,7 +1013,8 @@ func (h *Handlers) GetDecomposition(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		} else {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			slog.Error("get decomposition failed", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		}
 		return
 	}
@@ -1791,7 +1276,8 @@ func (h *Handlers) ListRFQs(w http.ResponseWriter, r *http.Request) {
 
 	rfqs, err := h.db.ListRFQs(r.Context(), status, buyer)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("list rfqs failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 
@@ -1880,7 +1366,8 @@ func (h *Handlers) CancelRFQ(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.db.UpdateRFQStatus(r.Context(), id, "cancelled"); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("cancel rfq: update status failed", "rfq_id", id, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 	if err := h.db.RejectPendingBids(r.Context(), id, 0); err != nil {
@@ -2017,7 +1504,8 @@ func (h *Handlers) ListBids(w http.ResponseWriter, r *http.Request) {
 
 	bids, err := h.db.ListBidsByRFQ(r.Context(), rfqID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("list bids failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 
@@ -2369,27 +1857,6 @@ func parseProofHashHex(raw string) ([32]byte, error) {
 	return out, nil
 }
 
-func parseProofHexBytes(raw string) ([]byte, error) {
-	if raw == "" {
-		return nil, errors.New("proof is required")
-	}
-	if !strings.HasPrefix(raw, "0x") {
-		return nil, errors.New("expected 0x-prefixed hex")
-	}
-	normalized := raw[2:]
-	if len(normalized)%2 != 0 {
-		return nil, errors.New("hex length must be even")
-	}
-	b, err := hex.DecodeString(normalized)
-	if err != nil {
-		return nil, err
-	}
-	if len(b) == 0 {
-		return nil, errors.New("proof is empty")
-	}
-	return b, nil
-}
-
 // Checkpoint handlers (paper §6.1: checkpoint artifacts for mid-task agent swaps)
 
 type commitCheckpointRequest struct {
@@ -2564,6 +2031,32 @@ func (h *Handlers) GetLatestCheckpoint(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, cp)
+}
+
+func validationMessage(err error) string {
+	msg := strings.TrimSpace(err.Error())
+	prefix := escrowservice.ErrValidation.Error() + ":"
+	msg = strings.TrimSpace(strings.TrimPrefix(msg, prefix))
+	if msg == "" {
+		return "invalid request"
+	}
+	return msg
+}
+
+func handleEscrowServiceActionError(w http.ResponseWriter, r *http.Request, action string, escrowID int64, err error) {
+	if escrowservice.IsValidation(err) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": validationMessage(err)})
+		return
+	}
+	slog.Error(
+		"escrow action failed",
+		"action", action,
+		"escrow_id", escrowID,
+		"method", r.Method,
+		"path", r.URL.Path,
+		"error", err,
+	)
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

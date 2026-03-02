@@ -76,6 +76,8 @@ func (d *DB) GetTask(ctx context.Context, id int64) (*Task, error) {
 
 // Escrow queries
 
+var ErrDuplicateEscrowCreateIntent = errors.New("duplicate escrow create intent")
+
 func createEscrowOn(ctx context.Context, q dbExecer, e *Escrow) (*Escrow, error) {
 	msCount := e.MilestoneCount
 	if msCount == 0 {
@@ -94,9 +96,10 @@ func createEscrowOn(ctx context.Context, q dbExecer, e *Escrow) (*Escrow, error)
 		circuitID = "0x0000000000000000000000000000000000000000000000000000000000000000"
 	}
 	res, err := q.ExecContext(ctx,
-		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, verifier_panel_json, quorum_threshold, quorum_verifier_count, verifier_stake_per_verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, service_tier, zk_verifier, circuit_id, parent_escrow_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO escrows (task_id, chain_id, factory_address, escrow_address, escrow_id, create_intent_id, create_tx_hash, buyer, worker, verifier, verifier_panel_json, quorum_threshold, quorum_verifier_count, verifier_stake_per_verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, service_tier, zk_verifier, circuit_id, parent_escrow_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.TaskID, e.ChainID, e.FactoryAddress, e.EscrowAddress, e.EscrowID,
+		e.CreateIntentID, e.CreateTxHash,
 		e.Buyer, e.Worker, e.Verifier, e.VerifierPanelJSON, e.QuorumThreshold, e.QuorumVerifierCount, e.VerifierStakePerVerifier,
 		e.Arbitrator, e.Amount, e.WorkerStake, e.Token, e.Status,
 		e.SubmissionDeadline, e.ReviewPeriodSeconds, e.DisputePeriodSeconds, e.ArbitratorTimeoutSeconds,
@@ -105,6 +108,9 @@ func createEscrowOn(ctx context.Context, q dbExecer, e *Escrow) (*Escrow, error)
 		e.ServiceTier, zkVerifier, circuitID, e.ParentEscrowID,
 	)
 	if err != nil {
+		if isSQLiteUniqueConstraint(err, "escrows.create_intent_id") {
+			return nil, fmt.Errorf("insert escrow: %w", ErrDuplicateEscrowCreateIntent)
+		}
 		return nil, fmt.Errorf("insert escrow: %w", err)
 	}
 	id, err := res.LastInsertId()
@@ -127,7 +133,7 @@ func (d *DB) CreateEscrowTx(ctx context.Context, tx *sql.Tx, e *Escrow) (*Escrow
 	return createEscrowOn(ctx, tx, e)
 }
 
-const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, buyer, worker, verifier, verifier_panel_json, quorum_threshold, quorum_verifier_count, verifier_stake_per_verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, service_tier, zk_verifier, circuit_id, parent_escrow_id, created_at, updated_at`
+const escrowColumns = `id, task_id, chain_id, factory_address, escrow_address, escrow_id, create_intent_id, create_tx_hash, buyer, worker, verifier, verifier_panel_json, quorum_threshold, quorum_verifier_count, verifier_stake_per_verifier, arbitrator, amount, worker_stake, token, status, submission_deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds, milestone_count, current_milestone, backup_worker, backup_deadline_extension, active_worker, backup_activated, frozen, service_tier, zk_verifier, circuit_id, parent_escrow_id, created_at, updated_at`
 
 func scanEscrow(scanner interface{ Scan(...any) error }) (*Escrow, error) {
 	e := &Escrow{}
@@ -135,6 +141,7 @@ func scanEscrow(scanner interface{ Scan(...any) error }) (*Escrow, error) {
 	var backupActivatedInt, frozenInt int
 	var parentEscrowID sql.NullInt64
 	err := scanner.Scan(&e.ID, &e.TaskID, &e.ChainID, &e.FactoryAddress, &e.EscrowAddress, &e.EscrowID,
+		&e.CreateIntentID, &e.CreateTxHash,
 		&e.Buyer, &e.Worker, &e.Verifier, &e.VerifierPanelJSON, &e.QuorumThreshold, &e.QuorumVerifierCount, &e.VerifierStakePerVerifier,
 		&e.Arbitrator, &e.Amount, &e.WorkerStake, &e.Token, &e.Status,
 		&e.SubmissionDeadline, &e.ReviewPeriodSeconds, &e.DisputePeriodSeconds, &e.ArbitratorTimeoutSeconds,
@@ -180,6 +187,15 @@ func (d *DB) GetEscrowByAddress(ctx context.Context, addr string) (*Escrow, erro
 	return e, nil
 }
 
+func (d *DB) GetEscrowByCreateIntentID(ctx context.Context, createIntentID string) (*Escrow, error) {
+	row := d.db.QueryRowContext(ctx, `SELECT `+escrowColumns+` FROM escrows WHERE create_intent_id = ?`, createIntentID)
+	e, err := scanEscrow(row)
+	if err != nil {
+		return nil, fmt.Errorf("get escrow by create intent: %w", err)
+	}
+	return e, nil
+}
+
 func (d *DB) GetEscrowByOnChainID(ctx context.Context, chainID, escrowID int64) (*Escrow, error) {
 	row := d.db.QueryRowContext(ctx,
 		`SELECT `+escrowColumns+` FROM escrows WHERE chain_id = ? AND escrow_id = ?`,
@@ -198,6 +214,60 @@ func (d *DB) UpdateEscrowStatus(ctx context.Context, id int64, status string) er
 	)
 	if err != nil {
 		return fmt.Errorf("UpdateEscrowStatus: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) TransitionEscrowStatus(ctx context.Context, id int64, fromStatus, toStatus string) (bool, error) {
+	res, err := d.db.ExecContext(
+		ctx,
+		`UPDATE escrows SET status = ?, updated_at = datetime('now') WHERE id = ? AND status = ?`,
+		toStatus, id, fromStatus,
+	)
+	if err != nil {
+		return false, fmt.Errorf("TransitionEscrowStatus: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("TransitionEscrowStatus rows affected: %w", err)
+	}
+	return rows == 1, nil
+}
+
+func (d *DB) SetEscrowCreateTxHash(ctx context.Context, id int64, txHash, fromStatus, toStatus string) error {
+	res, err := d.db.ExecContext(
+		ctx,
+		`UPDATE escrows SET create_tx_hash = ?, status = ?, updated_at = datetime('now') WHERE id = ? AND status = ?`,
+		txHash, toStatus, id, fromStatus,
+	)
+	if err != nil {
+		return fmt.Errorf("SetEscrowCreateTxHash: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("SetEscrowCreateTxHash rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("SetEscrowCreateTxHash id=%d expected_status=%s: %w", id, fromStatus, sql.ErrNoRows)
+	}
+	return nil
+}
+
+func (d *DB) FinalizeEscrowCreateTx(ctx context.Context, tx *sql.Tx, id int64, escrowAddress string, escrowID int64, status string) error {
+	res, err := tx.ExecContext(
+		ctx,
+		`UPDATE escrows SET escrow_address = ?, escrow_id = ?, status = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending_confirmation'`,
+		escrowAddress, escrowID, status, id,
+	)
+	if err != nil {
+		return fmt.Errorf("FinalizeEscrowCreateTx: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("FinalizeEscrowCreateTx rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("FinalizeEscrowCreateTx id=%d: not in pending_confirmation state or not found: %w", id, sql.ErrNoRows)
 	}
 	return nil
 }
@@ -1612,6 +1682,7 @@ const bidCommitColumns = `id, rfq_id, bidder, commitment, nonce, status, reveale
 var (
 	ErrDuplicateBidCommitNonce      = errors.New("duplicate bid commit nonce")
 	ErrDuplicateBidCommitCommitment = errors.New("duplicate bid commit commitment")
+	ErrDuplicateUCPIdempotencyKey   = errors.New("duplicate ucp idempotency key")
 )
 
 func scanBidCommit(scanner interface{ Scan(...any) error }) (*BidCommit, error) {
@@ -2315,6 +2386,175 @@ func (d *DB) GetAP2Mandate(ctx context.Context, id string) (*AP2Mandate, error) 
 	}
 
 	return &m, nil
+}
+
+// ── UCP sessions + idempotency ──
+
+const ucpSessionColumns = `id, checkout_id, session_id, escrow_id, ucp_status, idempotency_key, last_operation, last_request_hash, last_tx_hash, created_at, updated_at`
+
+func scanUCPSession(scanner interface{ Scan(...any) error }) (*UCPSession, error) {
+	rec := &UCPSession{}
+	var idempotencyKey sql.NullString
+	var createdAt, updatedAt string
+	if err := scanner.Scan(
+		&rec.ID,
+		&rec.CheckoutID,
+		&rec.SessionID,
+		&rec.EscrowID,
+		&rec.UCPStatus,
+		&idempotencyKey,
+		&rec.LastOperation,
+		&rec.LastRequestHash,
+		&rec.LastTxHash,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		return nil, err
+	}
+	if idempotencyKey.Valid {
+		rec.IdempotencyKey = idempotencyKey.String
+	}
+	var err error
+	rec.CreatedAt, err = parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse ucp_session created_at: %w", err)
+	}
+	rec.UpdatedAt, err = parseSQLiteTime(updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse ucp_session updated_at: %w", err)
+	}
+	return rec, nil
+}
+
+func (d *DB) CreateUCPSession(ctx context.Context, rec *UCPSession) (*UCPSession, error) {
+	if rec == nil {
+		return nil, errors.New("CreateUCPSession: nil rec")
+	}
+	res, err := d.db.ExecContext(ctx,
+		`INSERT INTO ucp_sessions (checkout_id, session_id, escrow_id, ucp_status, idempotency_key, last_operation, last_request_hash, last_tx_hash)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		rec.CheckoutID,
+		rec.SessionID,
+		rec.EscrowID,
+		rec.UCPStatus,
+		nilIfEmpty(rec.IdempotencyKey),
+		rec.LastOperation,
+		rec.LastRequestHash,
+		rec.LastTxHash,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert ucp_session: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("last insert id: %w", err)
+	}
+	return d.GetUCPSession(ctx, id)
+}
+
+func (d *DB) GetUCPSession(ctx context.Context, id int64) (*UCPSession, error) {
+	row := d.db.QueryRowContext(ctx, `SELECT `+ucpSessionColumns+` FROM ucp_sessions WHERE id = ?`, id)
+	rec, err := scanUCPSession(row)
+	if err != nil {
+		return nil, fmt.Errorf("get ucp_session: %w", err)
+	}
+	return rec, nil
+}
+
+func (d *DB) GetUCPSessionByCheckoutID(ctx context.Context, checkoutID string) (*UCPSession, error) {
+	row := d.db.QueryRowContext(ctx, `SELECT `+ucpSessionColumns+` FROM ucp_sessions WHERE checkout_id = ?`, checkoutID)
+	rec, err := scanUCPSession(row)
+	if err != nil {
+		return nil, fmt.Errorf("get ucp_session by checkout_id: %w", err)
+	}
+	return rec, nil
+}
+
+func (d *DB) UpdateUCPSessionProjection(
+	ctx context.Context,
+	checkoutID string,
+	ucpStatus string,
+	idempotencyKey string,
+	lastOperation string,
+	lastRequestHash string,
+	lastTxHash string,
+) error {
+	res, err := d.db.ExecContext(ctx,
+		`UPDATE ucp_sessions
+		 SET ucp_status = ?,
+		     idempotency_key = ?,
+		     last_operation = ?,
+		     last_request_hash = ?,
+		     last_tx_hash = ?,
+		     updated_at = datetime('now')
+		 WHERE checkout_id = ?`,
+		ucpStatus,
+		nilIfEmpty(idempotencyKey),
+		lastOperation,
+		lastRequestHash,
+		lastTxHash,
+		checkoutID,
+	)
+	if err != nil {
+		return fmt.Errorf("UpdateUCPSessionProjection: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("UpdateUCPSessionProjection rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("UpdateUCPSessionProjection checkout_id=%s: %w", checkoutID, sql.ErrNoRows)
+	}
+	return nil
+}
+
+func (d *DB) CreateUCPIdempotency(ctx context.Context, rec *UCPIdempotency) error {
+	if rec == nil {
+		return errors.New("CreateUCPIdempotency: nil rec")
+	}
+	_, err := d.db.ExecContext(ctx,
+		`INSERT INTO ucp_idempotency (idempotency_key, operation, request_hash, response_json, checkout_id)
+		 VALUES (?, ?, ?, ?, ?)`,
+		rec.IdempotencyKey,
+		rec.Operation,
+		rec.RequestHash,
+		rec.ResponseJSON,
+		rec.CheckoutID,
+	)
+	if err != nil {
+		if isSQLiteUniqueConstraint(err, "ucp_idempotency.idempotency_key") {
+			return fmt.Errorf("insert ucp_idempotency: %w", ErrDuplicateUCPIdempotencyKey)
+		}
+		return fmt.Errorf("insert ucp_idempotency: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) GetUCPIdempotency(ctx context.Context, idempotencyKey string) (*UCPIdempotency, error) {
+	row := d.db.QueryRowContext(ctx,
+		`SELECT id, idempotency_key, operation, request_hash, response_json, checkout_id, created_at
+		 FROM ucp_idempotency WHERE idempotency_key = ?`,
+		idempotencyKey,
+	)
+	rec := &UCPIdempotency{}
+	var createdAt string
+	if err := row.Scan(
+		&rec.ID,
+		&rec.IdempotencyKey,
+		&rec.Operation,
+		&rec.RequestHash,
+		&rec.ResponseJSON,
+		&rec.CheckoutID,
+		&createdAt,
+	); err != nil {
+		return nil, fmt.Errorf("get ucp_idempotency: %w", err)
+	}
+	t, err := parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse ucp_idempotency created_at: %w", err)
+	}
+	rec.CreatedAt = t
+	return rec, nil
 }
 
 // parseSQLiteTime handles the two timestamp formats that SQLite / modernc.org/sqlite

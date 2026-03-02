@@ -59,6 +59,7 @@ func NewRootCmd(stdout, stderr io.Writer) *cobra.Command {
 	rootCmd.AddCommand(newAP2Cmd(opts))
 	rootCmd.AddCommand(newDCTCmd(opts))
 	rootCmd.AddCommand(newDecompositionCmd(opts))
+	rootCmd.AddCommand(newUCPCmd(opts))
 
 	return rootCmd
 }
@@ -107,6 +108,17 @@ func runPost(cmd *cobra.Command, opts *Options, path string, body any) error {
 	defer cancel()
 
 	payload, err := newClient(opts).Post(ctx, path, body)
+	if err != nil {
+		return err
+	}
+	return WriteOutput(cmd.OutOrStdout(), opts.Output, payload)
+}
+
+func runPatch(cmd *cobra.Command, opts *Options, path string, body any) error {
+	ctx, cancel := commandContext(opts)
+	defer cancel()
+
+	payload, err := newClient(opts).Patch(ctx, path, body)
 	if err != nil {
 		return err
 	}

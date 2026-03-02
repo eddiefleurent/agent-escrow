@@ -2,7 +2,7 @@
 
 Implementation roadmap for the ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) paper (Tomašev, Franklin, Osindero -- Google DeepMind, 2026).
 
-**Current phase: V3 closeout (item 22), with V4 execution planning active.**
+**Current phase: Phase 2 (R1-R4 revisits), after V3 closeout completion.**
 
 ---
 
@@ -20,13 +20,13 @@ Implementation roadmap for the ["Intelligent AI Delegation"](https://arxiv.org/a
 ## Snapshot (2026-03-01)
 
 - **Built strongly:** settlement kernel, market primitives, DCT/authz, attestation chains, checkpoints, ZK slot, quorum, stability controls.
-- **Main V3 remaining item:** `22` (UCP fulfillment provider).
+- **V3 status:** complete (items `12`-`22` implemented).
 - **Previously under-tracked paper requirements now explicit:** social intelligence (`29`) and user training (`30`).
 - **Human delegatees:** supported in model and metadata (`delegate_preference`) but not yet policy-enforced routing.
 - **Monitoring depth:** L0/L1 production; L2/L3 remains staged.
 - **Opinionated implementations worth revisiting now:** items `12`, `15`, `20`, and `21`.
 
-Recommended near-term order: `22 -> R1 -> R2 -> R3 -> R4 -> 25 -> 29 -> 30 -> 23 -> 24 -> 26 -> 28 -> 27`.
+Recommended near-term order: `R1 -> R2 -> R3 -> R4 -> 25 -> 29 -> 30 -> 23 -> 24 -> 26 -> 28 -> 27`.
 
 ---
 
@@ -73,7 +73,7 @@ Recommended near-term order: `22 -> R1 -> R2 -> R3 -> R4 -> 25 -> 29 -> 30 -> 23
 | 19 | Multi-verifier quorum | done | 4.8 | opinionated | Bounded verifier panel and stake game as practical consensus mechanism. |
 | 20 | Market stability mechanisms | done | 4.4 | opinionated | Concrete policy knobs: cooldowns, surcharge windows, damped overlays. |
 | 21 | Contract-first decomposition tooling | done | 4.1 | opinionated | Human/AI preference and market depth signals are advisory in V3 (not hard gates). |
-| 22 | UCP fulfillment provider | planned | 6 | direct | Expose escrow lifecycle as UCP-compatible fulfillment backend. |
+| 22 | UCP fulfillment provider | done | 6 | direct | UCP adapter implemented as an interoperability envelope over shared escrow orchestration; escrow remains settlement source of truth. |
 
 ### V4 -- Ethical Safeguards and Ecosystem Maturity (ordered by planned implementation sequence)
 
@@ -92,22 +92,22 @@ Recommended near-term order: `22 -> R1 -> R2 -> R3 -> R4 -> 25 -> 29 -> 30 -> 23
 
 ## Action Plan
 
-### Phase 1: Finalize V3
+### Phase 1: Finalize V3 (Complete)
 
 #### 22: UCP fulfillment provider
 
-- [ ] **Domain model mapping:** map escrow lifecycle states to UCP fulfillment state machine.
-- [ ] **Protocol adapter:** implement UCP ingestion/response paths without duplicating business logic.
-- [ ] **Interface parity:** evaluate transport exposure (MCP, HTTP, `escrow-cli`) case by case per the transport compatibility principle; expose only on transports where it adds value.
-- [ ] **Settlement semantics:** preserve escrow conditionality (verification, dispute, refund) through UCP mappings.
-- [ ] **Tests and docs:** end-to-end tests plus request/response examples for integrators.
+- [x] **Domain model mapping:** mapped escrow lifecycle states to UCP fulfillment state machine.
+- [x] **Protocol adapter:** implemented UCP ingestion/response paths on shared escrow orchestration.
+- [x] **Interface parity:** exposed UCP operations across MCP, HTTP, and `escrow-cli`.
+- [x] **Settlement semantics:** preserved escrow conditionality (verification, dispute, refund) through UCP mappings.
+- [x] **Tests and docs:** added UCP-focused service/handler tests and integrated docs updates.
 
 #### V3 closeout gates
 
-- [ ] `22` implemented and documented.
-- [ ] No interface-parity regressions for features designated as multi-transport (MCP/HTTP/CLI).
-- [ ] `docs/paper-feature-map.json` updated with final V3 status.
-- [ ] `docs/ARCHITECTURE.md` and `README.md` updated in the same PR.
+- [x] `22` implemented and documented.
+- [x] No interface-parity regressions for features designated as multi-transport (MCP/HTTP/CLI).
+- [x] `docs/paper-feature-map.json` updated with final V3 status.
+- [x] `docs/ARCHITECTURE.md` and `README.md` updated in the same PR.
 
 ### Phase 2: Revisit High-Impact Opinionated Decisions
 

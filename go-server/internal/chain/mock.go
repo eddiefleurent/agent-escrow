@@ -44,6 +44,7 @@ type MockClient struct {
 	LastCreateEscrowFactory common.Address
 	LastCreateEscrowParams  *CreateEscrowParams
 	FundErr                 error
+	CancelBeforeFundingErr  error
 	FundWithAuthErr         error
 	DepositStakeErr         error
 	DepositVerifierStakeErr error
@@ -196,6 +197,19 @@ func (m *MockClient) Fund(ctx context.Context, addr common.Address, amount *big.
 		return nil, m.FundErr
 	}
 	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "fund", To: addr, Value: amount})
+	return makeFakeTx(), nil
+}
+
+func (m *MockClient) CancelBeforeFunding(ctx context.Context, addr common.Address) (*types.Transaction, error) {
+	if err := m.applyDelay(ctx); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.CancelBeforeFundingErr != nil {
+		return nil, m.CancelBeforeFundingErr
+	}
+	m.SentTxs = append(m.SentTxs, MockTxRecord{Method: "cancelBeforeFunding", To: addr})
 	return makeFakeTx(), nil
 }
 
