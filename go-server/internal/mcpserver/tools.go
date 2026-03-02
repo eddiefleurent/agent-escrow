@@ -1129,7 +1129,7 @@ func (s *Server) handleGetEscrow(ctx context.Context, req *mcp.CallToolRequest, 
 	}
 
 	stakeRequired := false
-	if hasStake(escrow) && escrow.Status == "funded" {
+	if escrowservice.HasStake(escrow) && escrow.Status == "funded" {
 		deposited, err := s.db.EventExistsForContract(ctx, escrow.EscrowAddress, "WorkerStakeDeposited")
 		if err != nil {
 			return textResult(fmt.Sprintf("failed to check stake status: %v", err)), nil, nil
@@ -2454,11 +2454,6 @@ func normalizeToken(token string) string {
 	return token
 }
 
-// hasStake returns true if the escrow has a non-zero worker stake.
-func hasStake(escrow *storage.Escrow) bool {
-	amt, ok := new(big.Int).SetString(escrow.WorkerStake, 10)
-	return ok && amt.Sign() > 0
-}
 
 // parseOptionalMilestoneIndex converts a raw string arg into a *int milestone
 // index, validating it is within [0, maxCount). Returns nil, nil for empty input.
