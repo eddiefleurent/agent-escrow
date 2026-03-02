@@ -256,7 +256,7 @@ func (d *DB) SetEscrowCreateTxHash(ctx context.Context, id int64, txHash, status
 func (d *DB) FinalizeEscrowCreateTx(ctx context.Context, tx *sql.Tx, id int64, escrowAddress string, escrowID int64, status string) error {
 	res, err := tx.ExecContext(
 		ctx,
-		`UPDATE escrows SET escrow_address = ?, escrow_id = ?, status = ?, updated_at = datetime('now') WHERE id = ?`,
+		`UPDATE escrows SET escrow_address = ?, escrow_id = ?, status = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending_confirmation'`,
 		escrowAddress, escrowID, status, id,
 	)
 	if err != nil {
@@ -267,7 +267,7 @@ func (d *DB) FinalizeEscrowCreateTx(ctx context.Context, tx *sql.Tx, id int64, e
 		return fmt.Errorf("FinalizeEscrowCreateTx rows affected: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("FinalizeEscrowCreateTx id=%d: %w", id, sql.ErrNoRows)
+		return fmt.Errorf("FinalizeEscrowCreateTx id=%d: not in pending_confirmation state or not found", id)
 	}
 	return nil
 }
@@ -2427,6 +2427,9 @@ func scanUCPSession(scanner interface{ Scan(...any) error }) (*UCPSession, error
 }
 
 func (d *DB) CreateUCPSession(ctx context.Context, rec *UCPSession) (*UCPSession, error) {
+	if rec == nil {
+		return nil, errors.New("CreateUCPSession: nil rec")
+	}
 	res, err := d.db.ExecContext(ctx,
 		`INSERT INTO ucp_sessions (checkout_id, session_id, escrow_id, ucp_status, idempotency_key, last_operation, last_request_hash, last_tx_hash)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -2506,6 +2509,9 @@ func (d *DB) UpdateUCPSessionProjection(
 }
 
 func (d *DB) CreateUCPIdempotency(ctx context.Context, rec *UCPIdempotency) error {
+	if rec == nil {
+		return errors.New("CreateUCPIdempotency: nil rec")
+	}
 	_, err := d.db.ExecContext(ctx,
 		`INSERT INTO ucp_idempotency (idempotency_key, operation, request_hash, response_json, checkout_id)
 		 VALUES (?, ?, ?, ?, ?)`,
