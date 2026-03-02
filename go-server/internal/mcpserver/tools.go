@@ -1336,7 +1336,10 @@ func parseOptionalFlexibleInt(v FlexibleString, field string) (*int, error) {
 }
 
 func (s *Server) escrowService() *escrowservice.Service {
-	return escrowservice.NewService(s.db, s.chain, s.idx, s.cfg)
+	s.escrowOnce.Do(func() {
+		s.escrowSvc = escrowservice.NewService(s.db, s.chain, s.idx, s.cfg)
+	})
+	return s.escrowSvc
 }
 
 func (s *Server) ucpService() *ucppkg.Service {

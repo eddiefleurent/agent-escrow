@@ -7,6 +7,7 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/decomposition"
+	escrowservice "github.com/eddiefleurent/agent-escrow/go-server/internal/escrow"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
@@ -23,6 +24,9 @@ type Server struct {
 
 	ucpOnce sync.Once
 	ucpSvc  *ucppkg.Service
+
+	escrowOnce sync.Once
+	escrowSvc  *escrowservice.Service
 }
 
 // Serve starts the MCP server over stdio. The bus parameter may be nil when
