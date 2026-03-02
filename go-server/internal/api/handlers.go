@@ -586,12 +586,7 @@ func (h *Handlers) DepositStake(w http.ResponseWriter, r *http.Request) {
 	}
 	txHash, err := h.escrowService().DepositWorkerStake(r.Context(), escrow)
 	if err != nil {
-		if errors.Is(err, escrowservice.ErrValidation) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		slog.Error("deposit worker stake failed", "escrow_id", id, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		handleEscrowServiceActionError(w, r, "deposit_worker_stake", id, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
@@ -610,12 +605,7 @@ func (h *Handlers) DepositVerifierStake(w http.ResponseWriter, r *http.Request) 
 	}
 	txHash, err := h.escrowService().DepositVerifierStake(r.Context(), escrow)
 	if err != nil {
-		if errors.Is(err, escrowservice.ErrValidation) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		slog.Error("deposit verifier stake failed", "escrow_id", id, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		handleEscrowServiceActionError(w, r, "deposit_verifier_stake", id, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})

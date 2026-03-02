@@ -277,9 +277,13 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 	}
 	if input.VerifierStakePerVerifier == nil {
 		input.VerifierStakePerVerifier = big.NewInt(0)
+	} else if input.VerifierStakePerVerifier.Sign() < 0 {
+		return nil, fmt.Errorf("%w: verifier_stake_per_verifier must not be negative", ErrValidation)
 	}
 	if input.WorkerStake == nil {
 		input.WorkerStake = big.NewInt(0)
+	} else if input.WorkerStake.Sign() < 0 {
+		return nil, fmt.Errorf("%w: worker_stake must not be negative", ErrValidation)
 	}
 
 	var verifierPanel [7]common.Address

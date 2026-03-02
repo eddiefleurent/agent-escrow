@@ -254,13 +254,20 @@ func (d *DB) SetEscrowCreateTxHash(ctx context.Context, id int64, txHash, status
 }
 
 func (d *DB) FinalizeEscrowCreateTx(ctx context.Context, tx *sql.Tx, id int64, escrowAddress string, escrowID int64, status string) error {
-	_, err := tx.ExecContext(
+	res, err := tx.ExecContext(
 		ctx,
 		`UPDATE escrows SET escrow_address = ?, escrow_id = ?, status = ?, updated_at = datetime('now') WHERE id = ?`,
 		escrowAddress, escrowID, status, id,
 	)
 	if err != nil {
 		return fmt.Errorf("FinalizeEscrowCreateTx: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("FinalizeEscrowCreateTx rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("FinalizeEscrowCreateTx id=%d: %w", id, sql.ErrNoRows)
 	}
 	return nil
 }
