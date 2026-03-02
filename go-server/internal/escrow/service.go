@@ -25,6 +25,10 @@ import (
 
 const zeroAddress = "0x0000000000000000000000000000000000000000"
 
+// ErrValidation is returned when caller-provided input fails validation.
+// HTTP handlers should map this to a 4xx response; MCP tools may surface the message directly.
+var ErrValidation = errors.New("validation error")
+
 // Service centralizes escrow lifecycle orchestration shared by API, MCP, and UCP.
 type Service struct {
 	DB    *storage.DB
@@ -101,25 +105,37 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 		return nil, errors.New("escrow service misconfigured: missing config")
 	}
 	if len(input.VerifierPanel) == 0 {
-		return nil, errors.New("verifier panel is required")
+		return nil, fmt.Errorf("%w: verifier panel is required", ErrValidation)
 	}
 	if input.QuorumVerifierCount == 0 {
-		return nil, errors.New("quorum verifier count must be > 0")
+		return nil, fmt.Errorf("%w: quorum verifier count must be > 0", ErrValidation)
 	}
 	if input.QuorumVerifierCount > 7 {
-		return nil, fmt.Errorf("quorum verifier count %d exceeds maximum of 7", input.QuorumVerifierCount)
+		return nil, fmt.Errorf("%w: quorum verifier count %d exceeds maximum of 7", ErrValidation, input.QuorumVerifierCount)
 	}
 	if len(input.VerifierPanel) < int(input.QuorumVerifierCount) {
-		return nil, fmt.Errorf("verifier panel length %d is smaller than quorum verifier count %d", len(input.VerifierPanel), input.QuorumVerifierCount)
+		return nil, fmt.Errorf("%w: verifier panel length %d is smaller than quorum verifier count %d", ErrValidation, len(input.VerifierPanel), input.QuorumVerifierCount)
 	}
 	if len(input.Milestones) != len(input.MilestoneDeadlines) {
-		return nil, fmt.Errorf("milestone metadata mismatch: %d milestones vs %d deadlines", len(input.Milestones), len(input.MilestoneDeadlines))
+		return nil, fmt.Errorf("%w: milestone metadata mismatch: %d milestones vs %d deadlines", ErrValidation, len(input.Milestones), len(input.MilestoneDeadlines))
 	}
 	if input.Amount == nil {
-		return nil, errors.New("amount is required")
+		return nil, fmt.Errorf("%w: amount is required", ErrValidation)
 	}
 	if input.Amount.Sign() < 0 {
-		return nil, errors.New("amount must not be negative")
+		return nil, fmt.Errorf("%w: amount must not be negative", ErrValidation)
+	}
+	if !common.IsHexAddress(input.Buyer) {
+		return nil, fmt.Errorf("%w: buyer %q is not a valid hex address", ErrValidation, input.Buyer)
+	}
+	if !common.IsHexAddress(input.Worker) {
+		return nil, fmt.Errorf("%w: worker %q is not a valid hex address", ErrValidation, input.Worker)
+	}
+	if !common.IsHexAddress(input.Arbitrator) {
+		return nil, fmt.Errorf("%w: arbitrator %q is not a valid hex address", ErrValidation, input.Arbitrator)
+	}
+	if !common.IsHexAddress(s.Cfg.FactoryAddress) {
+		return nil, fmt.Errorf("%w: factory address %q is not a valid hex address", ErrValidation, s.Cfg.FactoryAddress)
 	}
 	if input.VerifierStakePerVerifier == nil {
 		input.VerifierStakePerVerifier = big.NewInt(0)
@@ -131,6 +147,9 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 	var verifierPanel [7]common.Address
 	panelForJSON := make([]string, int(input.QuorumVerifierCount))
 	for i := 0; i < int(input.QuorumVerifierCount); i++ {
+		if !common.IsHexAddress(input.VerifierPanel[i]) {
+			return nil, fmt.Errorf("%w: verifier_panel[%d] %q is not a valid hex address", ErrValidation, i, input.VerifierPanel[i])
+		}
 		addr := common.HexToAddress(input.VerifierPanel[i])
 		verifierPanel[i] = addr
 		panelForJSON[i] = strings.ToLower(addr.Hex())

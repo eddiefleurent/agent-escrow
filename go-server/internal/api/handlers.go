@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/bidding"
@@ -31,6 +32,9 @@ type Handlers struct {
 	chain chain.ChainClient
 	idx   *indexer.Indexer
 	cfg   *config.Config
+
+	escrowOnce sync.Once
+	escrowSvc  *escrowservice.Service
 }
 
 func (h *Handlers) Health(w http.ResponseWriter, r *http.Request) {
@@ -400,6 +404,10 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		TaskSpecHash: specHash,
 	})
 	if err != nil {
+		if errors.Is(err, escrowservice.ErrValidation) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		slog.Error("create escrow failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
@@ -915,7 +923,10 @@ func (h *Handlers) GetReputation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) escrowService() *escrowservice.Service {
-	return escrowservice.NewService(h.db, h.chain, h.idx, h.cfg)
+	h.escrowOnce.Do(func() {
+		h.escrowSvc = escrowservice.NewService(h.db, h.chain, h.idx, h.cfg)
+	})
+	return h.escrowSvc
 }
 
 func (h *Handlers) biddingService() *bidding.Service {
