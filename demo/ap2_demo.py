@@ -315,8 +315,10 @@ def main():
     approve_resp = api_post(f"/api/v1/escrows/{escrow_id}/approve", {"role": "buyer"})
     tx_approve = approve_resp["tx_hash"]
     print(f"    Approve tx: {tx_approve}")
-
-    time.sleep(8)
+    approve_receipt = wait_for_receipt(tx_approve, timeout_seconds=90)
+    if receipt_status_int(approve_receipt) != 1:
+        print(f"    Approve tx failed: {approve_receipt}", file=sys.stderr)
+        sys.exit(1)
 
     # Step 8: Final status
     print("  → Step 8: Verify final state")

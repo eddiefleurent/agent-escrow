@@ -25,6 +25,7 @@ MARKDOWN_TARGETS=(
   "skills/**/*.md"
   "README.md"
 )
+EXPANDED_TARGETS=()
 EXPANDED_MARKDOWN_TARGETS=()
 
 # High-signal patterns:
@@ -39,20 +40,32 @@ if ! command -v rg >/dev/null 2>&1; then
   echo "ERROR: ripgrep (rg) is not installed; secret scan cannot run" >&2
   exit 1
 fi
-if rg -n --pcre2 "$PAT" "${TARGETS[@]}" >"$TMPFILE" 2>/dev/null; then
-  echo "ERROR: possible secret leak detected:" >&2
-  cat "$TMPFILE" >&2
-  exit 1
-fi
-
-# Optional warning-only broad hex scan in markdown (can include tx hashes)
+for pattern in "${TARGETS[@]}"; do
+  matches=($pattern)
+  if [ ${#matches[@]} -gt 0 ]; then
+    EXPANDED_TARGETS+=("${matches[@]}")
+  fi
+done
 for pattern in "${MARKDOWN_TARGETS[@]}"; do
   matches=($pattern)
   if [ ${#matches[@]} -gt 0 ]; then
     EXPANDED_MARKDOWN_TARGETS+=("${matches[@]}")
   fi
 done
+
+printf 'High-risk scan targets (%d files):\n' "${#EXPANDED_TARGETS[@]}"
+printf '  %s\n' "${EXPANDED_TARGETS[@]}"
+printf 'Markdown broad-scan targets (%d files):\n' "${#EXPANDED_MARKDOWN_TARGETS[@]}"
+printf '  %s\n' "${EXPANDED_MARKDOWN_TARGETS[@]}"
+
+if rg -n --pcre2 "$PAT" "${EXPANDED_TARGETS[@]}" >"$TMPFILE" 2>/dev/null; then
+  echo "ERROR: possible secret leak detected:" >&2
+  cat "$TMPFILE" >&2
+  exit 1
+fi
+
+# Optional warning-only broad hex scan in markdown (can include tx hashes)
 BROAD='0x[a-fA-F0-9]{64}'
-COUNT=$(rg -n --pcre2 "$BROAD" "${EXPANDED_MARKDOWN_TARGETS[@]}" 2>/dev/null | wc -l | tr -d ' ')
+COUNT=$( (rg -n --pcre2 "$BROAD" "${EXPANDED_MARKDOWN_TARGETS[@]}" 2>/dev/null || true) | wc -l | tr -d ' ' )
 echo "OK: no explicit private-key assignments found."
 echo "Info: markdown contains $COUNT hex-64 values (expected for tx hashes/nonces)."

@@ -153,7 +153,7 @@ escrow-cli bid reveal "$RFQ_ID" --output json --data "{
 POLLS=0
 while true; do
   ESCROW_ID=$(escrow-cli bid list "$RFQ_ID" --output json \
-    | jq -r --arg worker "$WORKER" '[.[] | select(.bidder == $worker and .escrow_id != null)] | sort_by(.id) | last | .escrow_id // empty')
+    | jq -r --arg worker "$WORKER" '[.[] | select((.bidder | ascii_downcase) == ($worker | ascii_downcase) and .escrow_id != null)] | sort_by(.id) | last | .escrow_id // empty')
   [ -n "$ESCROW_ID" ] && break
   POLLS=$((POLLS+1))
   [ $POLLS -ge 40 ] && { echo "TIMEOUT: bid not accepted or escrow not funded"; exit 1; }
