@@ -41,9 +41,9 @@ escrow-cli escrow list --output json --role worker --address "$WORKER" --status 
   | jq '.[] | {id, title, amount, buyer, submission_deadline}'
 ```
 
-**If you find a funded escrow directly assigned to you**, copy its `id` into `ESCROW_ID` and skip to Step 3.
+**Found a funded escrow directly assigned to you?** Copy its `id` into `ESCROW_ID` and skip to Step 3.
 
-**If you find an open RFQ you can bid on**, proceed to Step 2.
+**Can you bid on an open RFQ?** Proceed to Step 2.
 
 **If nothing is ready yet**, poll:
 
@@ -53,9 +53,12 @@ while true; do
   FUNDED_ESCROWS_JSON=$(escrow-cli escrow list --output json --role worker --address "$WORKER" --status funded)
   FUNDED_ESCROW_COUNT=$(echo "$FUNDED_ESCROWS_JSON" | jq 'length')
   if [ "$FUNDED_ESCROW_COUNT" -gt 0 ]; then
-    echo "Funded escrows are available. Select one explicitly and export ESCROW_ID before proceeding:"
+    ESCROW_ID=$(echo "$FUNDED_ESCROWS_JSON" | jq -r 'sort_by(.id) | last | .id // empty')
+    [ -n "$ESCROW_ID" ] || { echo "ERROR: funded escrows found but no escrow id could be selected" >&2; exit 1; }
+    export ESCROW_ID
+    echo "Selected funded escrow: $ESCROW_ID"
     echo "$FUNDED_ESCROWS_JSON" | jq '.[] | {id, title, amount, buyer, submission_deadline}'
-    exit 1
+    break
   fi
   OPEN_RFQS=$(escrow-cli rfq list --output json --status open | jq 'length')
   [ "$OPEN_RFQS" -gt 0 ] && { echo "Open RFQs available — proceed to bid"; break; }
@@ -76,7 +79,10 @@ Skip this step if you already have a funded escrow (go to Step 3).
 
 ```bash
 RFQ_ID=<rfq-id>
-escrow-cli rfq get "$RFQ_ID" --output json | jq '{title, description, budget_min, budget_max, commit_deadline, reveal_deadline}'
+RFQ_JSON=$(escrow-cli rfq get "$RFQ_ID" --output json)
+echo "$RFQ_JSON" | jq '{title, description, budget_min, budget_max, commit_deadline, reveal_deadline}'
+REVEAL_DEADLINE=$(echo "$RFQ_JSON" | jq -r '.reveal_deadline // empty')
+[ -n "$REVEAL_DEADLINE" ] || { echo "ERROR: RFQ $RFQ_ID is missing reveal_deadline" >&2; exit 1; }
 ```
 
 ### 2b. Compute Commitment Hash
@@ -140,7 +146,7 @@ done
 ### 2e. Reveal Bid
 
 ```bash
-EXPIRES_AT=<reveal_deadline_unix_timestamp>
+EXPIRES_AT="$REVEAL_DEADLINE"
 LOWERCASE_WORKER=$(printf '%s' "$WORKER" | tr '[:upper:]' '[:lower:]')
 
 escrow-cli bid reveal "$RFQ_ID" --output json --data "{
@@ -162,8 +168,15 @@ escrow-cli bid reveal "$RFQ_ID" --output json --data "{
 ```bash
 POLLS=0
 while true; do
-  ESCROW_ID=$(escrow-cli bid list "$RFQ_ID" --output json \
-    | jq -r --arg worker "$WORKER" '[.[] | select((.bidder | ascii_downcase) == ($worker | ascii_downcase) and .escrow_id != null)] | sort_by(.id) | last | .escrow_id // empty')
+  MY_BID_JSON=$(escrow-cli bid list "$RFQ_ID" --output json \
+    | jq -c --arg worker "$WORKER" '[.[] | select((.bidder | ascii_downcase) == ($worker | ascii_downcase))] | sort_by(.id) | last // empty')
+  if [ -n "$MY_BID_JSON" ] && [ "$MY_BID_JSON" != "null" ]; then
+    BID_STATUS=$(echo "$MY_BID_JSON" | jq -r '.status // empty' | tr '[:upper:]' '[:lower:]')
+    [ "$BID_STATUS" = "rejected" ] && { echo "Bid rejected for RFQ $RFQ_ID"; exit 1; }
+    ESCROW_ID=$(echo "$MY_BID_JSON" | jq -r '.escrow_id // empty')
+  else
+    ESCROW_ID=""
+  fi
   [ -n "$ESCROW_ID" ] && break
   POLLS=$((POLLS+1))
   [ $POLLS -ge 40 ] && { echo "TIMEOUT: bid not accepted or escrow not funded"; exit 1; }
@@ -230,6 +243,10 @@ fi
 
 ```bash
 keccak_file() {
+  [ -r "$1" ] || {
+    echo "ERROR: file is not readable: $1" >&2
+    return 1
+  }
   local file_hex
   file_hex=$(od -An -tx1 -v "$1" | tr -d ' \n')
   cast keccak "0x${file_hex}"

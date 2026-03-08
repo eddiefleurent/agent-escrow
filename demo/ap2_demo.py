@@ -74,6 +74,7 @@ def cast_tx(private_key: str, to: str, sig: str, *args: str) -> str:
     """Send a transaction via cast and return the tx hash."""
     cmd = [
         "cast", "send", to, sig, *args,
+        "--async",
         "--private-key", private_key,
         "--rpc-url", RPC_URL,
         "--json",
@@ -96,42 +97,44 @@ def cast_tx(private_key: str, to: str, sig: str, *args: str) -> str:
 
 
 def wait_for_receipt(tx_hash: str, *, timeout_seconds: int = 60) -> dict:
-    """Poll cast receipt until the transaction is mined."""
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
+    """Wait for cast receipt to return a mined transaction receipt."""
+    try:
         result = subprocess.run(
             ["cast", "receipt", tx_hash, "--rpc-url", RPC_URL, "--json"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=timeout_seconds,
         )
-        stdout = result.stdout.strip()
-        stderr = result.stderr.strip()
-        if result.returncode != 0 or stderr:
-            print(
-                f"cast receipt failed for {tx_hash}: returncode={result.returncode}",
-                file=sys.stderr,
-            )
-            if stderr:
-                print(f"stderr: {stderr}", file=sys.stderr)
-            if stdout:
-                print(f"stdout: {stdout}", file=sys.stderr)
-            sys.exit(1)
+    except subprocess.TimeoutExpired:
+        print(f"Timed out waiting for receipt: {tx_hash}", file=sys.stderr)
+        sys.exit(1)
+
+    stdout = result.stdout.strip()
+    stderr = result.stderr.strip()
+    if result.returncode != 0 or stderr:
+        print(
+            f"cast receipt failed for {tx_hash}: returncode={result.returncode}",
+            file=sys.stderr,
+        )
+        if stderr:
+            print(f"stderr: {stderr}", file=sys.stderr)
         if stdout:
-            try:
-                receipt = json.loads(stdout)
-            except json.JSONDecodeError as exc:
-                print(f"Invalid JSON receipt for {tx_hash}: {exc}", file=sys.stderr)
-                print(f"stdout: {stdout}", file=sys.stderr)
-                sys.exit(1)
-            if receipt.get("status") is None:
-                print(f"Receipt for {tx_hash} is missing required field: status", file=sys.stderr)
-                print(f"stdout: {stdout}", file=sys.stderr)
-                sys.exit(1)
-            return receipt
-        time.sleep(2)
-    print(f"Timed out waiting for receipt: {tx_hash}", file=sys.stderr)
-    sys.exit(1)
+            print(f"stdout: {stdout}", file=sys.stderr)
+        sys.exit(1)
+    if not stdout:
+        print(f"Receipt for {tx_hash} was empty", file=sys.stderr)
+        sys.exit(1)
+    try:
+        receipt = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        print(f"Invalid JSON receipt for {tx_hash}: {exc}", file=sys.stderr)
+        print(f"stdout: {stdout}", file=sys.stderr)
+        sys.exit(1)
+    if receipt.get("status") is None:
+        print(f"Receipt for {tx_hash} is missing required field: status", file=sys.stderr)
+        print(f"stdout: {stdout}", file=sys.stderr)
+        sys.exit(1)
+    return receipt
 
 
 def receipt_status_int(receipt: dict) -> int:
