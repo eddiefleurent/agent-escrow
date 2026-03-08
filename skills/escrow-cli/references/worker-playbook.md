@@ -103,10 +103,14 @@ Use `cast keccak` so the example works on stock environments:
 
 ```bash
 LOWERCASE_WORKER=$(printf '%s' "$WORKER" | tr '[:upper:]' '[:lower:]')
-MILESTONES_HASH=$(cast keccak "[]")
-MESSAGE_HASH=$(cast keccak "demo bid")
-STAKE_MANDATE_HASH=$(cast keccak "")
-PREIMAGE="agent-escrow:sealed-bid:v1|42|${LOWERCASE_WORKER}|100000000000000|259200|0|${MILESTONES_HASH#0x}|${MESSAGE_HASH#0x}|<reveal_deadline>|${STAKE_MANDATE_HASH#0x}|worker-nonce-1|my-secret-salt-abc123"
+MESSAGE="Demo worker — ready to execute"
+MILESTONES_JSON="[]"
+STAKE_MANDATE_ID=""
+EXPIRES_AT="$REVEAL_DEADLINE"
+MILESTONES_HASH=$(cast keccak "$MILESTONES_JSON")
+MESSAGE_HASH=$(cast keccak "$MESSAGE")
+STAKE_MANDATE_HASH=$(cast keccak "$STAKE_MANDATE_ID")
+PREIMAGE="agent-escrow:sealed-bid:v1|42|${LOWERCASE_WORKER}|100000000000000|259200|0|${MILESTONES_HASH#0x}|${MESSAGE_HASH#0x}|${EXPIRES_AT}|${STAKE_MANDATE_HASH#0x}|worker-nonce-1|my-secret-salt-abc123"
 COMMITMENT=$(cast keccak "$PREIMAGE")
 printf 'Preimage: %s\nCommitment: %s\n' "$PREIMAGE" "$COMMITMENT"
 ```
@@ -146,8 +150,11 @@ done
 ### 2e. Reveal Bid
 
 ```bash
-EXPIRES_AT="$REVEAL_DEADLINE"
 LOWERCASE_WORKER=$(printf '%s' "$WORKER" | tr '[:upper:]' '[:lower:]')
+MESSAGE="Demo worker — ready to execute"
+MILESTONES_JSON="[]"
+STAKE_MANDATE_ID=""
+EXPIRES_AT="$REVEAL_DEADLINE"
 
 escrow-cli bid reveal "$RFQ_ID" --output json --data "{
   \"bidder\": \"$LOWERCASE_WORKER\",
@@ -156,10 +163,10 @@ escrow-cli bid reveal "$RFQ_ID" --output json --data "{
   \"amount\": \"100000000000000\",
   \"estimated_duration\": 259200,
   \"reputation_bond\": \"0\",
-  \"milestones_json\": \"[]\",
-  \"message\": \"Demo worker — ready to execute\",
+  \"milestones_json\": \"$MILESTONES_JSON\",
+  \"message\": \"$MESSAGE\",
   \"expires_at\": \"$EXPIRES_AT\",
-  \"stake_mandate_id\": \"\"
+  \"stake_mandate_id\": \"$STAKE_MANDATE_ID\"
 }"
 ```
 

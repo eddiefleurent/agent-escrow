@@ -111,7 +111,16 @@ def wait_for_receipt(tx_hash: str, *, timeout_seconds: int = 60) -> dict:
 
     stdout = result.stdout.strip()
     stderr = result.stderr.strip()
-    if result.returncode != 0 or stderr:
+    if stderr:
+        print(
+            f"cast receipt stderr for {tx_hash}: returncode={result.returncode}",
+            file=sys.stderr,
+        )
+        if stderr:
+            print(f"stderr: {stderr}", file=sys.stderr)
+        if stdout:
+            print(f"stdout: {stdout}", file=sys.stderr)
+    if result.returncode != 0:
         print(
             f"cast receipt failed for {tx_hash}: returncode={result.returncode}",
             file=sys.stderr,

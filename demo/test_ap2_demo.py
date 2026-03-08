@@ -18,14 +18,28 @@ eth_account_stub = types.ModuleType("eth_account")
 eth_account_stub.Account = mock.Mock()
 eth_messages_stub = types.ModuleType("eth_account.messages")
 eth_messages_stub.encode_typed_data = mock.Mock()
-sys.modules.setdefault("requests", requests_stub)
-sys.modules.setdefault("dotenv", dotenv_stub)
-sys.modules.setdefault("eth_account", eth_account_stub)
-sys.modules.setdefault("eth_account.messages", eth_messages_stub)
+ORIGINAL_MODULES = {
+    "requests": sys.modules.get("requests"),
+    "dotenv": sys.modules.get("dotenv"),
+    "eth_account": sys.modules.get("eth_account"),
+    "eth_account.messages": sys.modules.get("eth_account.messages"),
+}
+sys.modules["requests"] = requests_stub
+sys.modules["dotenv"] = dotenv_stub
+sys.modules["eth_account"] = eth_account_stub
+sys.modules["eth_account.messages"] = eth_messages_stub
 SPEC = importlib.util.spec_from_file_location("ap2_demo", MODULE_PATH)
 ap2_demo = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(ap2_demo)
+
+
+def tearDownModule():
+    for name, original in ORIGINAL_MODULES.items():
+        if original is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = original
 
 
 class CastTxTests(unittest.TestCase):
@@ -44,6 +58,22 @@ class CastTxTests(unittest.TestCase):
         cmd = run_mock.call_args.args[0]
         self.assertIn("--async", cmd)
 
+    @mock.patch.object(ap2_demo.time, "sleep")
+    @mock.patch.object(ap2_demo.subprocess, "run")
+    def test_cast_tx_retries_and_exits_when_hash_missing(self, run_mock, sleep_mock):
+        run_mock.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps({"status": "ok"}),
+            stderr="",
+        )
+
+        with self.assertRaises(SystemExit):
+            ap2_demo.cast_tx("0xkey", "0xto", "submit()", "1")
+
+        self.assertEqual(run_mock.call_count, 5)
+        self.assertEqual(sleep_mock.call_count, 5)
+
 
 class WaitForReceiptTests(unittest.TestCase):
     @mock.patch.object(ap2_demo.subprocess, "run")
@@ -60,6 +90,35 @@ class WaitForReceiptTests(unittest.TestCase):
         self.assertEqual(receipt["status"], "0x1")
         self.assertEqual(run_mock.call_count, 1)
         self.assertEqual(run_mock.call_args.kwargs["timeout"], 42)
+
+    @mock.patch.object(ap2_demo.subprocess, "run")
+    def test_wait_for_receipt_allows_stderr_when_cast_succeeds(self, run_mock):
+        run_mock.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps({"status": "0x1"}),
+            stderr="warning: noisy rpc",
+        )
+
+        receipt = ap2_demo.wait_for_receipt("0xabc", timeout_seconds=42)
+
+        self.assertEqual(receipt["status"], "0x1")
+        self.assertEqual(run_mock.call_args.kwargs["timeout"], 42)
+
+    @mock.patch.object(ap2_demo.subprocess, "run")
+    def test_wait_for_receipt_exits_on_nonzero_returncode(self, run_mock):
+        run_mock.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout="{}",
+            stderr="boom",
+        )
+
+        with self.assertRaises(SystemExit):
+            ap2_demo.wait_for_receipt("0xdead", timeout_seconds=17)
+
+        self.assertEqual(run_mock.call_count, 1)
+        self.assertEqual(run_mock.call_args.kwargs["timeout"], 17)
 
 
 if __name__ == "__main__":
