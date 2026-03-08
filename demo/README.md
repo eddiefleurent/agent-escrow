@@ -38,7 +38,8 @@ The publicly documented, current live demos are the ETH, USDC, and AP2 flows abo
 
 2. **Environment variables** sourced from `.env` (see `.env.example`):
    - `PRIVATE_KEY` — buyer/owner key (server signs with this)
-   - `WORKER_KEY`, `VERIFIER_KEY`, `ARBITRATOR_KEY`, `BACKUP_KEY` — required for `cast send` in demos
+   - `WORKER_KEY`, `BACKUP_KEY` — required for `cast send` in demos
+   - `VERIFIER_ADDR`, `ARBITRATOR_ADDR` — public addresses used when creating demo escrows
    - `BACKUP_WORKER_KEY` is still accepted as a legacy alias for `BACKUP_KEY`
    - `FACTORY_ADDRESS` — deployed factory on Base Sepolia
 

@@ -60,7 +60,7 @@ class CastTxTests(unittest.TestCase):
 
     @mock.patch.object(ap2_demo.time, "sleep")
     @mock.patch.object(ap2_demo.subprocess, "run")
-    def test_cast_tx_retries_and_exits_when_hash_missing(self, run_mock, sleep_mock):
+    def test_cast_tx_exits_without_retry_when_hash_missing_after_success(self, run_mock, sleep_mock):
         run_mock.return_value = subprocess.CompletedProcess(
             args=[],
             returncode=0,
@@ -71,8 +71,35 @@ class CastTxTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             ap2_demo.cast_tx("0xkey", "0xto", "submit()", "1")
 
-        self.assertEqual(run_mock.call_count, 5)
-        self.assertEqual(sleep_mock.call_count, 5)
+        self.assertEqual(run_mock.call_count, 1)
+        sleep_mock.assert_not_called()
+
+    @mock.patch.object(ap2_demo.time, "sleep")
+    @mock.patch.object(ap2_demo.subprocess, "run")
+    def test_cast_tx_exits_without_retry_on_timeout(self, run_mock, sleep_mock):
+        run_mock.side_effect = subprocess.TimeoutExpired(cmd=["cast"], timeout=30)
+
+        with self.assertRaises(SystemExit):
+            ap2_demo.cast_tx("0xkey", "0xto", "submit()", "1")
+
+        self.assertEqual(run_mock.call_count, 1)
+        sleep_mock.assert_not_called()
+
+
+class AddressEnvTests(unittest.TestCase):
+    @mock.patch.object(ap2_demo, "require_env", return_value="  0xABABABABABABABABABABABABABABABABABABABAB  ")
+    def test_require_address_env_normalizes_hex_address(self, require_env_mock):
+        addr = ap2_demo.require_address_env("VERIFIER_ADDR")
+
+        self.assertEqual(addr, "0xabababababababababababababababababababab")
+        require_env_mock.assert_called_once_with("VERIFIER_ADDR")
+
+    @mock.patch.object(ap2_demo, "require_env", return_value="not-an-address")
+    def test_require_address_env_exits_on_invalid_address(self, require_env_mock):
+        with self.assertRaises(SystemExit):
+            ap2_demo.require_address_env("ARBITRATOR_ADDR")
+
+        require_env_mock.assert_called_once_with("ARBITRATOR_ADDR")
 
 
 class WaitForReceiptTests(unittest.TestCase):

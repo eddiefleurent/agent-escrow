@@ -80,7 +80,11 @@ def cast_tx(private_key: str, to: str, sig: str, *args: str) -> str:
         "--json",
     ]
     for attempt in range(1, 6):
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            print("  cast_tx timed out before returning a transaction hash", file=sys.stderr)
+            sys.exit(1)
         stdout = result.stdout.strip()
         stderr = result.stderr.strip()
         if stdout:
@@ -90,6 +94,16 @@ def cast_tx(private_key: str, to: str, sig: str, *args: str) -> str:
                 tx_hash = None
             if tx_hash:
                 return tx_hash
+            if result.returncode == 0 and tx_hash is None:
+                print(
+                    "  cast_tx succeeded but response was ambiguous; refusing to rebroadcast",
+                    file=sys.stderr,
+                )
+                if stdout:
+                    print(f"  stdout: {stdout[:240]}", file=sys.stderr)
+                if stderr:
+                    print(f"  stderr: {stderr[:240]}", file=sys.stderr)
+                sys.exit(1)
         print(f"  cast_tx retry {attempt}/5 (rc={result.returncode}): {(stderr or stdout)[:120]}")
         time.sleep(4)
     print("  cast_tx FAILED", file=sys.stderr)
@@ -162,6 +176,19 @@ def require_env(name: str) -> str:
     return value
 
 
+def require_address_env(name: str) -> str:
+    value = require_env(name).strip()
+    if not value.startswith("0x") or len(value) != 42:
+        print(f"ERROR: invalid Ethereum address for {name}: {value}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        int(value[2:], 16)
+    except ValueError:
+        print(f"ERROR: invalid Ethereum address for {name}: {value}", file=sys.stderr)
+        sys.exit(1)
+    return "0x" + value[2:].lower()
+
+
 def main():
     load_dotenv()
     global BASE_URL
@@ -169,13 +196,13 @@ def main():
 
     buyer_key = require_env("PRIVATE_KEY")
     worker_key = require_env("WORKER_KEY")
-    verifier_key = require_env("VERIFIER_KEY")
-    arbitrator_key = require_env("ARBITRATOR_KEY")
+    verifier_addr = require_address_env("VERIFIER_ADDR")
+    arbitrator_addr = require_address_env("ARBITRATOR_ADDR")
     buyer_addr = Account.from_key(buyer_key).address
     derived_worker_addr = Account.from_key(worker_key).address
-    verifier_addr = Account.from_key(verifier_key).address
-    arbitrator_addr = Account.from_key(arbitrator_key).address
     configured_worker_addr = (os.environ.get("WORKER_ADDRESS") or "").strip() or None
+    if configured_worker_addr:
+        configured_worker_addr = require_address_env("WORKER_ADDRESS")
     if (
         configured_worker_addr
         and configured_worker_addr.lower() != derived_worker_addr.lower()
