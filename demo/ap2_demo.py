@@ -108,9 +108,8 @@ def main():
     buyer_key = require_env("PRIVATE_KEY")
     worker_key = require_env("WORKER_KEY")
     buyer_addr = Account.from_key(buyer_key).address
-    worker_addr = os.environ.get(
-        "WORKER_ADDRESS", "0x9A085AC334a38F0C2881615003FFeD3C7E5Ac7F6"
-    )
+    # Default worker address is derived from WORKER_KEY to avoid key/address drift.
+    worker_addr = os.environ.get("WORKER_ADDRESS") or Account.from_key(worker_key).address
 
     print("=" * 64)
     print("  AP2 Mandate Bridge Demo — EIP-3009 Gasless Funding")
@@ -132,6 +131,9 @@ def main():
         "worker": worker_addr,
         "verifier": "0xEa62Afd342704CF52A48A50BC5a7e57B45e3de7A",
         "arbitrator": "0x98586bC45A9D6B9D2C5F11292d4a9bfA4a50b097",
+        "verifier_panel": ["0xEa62Afd342704CF52A48A50BC5a7e57B45e3de7A"],
+        "quorum_verifier_count": 1,
+        "quorum_threshold": 1,
         "amount": ESCROW_AMOUNT,
         "token": USDC,
         "submission_deadline": str(deadline),
@@ -201,7 +203,7 @@ def main():
     # Step 3: Construct mandate envelope and call AP2 fund
     print("  → Step 3: Fund via AP2 mandate bridge")
     mandate_payload = {
-        "escrow_id": str(escrow_id),
+        "escrow_id": escrow_id,
         "mandate_envelope": {
             "type": "payment",
             "payload": {
@@ -267,8 +269,8 @@ def main():
     ).stdout.strip()
     tx_submit = cast_tx(
         worker_key, escrow_addr,
-        "submit(bytes32,string)",
-        sub_hash, "ipfs://QmAP2_demo_submission",
+        "submit(bytes32,string,bytes32)",
+        sub_hash, "ipfs://QmAP2_demo_submission", "0x" + ("00" * 32),
     )
     print(f"    Submit tx: {tx_submit}")
 

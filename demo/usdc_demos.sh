@@ -10,6 +10,7 @@ set -euo pipefail
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 RPC_URL="https://sepolia.base.org"
 USDC="0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+ZERO_PROOF_HASH="0x0000000000000000000000000000000000000000000000000000000000000000"
 
 require_env() {
   local name="$1"
@@ -20,22 +21,12 @@ require_env() {
   fi
 }
 
-# Participant addresses and keys
-# BUYER_KEY and VERIFIER_KEY are kept for demo parity with other scripts.
-# Buyer actions are submitted via HTTP API (server signs), and verifier role is not cast-driven here.
-BUYER="0x458397fDDB048239Ab033054d3F70919a95cF4d3"
+# Participant keys
+# Buyer actions are submitted via HTTP API (server signs with PRIVATE_KEY).
 BUYER_KEY="${PRIVATE_KEY:-}"
-
-WORKER="0x9A085AC334a38F0C2881615003FFeD3C7E5Ac7F6"
 WORKER_KEY="${WORKER_KEY:-}"
-
-VERIFIER="0xEa62Afd342704CF52A48A50BC5a7e57B45e3de7A"
 VERIFIER_KEY="${VERIFIER_KEY:-}"
-
-ARBITRATOR="0x98586bC45A9D6B9D2C5F11292d4a9bfA4a50b097"
 ARBITRATOR_KEY="${ARBITRATOR_KEY:-}"
-
-BACKUP_WORKER="0x3f044Bd753c7a40c385Cf80790c056C07138bA05"
 BACKUP_KEY="${BACKUP_KEY:-${BACKUP_WORKER_KEY:-}}"
 
 require_env "PRIVATE_KEY"
@@ -48,6 +39,13 @@ if [ -z "$BACKUP_KEY" ]; then
   exit 1
 fi
 
+# Derive participant addresses from keys to avoid key/address drift.
+BUYER=$(cast wallet address --private-key "$BUYER_KEY")
+WORKER=$(cast wallet address --private-key "$WORKER_KEY")
+VERIFIER=$(cast wallet address --private-key "$VERIFIER_KEY")
+ARBITRATOR=$(cast wallet address --private-key "$ARBITRATOR_KEY")
+BACKUP_WORKER=$(cast wallet address --private-key "$BACKUP_KEY")
+
 RESULTS_FILE="${RESULTS_FILE:-/tmp/v2_usdc_demo_results.json}"
 echo '{}' > "$RESULTS_FILE"
 
@@ -57,6 +55,46 @@ STAKE_AMOUNT="50000"     # 0.05 USDC
 M0_AMOUNT="30000"        # 0.03 USDC
 M1_AMOUNT="30000"        # 0.03 USDC
 M2_AMOUNT="40000"        # 0.04 USDC
+TOTAL_REQUIRED_USDC="600000" # 0.60 USDC across demos C-I
+WORKER_REQUIRED_USDC="150000" # 0.15 USDC for worker stake deposits across C/E/F
+BACKUP_REQUIRED_USDC="50000"  # 0.05 USDC for backup stake in F
+
+BUYER_USDC_BALANCE=$(cast call "$USDC" "balanceOf(address)(uint256)" "$BUYER" --rpc-url "$RPC_URL" 2>/dev/null | awk '{print $1}' || echo "0")
+if ! [[ "$BUYER_USDC_BALANCE" =~ ^[0-9]+$ ]]; then
+  BUYER_USDC_BALANCE=0
+fi
+if [ "$BUYER_USDC_BALANCE" -lt "$TOTAL_REQUIRED_USDC" ]; then
+  echo "ERROR: insufficient USDC balance for demo run." >&2
+  echo "  Buyer: $BUYER" >&2
+  echo "  Balance: $BUYER_USDC_BALANCE (6 decimals)" >&2
+  echo "  Required: $TOTAL_REQUIRED_USDC (6 decimals)" >&2
+  echo "Hint: run 'uv run scripts/faucet.py --token usdc --address $BUYER --claims 10'" >&2
+  exit 1
+fi
+
+WORKER_USDC_BALANCE=$(cast call "$USDC" "balanceOf(address)(uint256)" "$WORKER" --rpc-url "$RPC_URL" 2>/dev/null | awk '{print $1}' || echo "0")
+if ! [[ "$WORKER_USDC_BALANCE" =~ ^[0-9]+$ ]]; then
+  WORKER_USDC_BALANCE=0
+fi
+if [ "$WORKER_USDC_BALANCE" -lt "$WORKER_REQUIRED_USDC" ]; then
+  echo "ERROR: insufficient worker USDC balance for stake flows." >&2
+  echo "  Worker: $WORKER" >&2
+  echo "  Balance: $WORKER_USDC_BALANCE (6 decimals)" >&2
+  echo "  Required: $WORKER_REQUIRED_USDC (6 decimals)" >&2
+  exit 1
+fi
+
+BACKUP_USDC_BALANCE=$(cast call "$USDC" "balanceOf(address)(uint256)" "$BACKUP_WORKER" --rpc-url "$RPC_URL" 2>/dev/null | awk '{print $1}' || echo "0")
+if ! [[ "$BACKUP_USDC_BALANCE" =~ ^[0-9]+$ ]]; then
+  BACKUP_USDC_BALANCE=0
+fi
+if [ "$BACKUP_USDC_BALANCE" -lt "$BACKUP_REQUIRED_USDC" ]; then
+  echo "ERROR: insufficient backup worker USDC balance for stake flow." >&2
+  echo "  Backup worker: $BACKUP_WORKER" >&2
+  echo "  Balance: $BACKUP_USDC_BALANCE (6 decimals)" >&2
+  echo "  Required: $BACKUP_REQUIRED_USDC (6 decimals)" >&2
+  exit 1
+fi
 
 jq_set() {
   local key="$1" val="$2"
@@ -108,7 +146,17 @@ wait_tx_mined() {
     local receipt
     receipt=$(cast receipt "$tx_hash" --rpc-url "$RPC_URL" --json 2>/dev/null || echo "")
     if [ -n "$receipt" ]; then
-      return 0
+      local status
+      status=$(echo "$receipt" | python3 -c "import json,sys; s=json.load(sys.stdin).get('status'); print(int(s, 0) if isinstance(s, str) else int(s))" 2>/dev/null || echo "")
+      if [ "$status" = "1" ]; then
+        return 0
+      fi
+      if [ "$status" = "0" ]; then
+        echo "WARNING: tx $tx_hash reverted (status=0)" >&2
+      else
+        echo "WARNING: tx $tx_hash has unexpected receipt status (${status:-unknown})" >&2
+      fi
+      return 1
     fi
     sleep 2
   done
@@ -187,6 +235,9 @@ RESP=$(api POST /api/v1/escrows -d "{
   \"worker\": \"$WORKER\",
   \"verifier\": \"$VERIFIER\",
   \"arbitrator\": \"$ARBITRATOR\",
+  \"verifier_panel\": [\"$VERIFIER\"],
+  \"quorum_verifier_count\": 1,
+  \"quorum_threshold\": 1,
   \"amount\": \"$ESCROW_AMOUNT\",
   \"worker_stake\": \"$STAKE_AMOUNT\",
   \"token\": \"$USDC\",
@@ -226,8 +277,9 @@ wait_indexer
 
 step "Worker submits work (via cast)"
 SUB_HASH=$(cast keccak "ipfs://QmUSDC_DemoC_worker_stake_happy_path")
-C_TX_SUBMIT=$(cast_tx "$WORKER_KEY" "$C_ADDR" "submit(bytes32,string)" "$SUB_HASH" "ipfs://QmUSDC_DemoC_worker_stake_happy_path") || exit 1
+C_TX_SUBMIT=$(cast_tx "$WORKER_KEY" "$C_ADDR" "submit(bytes32,string,bytes32)" "$SUB_HASH" "ipfs://QmUSDC_DemoC_worker_stake_happy_path" "$ZERO_PROOF_HASH") || exit 1
 echo "  Submit tx: $C_TX_SUBMIT"
+wait_tx_mined "$C_TX_SUBMIT"
 
 wait_indexer
 
@@ -274,6 +326,9 @@ RESP=$(api POST /api/v1/escrows -d "{
   \"worker\": \"$WORKER\",
   \"verifier\": \"$VERIFIER\",
   \"arbitrator\": \"$ARBITRATOR\",
+  \"verifier_panel\": [\"$VERIFIER\"],
+  \"quorum_verifier_count\": 1,
+  \"quorum_threshold\": 1,
   \"amount\": \"$ESCROW_AMOUNT\",
   \"token\": \"$USDC\",
   \"submission_deadline\": \"$D2\",
@@ -305,8 +360,9 @@ wait_indexer
 
 step "M0: Worker submits"
 H=$(cast keccak "ipfs://QmUSDC_DemoD_m0")
-D_TX_M0S=$(cast_tx "$WORKER_KEY" "$D_ADDR" "submitMilestone(uint8,bytes32,string)" 0 "$H" "ipfs://QmUSDC_DemoD_m0") || exit 1
+D_TX_M0S=$(cast_tx "$WORKER_KEY" "$D_ADDR" "submitMilestone(uint8,bytes32,string,bytes32)" 0 "$H" "ipfs://QmUSDC_DemoD_m0" "$ZERO_PROOF_HASH") || exit 1
 echo "  M0 submit tx: $D_TX_M0S"
+wait_tx_mined "$D_TX_M0S"
 
 wait_indexer
 
@@ -319,8 +375,9 @@ wait_indexer
 
 step "M1: Worker submits"
 H=$(cast keccak "ipfs://QmUSDC_DemoD_m1")
-D_TX_M1S=$(cast_tx "$WORKER_KEY" "$D_ADDR" "submitMilestone(uint8,bytes32,string)" 1 "$H" "ipfs://QmUSDC_DemoD_m1") || exit 1
+D_TX_M1S=$(cast_tx "$WORKER_KEY" "$D_ADDR" "submitMilestone(uint8,bytes32,string,bytes32)" 1 "$H" "ipfs://QmUSDC_DemoD_m1" "$ZERO_PROOF_HASH") || exit 1
 echo "  M1 submit tx: $D_TX_M1S"
+wait_tx_mined "$D_TX_M1S"
 
 wait_indexer
 
@@ -333,8 +390,9 @@ wait_indexer
 
 step "M2: Worker submits"
 H=$(cast keccak "ipfs://QmUSDC_DemoD_m2")
-D_TX_M2S=$(cast_tx "$WORKER_KEY" "$D_ADDR" "submitMilestone(uint8,bytes32,string)" 2 "$H" "ipfs://QmUSDC_DemoD_m2") || exit 1
+D_TX_M2S=$(cast_tx "$WORKER_KEY" "$D_ADDR" "submitMilestone(uint8,bytes32,string,bytes32)" 2 "$H" "ipfs://QmUSDC_DemoD_m2" "$ZERO_PROOF_HASH") || exit 1
 echo "  M2 submit tx: $D_TX_M2S"
+wait_tx_mined "$D_TX_M2S"
 
 wait_indexer
 
@@ -383,6 +441,9 @@ RESP=$(api POST /api/v1/escrows -d "{
   \"worker\": \"$WORKER\",
   \"verifier\": \"$VERIFIER\",
   \"arbitrator\": \"$ARBITRATOR\",
+  \"verifier_panel\": [\"$VERIFIER\"],
+  \"quorum_verifier_count\": 1,
+  \"quorum_threshold\": 1,
   \"amount\": \"$ESCROW_AMOUNT\",
   \"worker_stake\": \"$STAKE_AMOUNT\",
   \"token\": \"$USDC\",
@@ -427,8 +488,9 @@ wait_indexer
 
 step "M0: Worker submits"
 H=$(cast keccak "ipfs://QmUSDC_DemoE_m0")
-E_TX_M0S=$(cast_tx "$WORKER_KEY" "$E_ADDR" "submitMilestone(uint8,bytes32,string)" 0 "$H" "ipfs://QmUSDC_DemoE_m0") || exit 1
+E_TX_M0S=$(cast_tx "$WORKER_KEY" "$E_ADDR" "submitMilestone(uint8,bytes32,string,bytes32)" 0 "$H" "ipfs://QmUSDC_DemoE_m0" "$ZERO_PROOF_HASH") || exit 1
 echo "  M0 submit tx: $E_TX_M0S"
+wait_tx_mined "$E_TX_M0S"
 
 wait_indexer
 
@@ -441,8 +503,9 @@ wait_indexer
 
 step "M1: Worker submits"
 H=$(cast keccak "ipfs://QmUSDC_DemoE_m1")
-E_TX_M1S=$(cast_tx "$WORKER_KEY" "$E_ADDR" "submitMilestone(uint8,bytes32,string)" 1 "$H" "ipfs://QmUSDC_DemoE_m1") || exit 1
+E_TX_M1S=$(cast_tx "$WORKER_KEY" "$E_ADDR" "submitMilestone(uint8,bytes32,string,bytes32)" 1 "$H" "ipfs://QmUSDC_DemoE_m1" "$ZERO_PROOF_HASH") || exit 1
 echo "  M1 submit tx: $E_TX_M1S"
+wait_tx_mined "$E_TX_M1S"
 
 wait_indexer
 
@@ -504,6 +567,9 @@ RESP=$(api POST /api/v1/escrows -d "{
   \"worker\": \"$WORKER\",
   \"verifier\": \"$VERIFIER\",
   \"arbitrator\": \"$ARBITRATOR\",
+  \"verifier_panel\": [\"$VERIFIER\"],
+  \"quorum_verifier_count\": 1,
+  \"quorum_threshold\": 1,
   \"amount\": \"$ESCROW_AMOUNT\",
   \"worker_stake\": \"$STAKE_AMOUNT\",
   \"token\": \"$USDC\",
@@ -563,8 +629,9 @@ wait_indexer
 
 step "Backup worker submits"
 H=$(cast keccak "ipfs://QmUSDC_DemoF_backup_submission")
-F_TX_SUBMIT=$(cast_tx "$BACKUP_KEY" "$F_ADDR" "submit(bytes32,string)" "$H" "ipfs://QmUSDC_DemoF_backup_submission") || exit 1
+F_TX_SUBMIT=$(cast_tx "$BACKUP_KEY" "$F_ADDR" "submit(bytes32,string,bytes32)" "$H" "ipfs://QmUSDC_DemoF_backup_submission" "$ZERO_PROOF_HASH") || exit 1
 echo "  Submit tx: $F_TX_SUBMIT"
+wait_tx_mined "$F_TX_SUBMIT"
 
 wait_indexer
 
@@ -603,7 +670,9 @@ section "USDC DEMO G: Bidding Protocol — RFQ to Escrow"
 ########################################################################
 
 G_DEADLINE=$(ts_plus 7200)
-G_EXPIRES=$(ts_plus 3600)
+G_COMMIT_DEADLINE=$(ts_plus 8)
+G_REVEAL_DEADLINE=$(ts_plus 25)
+G_EXPIRES=$(ts_plus 60)
 
 step "Creating RFQ (USDC)"
 RESP=$(api POST /api/v1/rfqs -d "{
@@ -614,11 +683,16 @@ RESP=$(api POST /api/v1/rfqs -d "{
   \"budget_min\": \"50000\",
   \"budget_max\": \"150000\",
   \"deadline\": \"$G_DEADLINE\",
+  \"commit_deadline\": \"$G_COMMIT_DEADLINE\",
+  \"reveal_deadline\": \"$G_REVEAL_DEADLINE\",
   \"review_period_seconds\": \"3600\",
   \"dispute_period_seconds\": \"3600\",
   \"arbitrator_timeout_seconds\": \"7200\",
   \"verifier\": \"$VERIFIER\",
   \"arbitrator\": \"$ARBITRATOR\",
+  \"verifier_panel\": [\"$VERIFIER\"],
+  \"quorum_verifier_count\": 1,
+  \"quorum_threshold\": 1,
   \"requirements_json\": \"{\\\"skills\\\": [\\\"solidity\\\", \\\"security\\\"]}\",
   \"expires_at\": \"$G_EXPIRES\"
 }")
@@ -626,18 +700,59 @@ echo "$RESP" | python3 -m json.tool
 G_RFQ=$(echo "$RESP" | extract id)
 echo "  RFQ ID: $G_RFQ"
 
-step "Worker places bid (0.10 USDC)"
+step "Worker commits sealed bid (0.10 USDC)"
 G_BID_EXP=$(ts_plus 3600)
-RESP=$(api POST "/api/v1/rfqs/${G_RFQ}/bids" -d "{
+G_BID_NONCE="usdc-demo-g-nonce-$(date +%s)"
+G_BID_SALT="usdc-demo-g-salt-$(date +%s)"
+G_BID_MSG="Comprehensive audit within 24 hours - USDC bid"
+G_BID_MILESTONES="[]"
+G_BID_MILESTONES_HASH=$(cast keccak "$G_BID_MILESTONES")
+G_BID_MESSAGE_HASH=$(cast keccak "$G_BID_MSG")
+G_BID_STAKE_MANDATE_HASH=$(cast keccak "")
+G_BID_PAYLOAD="agent-escrow:sealed-bid:v1|${G_RFQ}|$(echo "$WORKER" | tr '[:upper:]' '[:lower:]')|${ESCROW_AMOUNT}|86400|0|${G_BID_MILESTONES_HASH}|${G_BID_MESSAGE_HASH}|${G_BID_EXP}|${G_BID_STAKE_MANDATE_HASH}|${G_BID_NONCE}|${G_BID_SALT}"
+G_BID_COMMITMENT=$(cast keccak "$G_BID_PAYLOAD")
+RESP=$(api POST "/api/v1/rfqs/${G_RFQ}/bids/commit" -d "{
+  \"bidder\": \"$WORKER\",
+  \"commitment\": \"$G_BID_COMMITMENT\",
+  \"nonce\": \"$G_BID_NONCE\"
+}")
+echo "$RESP" | python3 -m json.tool
+G_COMMIT_ID=$(echo "$RESP" | extract id)
+echo "  Commit ID: $G_COMMIT_ID"
+
+step "Waiting for reveal phase to open"
+for _ in $(seq 1 40); do
+  NOW_TS=$(date +%s)
+  if [ "$NOW_TS" -ge "$G_COMMIT_DEADLINE" ]; then
+    break
+  fi
+  sleep 2
+done
+
+step "Worker reveals bid (0.10 USDC)"
+RESP=$(api POST "/api/v1/rfqs/${G_RFQ}/bids/reveal" -d "{
   \"bidder\": \"$WORKER\",
   \"amount\": \"$ESCROW_AMOUNT\",
+  \"nonce\": \"$G_BID_NONCE\",
+  \"salt\": \"$G_BID_SALT\",
   \"estimated_duration\": 86400,
-  \"message\": \"Comprehensive audit within 24 hours — USDC bid\",
+  \"reputation_bond\": \"0\",
+  \"milestones_json\": \"$G_BID_MILESTONES\",
+  \"message\": \"$G_BID_MSG\",
   \"expires_at\": \"$G_BID_EXP\"
 }")
 echo "$RESP" | python3 -m json.tool
 G_BID=$(echo "$RESP" | extract id)
 echo "  Bid ID: $G_BID"
+
+step "Waiting for reveal phase to end before accept"
+for _ in $(seq 1 120); do
+  NOW_TS=$(date +%s)
+  if [ "$NOW_TS" -gt "$G_REVEAL_DEADLINE" ]; then
+    break
+  fi
+  sleep 2
+done
 
 step "Buyer accepts bid (creates USDC escrow on-chain)"
 RESP=$(api POST "/api/v1/rfqs/${G_RFQ}/accept" -d "{
@@ -663,8 +778,9 @@ wait_indexer
 
 step "Worker submits"
 H=$(cast keccak "ipfs://QmUSDC_DemoG_audit_report")
-G_TX_SUBMIT=$(cast_tx "$WORKER_KEY" "$G_ADDR" "submit(bytes32,string)" "$H" "ipfs://QmUSDC_DemoG_audit_report") || exit 1
+G_TX_SUBMIT=$(cast_tx "$WORKER_KEY" "$G_ADDR" "submit(bytes32,string,bytes32)" "$H" "ipfs://QmUSDC_DemoG_audit_report" "$ZERO_PROOF_HASH") || exit 1
 echo "  Submit tx: $G_TX_SUBMIT"
+wait_tx_mined "$G_TX_SUBMIT"
 
 wait_indexer
 
@@ -677,6 +793,7 @@ wait_indexer
 
 jq_set "demo_g" "{
   \"rfq_id\": $G_RFQ,
+  \"commit_id\": $G_COMMIT_ID,
   \"bid_id\": $G_BID,
   \"escrow_id\": $G_ID,
   \"escrow_address\": \"$G_ADDR\",
@@ -720,6 +837,9 @@ RESP=$(api POST /api/v1/escrows -d "{
   \"worker\": \"$WORKER\",
   \"verifier\": \"$VERIFIER\",
   \"arbitrator\": \"$ARBITRATOR\",
+  \"verifier_panel\": [\"$VERIFIER\"],
+  \"quorum_verifier_count\": 1,
+  \"quorum_threshold\": 1,
   \"amount\": \"$ESCROW_AMOUNT\",
   \"token\": \"$USDC\",
   \"submission_deadline\": \"$I_DEADLINE\",
@@ -754,7 +874,7 @@ wait_indexer
 step "Attempting submit on frozen escrow (should revert)"
 set +e
 H=$(cast keccak "ipfs://QmUSDC_DemoI_should_fail")
-FROZEN_RESP=$(cast send "$I_ADDR" "submit(bytes32,string)" "$H" "ipfs://QmUSDC_DemoI_should_fail" \
+FROZEN_RESP=$(cast send "$I_ADDR" "submit(bytes32,string,bytes32)" "$H" "ipfs://QmUSDC_DemoI_should_fail" "$ZERO_PROOF_HASH" \
   --private-key "$WORKER_KEY" --rpc-url "$RPC_URL" --json 2>&1)
 FROZEN_EXIT=$?
 set -e

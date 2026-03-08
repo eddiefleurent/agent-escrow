@@ -68,7 +68,7 @@ type createParamsTuple struct {
 	ServiceTier              uint8
 	BackupWorker             common.Address
 	BackupDeadlineExtension  uint64
-	ZKVerifier               common.Address
+	ZkVerifier               common.Address
 	CircuitID                [32]byte
 	ParentEscrow             common.Address
 	Milestones               []milestoneTuple
@@ -106,7 +106,7 @@ func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p Cre
 		ServiceTier:              p.ServiceTier,
 		BackupWorker:             p.BackupWorker,
 		BackupDeadlineExtension:  p.BackupDeadlineExtension,
-		ZKVerifier:               p.ZKVerifier,
+		ZkVerifier:               p.ZKVerifier,
 		CircuitID:                p.CircuitID,
 		ParentEscrow:             p.ParentEscrow,
 		Milestones:               milestones,

@@ -17,10 +17,27 @@ contract BytecodeStore {
 /// The factory delegates TaskEscrow creation to this contract, avoiding
 /// embedding the full TaskEscrow bytecode in the factory's own runtime code.
 contract EscrowDeployer {
-    address public immutable taskEscrowInitcodeStore;
+    uint256 private constant MAX_RUNTIME_CODE_SIZE = 24_576;
+
+    address public immutable taskEscrowInitcodeStorePart1;
+    address public immutable taskEscrowInitcodeStorePart2;
+    uint32 public immutable taskEscrowInitcodeLength;
 
     constructor() {
-        taskEscrowInitcodeStore = address(new BytecodeStore(type(TaskEscrow).creationCode));
+        bytes memory initcode = type(TaskEscrow).creationCode;
+        uint256 len = initcode.length;
+        taskEscrowInitcodeLength = uint32(len);
+
+        uint256 part1Len = len;
+        if (part1Len > MAX_RUNTIME_CODE_SIZE) {
+            part1Len = MAX_RUNTIME_CODE_SIZE;
+        }
+
+        taskEscrowInitcodeStorePart1 = address(new BytecodeStore(_slice(initcode, 0, part1Len)));
+
+        if (part1Len < len) {
+            taskEscrowInitcodeStorePart2 = address(new BytecodeStore(_slice(initcode, part1Len, len - part1Len)));
+        }
     }
 
     function deploy(TaskEscrow.Params memory p) external returns (address) {
@@ -39,14 +56,35 @@ contract EscrowDeployer {
     }
 
     function _readInitcode() internal view returns (bytes memory out) {
-        address store = taskEscrowInitcodeStore;
+        out = new bytes(taskEscrowInitcodeLength);
+        uint256 copied;
+
+        copied = _copyStoreCode(taskEscrowInitcodeStorePart1, out, copied);
+
+        if (taskEscrowInitcodeStorePart2 != address(0)) {
+            _copyStoreCode(taskEscrowInitcodeStorePart2, out, copied);
+        }
+    }
+
+    function _copyStoreCode(address store, bytes memory out, uint256 offset)
+        internal
+        view
+        returns (uint256 nextOffset)
+    {
         uint256 size;
         assembly ("memory-safe") {
             size := extcodesize(store)
         }
-        out = new bytes(size);
+        nextOffset = offset + size;
         assembly ("memory-safe") {
-            extcodecopy(store, add(out, 0x20), 0, size)
+            extcodecopy(store, add(add(out, 0x20), offset), 0, size)
+        }
+    }
+
+    function _slice(bytes memory data, uint256 start, uint256 len) internal pure returns (bytes memory out) {
+        out = new bytes(len);
+        for (uint256 i = 0; i < len; i++) {
+            out[i] = data[start + i];
         }
     }
 }
