@@ -13,6 +13,7 @@ WORKER_KEY      # worker signing key (becomes PRIVATE_KEY after bootstrap)
 PRIVATE_KEY     # set by bootstrap from WORKER_KEY
 WORKER          # worker address
 ESCROW_SERVER_URL
+RPC_URL         # chain RPC endpoint (defaults to https://sepolia.base.org)
 ```
 
 Optional:

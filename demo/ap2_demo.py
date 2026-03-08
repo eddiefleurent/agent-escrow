@@ -111,6 +111,11 @@ def wait_for_receipt(tx_hash: str, *, timeout_seconds: int = 60) -> dict:
     sys.exit(1)
 
 
+def receipt_status_int(receipt: dict) -> int:
+    status = receipt.get("status")
+    return int(status, 0) if isinstance(status, str) else int(status)
+
+
 def require_env(name: str) -> str:
     value = os.getenv(name, "").strip()
     if not value:
@@ -127,8 +132,12 @@ def main():
 
     buyer_key = require_env("PRIVATE_KEY")
     worker_key = require_env("WORKER_KEY")
+    verifier_key = require_env("VERIFIER_KEY")
+    arbitrator_key = require_env("ARBITRATOR_KEY")
     buyer_addr = Account.from_key(buyer_key).address
     derived_worker_addr = Account.from_key(worker_key).address
+    verifier_addr = Account.from_key(verifier_key).address
+    arbitrator_addr = Account.from_key(arbitrator_key).address
     configured_worker_addr = os.environ.get("WORKER_ADDRESS")
     if (
         configured_worker_addr
@@ -161,9 +170,9 @@ def main():
         "description": "Escrow funded via AP2 mandate bridge with receiveWithAuthorization",
         "buyer": buyer_addr,
         "worker": worker_addr,
-        "verifier": "0xEa62Afd342704CF52A48A50BC5a7e57B45e3de7A",
-        "arbitrator": "0x98586bC45A9D6B9D2C5F11292d4a9bfA4a50b097",
-        "verifier_panel": ["0xEa62Afd342704CF52A48A50BC5a7e57B45e3de7A"],
+        "verifier": verifier_addr,
+        "arbitrator": arbitrator_addr,
+        "verifier_panel": [verifier_addr],
         "quorum_verifier_count": 1,
         "quorum_threshold": 1,
         "amount": ESCROW_AMOUNT,
@@ -182,21 +191,9 @@ def main():
 
     # Wait for create tx to be mined
     print("  → Waiting for create tx to be mined...")
-    mined = False
-    for _ in range(20):
-        result = subprocess.run(
-            ["cast", "receipt", tx_create, "--rpc-url", RPC_URL, "--json"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            mined = True
-            break
-        time.sleep(2)
-    if not mined:
-        print(
-            f"  Create tx not mined after 20 attempts: tx={tx_create} rpc={RPC_URL}",
-            file=sys.stderr,
-        )
+    create_receipt = wait_for_receipt(tx_create, timeout_seconds=40)
+    if receipt_status_int(create_receipt) != 1:
+        print(f"  Create tx failed: {create_receipt}", file=sys.stderr)
         sys.exit(1)
     time.sleep(3)
 
@@ -280,9 +277,7 @@ def main():
     print(f"    Status: {fund_resp['status']}")
 
     fund_receipt = wait_for_receipt(tx_fund, timeout_seconds=90)
-    fund_status = fund_receipt.get("status")
-    fund_status_int = int(fund_status, 0) if isinstance(fund_status, str) else int(fund_status)
-    if fund_status_int != 1:
+    if receipt_status_int(fund_receipt) != 1:
         print(f"    Fund tx failed: {fund_receipt}", file=sys.stderr)
         sys.exit(1)
 
@@ -311,9 +306,7 @@ def main():
     )
     print(f"    Submit tx: {tx_submit}")
     submit_receipt = wait_for_receipt(tx_submit, timeout_seconds=90)
-    submit_status = submit_receipt.get("status")
-    submit_status_int = int(submit_status, 0) if isinstance(submit_status, str) else int(submit_status)
-    if submit_status_int != 1:
+    if receipt_status_int(submit_receipt) != 1:
         print(f"    Submit tx failed: {submit_receipt}", file=sys.stderr)
         sys.exit(1)
 

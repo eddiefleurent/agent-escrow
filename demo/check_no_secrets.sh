@@ -25,6 +25,7 @@ MARKDOWN_TARGETS=(
   "skills/**/*.md"
   "README.md"
 )
+EXPANDED_MARKDOWN_TARGETS=()
 
 # High-signal patterns:
 # - explicit key assignments with 32-byte hex material
@@ -45,7 +46,13 @@ if rg -n --pcre2 "$PAT" "${TARGETS[@]}" >"$TMPFILE" 2>/dev/null; then
 fi
 
 # Optional warning-only broad hex scan in markdown (can include tx hashes)
+for pattern in "${MARKDOWN_TARGETS[@]}"; do
+  matches=($pattern)
+  if [ ${#matches[@]} -gt 0 ]; then
+    EXPANDED_MARKDOWN_TARGETS+=("${matches[@]}")
+  fi
+done
 BROAD='0x[a-fA-F0-9]{64}'
-COUNT=$(rg -n --pcre2 "$BROAD" "${MARKDOWN_TARGETS[@]}" 2>/dev/null | wc -l | tr -d ' ')
+COUNT=$(rg -n --pcre2 "$BROAD" "${EXPANDED_MARKDOWN_TARGETS[@]}" 2>/dev/null | wc -l | tr -d ' ')
 echo "OK: no explicit private-key assignments found."
 echo "Info: markdown contains $COUNT hex-64 values (expected for tx hashes/nonces)."

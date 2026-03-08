@@ -66,6 +66,7 @@ contract EscrowDeployer {
         copied = _copyStoreCode(taskEscrowInitcodeStorePart1, out, copied);
 
         if (taskEscrowInitcodeStorePart2 != address(0)) {
+            // Offset return value is not needed here because part 2 is the final store.
             _copyStoreCode(taskEscrowInitcodeStorePart2, out, copied);
         }
     }

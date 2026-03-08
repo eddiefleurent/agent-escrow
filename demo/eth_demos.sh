@@ -317,6 +317,7 @@ D_TX_FUND=$(echo "$RESP" | extract tx_hash)
 echo "  Fund tx: $D_TX_FUND"
 
 wait_indexer
+wait_tx_mined "$D_TX_FUND"
 
 step "M0: Worker submits"
 H=$(cast keccak "ipfs://QmDemoD_m0")
@@ -654,6 +655,7 @@ G_BID_MILESTONES="[]"
 G_BID_MILESTONES_HASH=$(cast keccak "$G_BID_MILESTONES")
 G_BID_MESSAGE_HASH=$(cast keccak "$G_BID_MSG")
 G_BID_STAKE_MANDATE_HASH=$(cast keccak "")
+# Server canonical format for sealed-bid preimage uses lowercase hex addresses.
 G_BID_PAYLOAD="agent-escrow:sealed-bid:v1|${G_RFQ}|$(echo "$WORKER" | tr '[:upper:]' '[:lower:]')|100000000000000|86400|0|${G_BID_MILESTONES_HASH}|${G_BID_MESSAGE_HASH}|${G_BID_EXP}|${G_BID_STAKE_MANDATE_HASH}|${G_BID_NONCE}|${G_BID_SALT}"
 G_BID_COMMITMENT=$(cast keccak "$G_BID_PAYLOAD")
 RESP=$(api POST "/api/v1/rfqs/${G_RFQ}/bids/commit" -d "{
@@ -720,6 +722,7 @@ G_TX_FUND=$(echo "$RESP" | extract tx_hash)
 echo "  Fund tx: $G_TX_FUND"
 
 wait_indexer
+wait_tx_mined "$G_TX_FUND"
 
 step "Worker submits"
 H=$(cast keccak "ipfs://QmDemoG_audit_report")
@@ -807,6 +810,7 @@ I_TX_FUND=$(echo "$RESP" | extract tx_hash)
 echo "  Fund tx: $I_TX_FUND"
 
 wait_indexer
+wait_tx_mined "$I_TX_FUND"
 
 step "Freezing escrow (owner action via HTTP API)"
 RESP=$(api_retry POST /api/v1/emergency/freeze-escrow -d "{\"escrow_id\": $I_ID}")
@@ -814,6 +818,16 @@ I_TX_FREEZE=$(echo "$RESP" | extract tx_hash)
 echo "  Freeze tx: $I_TX_FREEZE"
 
 wait_indexer
+I_FREEZE_RECEIPT=$(wait_tx_receipt "$I_TX_FREEZE") || {
+  echo "ERROR: freeze tx receipt not found: $I_TX_FREEZE" >&2
+  exit 1
+}
+I_FREEZE_STATUS=$(echo "$I_FREEZE_RECEIPT" | python3 -c "import json,sys; s=json.load(sys.stdin).get('status'); print(int(s, 0) if isinstance(s, str) else int(s))")
+[ "$I_FREEZE_STATUS" -eq 1 ] || {
+  echo "ERROR: freeze tx failed: $I_TX_FREEZE" >&2
+  echo "$I_FREEZE_RECEIPT" >&2
+  exit 1
+}
 
 step "Attempting submit on frozen escrow (should revert)"
 set +e
@@ -824,11 +838,11 @@ FROZEN_EXIT=$?
 set -e
 echo "  Exit code: $FROZEN_EXIT (expected revert)"
 echo "  Response: $(echo "$FROZEN_RESP" | head -c 200)"
-if [ "$FROZEN_EXIT" -ne 0 ]; then
+FROZEN_TX_HASH=$(echo "$FROZEN_RESP" | python3 -c "import json,sys; data=json.load(sys.stdin); print(data.get('transactionHash',''))" 2>/dev/null || true)
+if [ "$FROZEN_EXIT" -ne 0 ] && [ -z "$FROZEN_TX_HASH" ]; then
   echo "ERROR: frozen submit failed before broadcast: $FROZEN_RESP" >&2
   exit 1
 fi
-FROZEN_TX_HASH=$(echo "$FROZEN_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin)['transactionHash'])")
 FROZEN_RECEIPT=$(wait_tx_receipt "$FROZEN_TX_HASH") || {
   echo "ERROR: frozen submit tx broadcast but no receipt found: $FROZEN_TX_HASH" >&2
   exit 1
