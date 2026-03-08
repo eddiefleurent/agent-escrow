@@ -18,6 +18,7 @@ contract BytecodeStore {
 /// embedding the full TaskEscrow bytecode in the factory's own runtime code.
 contract EscrowDeployer {
     uint256 private constant MAX_RUNTIME_CODE_SIZE = 24_576;
+    error InitcodeTooLarge(uint256 initcodeLength, uint256 maxSupportedLength);
 
     address public immutable taskEscrowInitcodeStorePart1;
     address public immutable taskEscrowInitcodeStorePart2;
@@ -26,6 +27,9 @@ contract EscrowDeployer {
     constructor() {
         bytes memory initcode = type(TaskEscrow).creationCode;
         uint256 len = initcode.length;
+        if (len > (MAX_RUNTIME_CODE_SIZE * 2)) {
+            revert InitcodeTooLarge(len, MAX_RUNTIME_CODE_SIZE * 2);
+        }
         taskEscrowInitcodeLength = uint32(len);
 
         uint256 part1Len = len;

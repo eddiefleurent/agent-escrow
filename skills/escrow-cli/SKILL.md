@@ -65,7 +65,7 @@ esac
 # Verify connectivity — fail fast if server is unreachable
 escrow-cli health || { echo "server unreachable: $ESCROW_SERVER_URL" >&2; exit 1; }
 
-echo "Role: $ESCROW_ROLE | Server: $ESCROW_SERVER_URL | Key: ${PRIVATE_KEY:0:6}..."
+echo "Role: $ESCROW_ROLE | Server: $ESCROW_SERVER_URL"
 ```
 
 One-time env file setup:
@@ -153,7 +153,7 @@ an unrecoverable error.
 ## 4. Amount Conventions
 
 - **ETH demos**: use `"100000000000000"` wei (0.0001 ETH) — conservative, fits testnet balances
-- **USDC demos**: use `"1000000"` (1 USDC, 6 decimals)
+- **USDC demos**: use `"100000"` (0.10 USDC, 6 decimals)
 - **Deadlines**: Unix timestamps as strings. Use `$(date -d "+7 days" +%s)` for relative deadlines.
 - **Periods**: seconds as strings. `"86400"` = 1 day, `"172800"` = 2 days, `"259200"` = 3 days.
 - Always verify amounts fit the buyer's testnet balance before funding.

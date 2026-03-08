@@ -533,6 +533,63 @@
       "residual_gap": "No material gap for V3 scope; broader protocol evolution remains V4+."
     },
     {
+      "item_id": "SH1",
+      "phase": "Security Gate",
+      "title": "Admin auth for emergency endpoints",
+      "status": "planned",
+      "paper_refs": [
+        "4.9"
+      ],
+      "decision_vs_paper": "Add explicit admin-token middleware to off-chain emergency surfaces before production traffic; on-chain owner checks alone do not protect the HTTP control plane.",
+      "residual_gap": "Entire item is pending."
+    },
+    {
+      "item_id": "SH2",
+      "phase": "Security Gate",
+      "title": "Per-IP rate limiting on POST endpoints",
+      "status": "planned",
+      "paper_refs": [
+        "4.9"
+      ],
+      "decision_vs_paper": "Use thin stdlib middleware with operator-tunable ceilings to bound RPC spend and gas-drain abuse without changing protocol semantics.",
+      "residual_gap": "Entire item is pending."
+    },
+    {
+      "item_id": "SH3",
+      "phase": "Security Gate",
+      "title": "Request body size cap",
+      "status": "planned",
+      "paper_refs": [
+        "4.9"
+      ],
+      "decision_vs_paper": "Impose hard request-size ceilings at the HTTP edge to prevent unbounded memory pressure in public deployments.",
+      "residual_gap": "Entire item is pending."
+    },
+    {
+      "item_id": "SH4",
+      "phase": "Security Gate",
+      "title": "Request ID tracing",
+      "status": "planned",
+      "paper_refs": [
+        "4.9"
+      ],
+      "decision_vs_paper": "Add request-scoped correlation IDs as an operational prerequisite for incident response and auditability on public infrastructure.",
+      "residual_gap": "Entire item is pending."
+    },
+    {
+      "item_id": "SH5",
+      "phase": "Security Gate",
+      "title": "Agent-owned wallet / client-side signing",
+      "status": "planned",
+      "paper_refs": [
+        "4.2",
+        "4.9",
+        "6"
+      ],
+      "decision_vs_paper": "Move participant signing to CLI and MCP clients so buyer, worker, verifier, and arbitrator remain distinct principals; the server becomes operator-only for admin/indexing duties.",
+      "residual_gap": "Entire item is pending."
+    },
+    {
       "item_id": "23",
       "phase": "V4",
       "title": "Curriculum-aware task routing",
@@ -704,6 +761,11 @@
     "R2",
     "R3",
     "R4",
+    "SH1",
+    "SH2",
+    "SH3",
+    "SH4",
+    "SH5",
     "25",
     "29",
     "30",

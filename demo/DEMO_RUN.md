@@ -41,7 +41,7 @@ This plan is the execution baseline before Phase 2 roadmap revisits (`R1`-`R4`).
    ```
 4. Confirm API health:
    ```bash
-   curl -sf http://localhost:8080/healthz
+   curl -sf http://localhost:8080/api/v1/health
    ```
 
 ### Acceptance criteria

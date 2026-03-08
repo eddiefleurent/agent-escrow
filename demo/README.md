@@ -42,7 +42,7 @@ The publicly documented, current live demos are the ETH, USDC, and AP2 flows abo
    - `BACKUP_WORKER_KEY` is still accepted as a legacy alias for `BACKUP_KEY`
    - `FACTORY_ADDRESS` — deployed factory on Base Sepolia
 
-3. **Tooling installed**: `cast` (Foundry), `curl`, `jq`, `python3`
+3. **Tooling installed**: `cast` (Foundry), `curl`, `jq`, `python3`, `uv`
 
 4. **For USDC demos**: participants need USDC balances on Base Sepolia. Use the faucet:
    ```bash

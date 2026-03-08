@@ -15,6 +15,10 @@ SKIP_CLI=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --target)
+      if [[ -z "${2:-}" ]]; then
+        echo "Missing value for --target (expected: all|codex|claude)" >&2
+        exit 1
+      fi
       TARGET="${2:-}"
       shift 2
       ;;

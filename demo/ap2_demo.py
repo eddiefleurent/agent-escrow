@@ -91,6 +91,26 @@ def cast_tx(private_key: str, to: str, sig: str, *args: str) -> str:
     sys.exit(1)
 
 
+def wait_for_receipt(tx_hash: str, *, timeout_seconds: int = 60) -> dict:
+    """Poll cast receipt until the transaction is mined."""
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        result = subprocess.run(
+            ["cast", "receipt", tx_hash, "--rpc-url", RPC_URL, "--json"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            try:
+                return json.loads(result.stdout)
+            except json.JSONDecodeError:
+                pass
+        time.sleep(2)
+    print(f"Timed out waiting for receipt: {tx_hash}", file=sys.stderr)
+    sys.exit(1)
+
+
 def require_env(name: str) -> str:
     value = os.getenv(name, "").strip()
     if not value:
@@ -273,8 +293,12 @@ def main():
         sub_hash, "ipfs://QmAP2_demo_submission", "0x" + ("00" * 32),
     )
     print(f"    Submit tx: {tx_submit}")
-
-    time.sleep(8)
+    submit_receipt = wait_for_receipt(tx_submit, timeout_seconds=90)
+    submit_status = submit_receipt.get("status")
+    submit_status_int = int(submit_status, 0) if isinstance(submit_status, str) else int(submit_status)
+    if submit_status_int != 1:
+        print(f"    Submit tx failed: {submit_receipt}", file=sys.stderr)
+        sys.exit(1)
 
     # Step 7: Buyer approves
     print("  → Step 7: Buyer approves")

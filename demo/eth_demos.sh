@@ -116,6 +116,21 @@ wait_tx_mined() {
   return 1
 }
 
+wait_tx_receipt() {
+  local tx_hash="$1"
+  local max_attempts=20
+  for i in $(seq 1 $max_attempts); do
+    local receipt
+    receipt=$(cast receipt "$tx_hash" --rpc-url "$RPC_URL" --json 2>/dev/null || echo "")
+    if [ -n "$receipt" ]; then
+      echo "$receipt"
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
 ts_plus() {
   echo $(( $(date +%s) + $1 ))
 }
@@ -804,8 +819,22 @@ FROZEN_RESP=$(cast send "$I_ADDR" "submit(bytes32,string,bytes32)" "$H" "ipfs://
   --private-key "$WORKER_KEY" --rpc-url "$RPC_URL" --json 2>&1)
 FROZEN_EXIT=$?
 set -e
-echo "  Exit code: $FROZEN_EXIT (expected non-zero)"
+echo "  Exit code: $FROZEN_EXIT (expected revert)"
 echo "  Response: $(echo "$FROZEN_RESP" | head -c 200)"
+if [ "$FROZEN_EXIT" -eq 0 ]; then
+  FROZEN_TX_HASH=$(echo "$FROZEN_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin)['transactionHash'])")
+  FROZEN_RECEIPT=$(wait_tx_receipt "$FROZEN_TX_HASH") || {
+    echo "ERROR: frozen submit tx broadcast but no receipt found: $FROZEN_TX_HASH" >&2
+    exit 1
+  }
+  FROZEN_STATUS=$(echo "$FROZEN_RECEIPT" | python3 -c "import json,sys; s=json.load(sys.stdin).get('status'); print(int(s, 0) if isinstance(s, str) else int(s))")
+  echo "  Receipt: $(echo "$FROZEN_RECEIPT" | head -c 400)"
+  [ "$FROZEN_STATUS" -eq 0 ] || {
+    echo "ERROR: frozen submit unexpectedly succeeded" >&2
+    echo "$FROZEN_RECEIPT" >&2
+    exit 1
+  }
+fi
 
 step "Emergency resolve (full refund to buyer, 0 bps)"
 RESP=$(api_retry POST /api/v1/emergency/resolve -d "{\"escrow_id\": $I_ID, \"worker_award_bps\": 0}")

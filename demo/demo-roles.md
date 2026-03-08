@@ -71,7 +71,7 @@ The verifier will:
 
 Sessions coordinate only through server state:
 
-```
+```text
 Buyer creates escrow
   → Server: status=Created
 Buyer funds escrow
@@ -109,7 +109,7 @@ export ESCROW_ROLE=arbitrator
 
 Flow:
 
-```
+```text
 Buyer creates + funds escrow
 Worker submits
 Verifier rejects → escrow enters Disputed
@@ -132,6 +132,7 @@ Explicit operation order:
 ```bash
 # 1. Create and fund (buyer role)
 export PRIVATE_KEY="$PRIVATE_KEY"   # buyer key
+export PRIVATE_KEY_BUYER="$PRIVATE_KEY"
 ESCROW_ID=$(escrow-cli escrow create --output json --data '{...}' | jq -r '.escrow_id')
 escrow-cli escrow fund "$ESCROW_ID" --output json
 

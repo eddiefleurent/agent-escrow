@@ -70,6 +70,14 @@ echo "$ESCROW_JSON" | jq '{id, title, description, submission_uri, proof_hash}'
 SUBMISSION_URI=$(echo "$ESCROW_JSON" | jq -r '.submission_uri // empty')
 if echo "$SUBMISSION_URI" | grep -q "^file://"; then
   DELIVERABLE_PATH="${SUBMISSION_URI#file://}"
+  case "$DELIVERABLE_PATH" in
+    /tmp/escrow-deliverable-*|/tmp/escrow-*-milestone-*.txt) ;;
+    *)
+      echo "REFUSING to read untrusted local path: $DELIVERABLE_PATH"
+      echo "Allowed demo paths: /tmp/escrow-deliverable-* and /tmp/escrow-*-milestone-*.txt"
+      exit 1
+      ;;
+  esac
   echo "--- Deliverable content ---"
   cat "$DELIVERABLE_PATH"
   echo "---"
@@ -147,7 +155,7 @@ for MILESTONE_INDEX in $(seq 0 $((MILESTONE_COUNT - 1))); do
   POLLS=0
   while true; do
     M_STATUS=$(escrow-cli escrow get "$ESCROW_ID" --output json \
-      | jq -r ".milestones[$MILESTONE_INDEX].status // \"pending\"")
+      | jq -r ".milestones[$MILESTONE_INDEX].status // \"pending\"" | tr '[:upper:]' '[:lower:]')
     [ "$M_STATUS" = "submitted" ] && break
     [ "$M_STATUS" = "settled" ] && { echo "Milestone $MILESTONE_INDEX already settled"; break; }
     POLLS=$((POLLS+1))
@@ -260,9 +268,9 @@ After approval or resolution, verify the escrow settles:
 ```bash
 POLLS=0
 while true; do
-  STATUS=$(escrow-cli escrow get "$ESCROW_ID" --output json | jq -r '.status')
+  STATUS=$(escrow-cli escrow get "$ESCROW_ID" --output json | jq -r '.status' | tr '[:upper:]' '[:lower:]')
   case "$STATUS" in
-    Settled|Refunded|Resolved) echo "DONE: $STATUS"; break ;;
+    settled|refunded|resolved) echo "DONE: $STATUS"; break ;;
     *) POLLS=$((POLLS+1))
        [ $POLLS -ge 40 ] && { echo "TIMEOUT waiting for final state"; exit 1; }
        echo "[$POLLS/40] State: $STATUS — waiting 15s..."

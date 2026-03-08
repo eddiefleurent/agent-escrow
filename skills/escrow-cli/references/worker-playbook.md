@@ -49,9 +49,9 @@ escrow-cli escrow list --output json --role worker --address "$WORKER" --status 
 ```bash
 POLLS=0
 while true; do
-  FUNDED=$(escrow-cli escrow list --output json --role worker --address "$WORKER" --status funded \
-    | jq 'length')
-  [ "$FUNDED" -gt 0 ] && break
+  FUNDED_ESCROWS_JSON=$(escrow-cli escrow list --output json --role worker --address "$WORKER" --status funded)
+  ESCROW_ID=$(echo "$FUNDED_ESCROWS_JSON" | jq -r 'sort_by(.id) | last | .id // empty')
+  [ -n "$ESCROW_ID" ] && break
   OPEN_RFQS=$(escrow-cli rfq list --output json --status open | jq 'length')
   [ "$OPEN_RFQS" -gt 0 ] && { echo "Open RFQs available — proceed to bid"; break; }
   POLLS=$((POLLS+1))
@@ -88,21 +88,15 @@ Concrete example values:
 - `message="demo bid"`, `expires_at=<reveal_deadline>`, `stake_mandate_id=""`
 - `nonce=worker-nonce-1`, `salt=my-secret-salt-abc123`
 
-Use a keccak256 utility or a short Python script:
+Use `cast keccak` so the example works on stock environments:
 
 ```bash
-python3 -c "
-import hashlib, sys
-preimage = 'agent-escrow:sealed-bid:v1|42|0x1111111111111111111111111111111111111111|100000000000000|259200|0|' \
-           + hashlib.keccak_256(b'[]').hexdigest() + '|' \
-           + hashlib.keccak_256(b'demo bid').hexdigest() + '|' \
-           + '<reveal_deadline>|' \
-           + hashlib.keccak_256(b'').hexdigest() + '|' \
-           + 'worker-nonce-1|my-secret-salt-abc123'
-h = hashlib.new('sha3_256')  # note: server uses keccak256, not sha3_256
-print('Preimage:', preimage)
-print('Use a keccak256 tool to hash this string')
-"
+MILESTONES_HASH=$(cast keccak "[]")
+MESSAGE_HASH=$(cast keccak "demo bid")
+STAKE_MANDATE_HASH=$(cast keccak "")
+PREIMAGE="agent-escrow:sealed-bid:v1|42|0x1111111111111111111111111111111111111111|100000000000000|259200|0|${MILESTONES_HASH#0x}|${MESSAGE_HASH#0x}|<reveal_deadline>|${STAKE_MANDATE_HASH#0x}|worker-nonce-1|my-secret-salt-abc123"
+COMMITMENT=$(cast keccak "$PREIMAGE")
+printf 'Preimage: %s\nCommitment: %s\n' "$PREIMAGE" "$COMMITMENT"
 ```
 
 > For demo purposes you can use a pre-computed commitment. The server validates the
@@ -157,9 +151,9 @@ escrow-cli bid reveal "$RFQ_ID" --output json --data "{
 ```bash
 POLLS=0
 while true; do
-  FUNDED=$(escrow-cli escrow list --output json --role worker --address "$WORKER" --status funded \
-    | jq 'length')
-  [ "$FUNDED" -gt 0 ] && break
+  ESCROW_ID=$(escrow-cli bid list "$RFQ_ID" --output json \
+    | jq -r --arg worker "$WORKER" '[.[] | select(.bidder == $worker and .escrow_id != null)] | sort_by(.id) | last | .escrow_id // empty')
+  [ -n "$ESCROW_ID" ] && break
   POLLS=$((POLLS+1))
   [ $POLLS -ge 40 ] && { echo "TIMEOUT: bid not accepted or escrow not funded"; exit 1; }
   echo "[$POLLS/40] Waiting for buyer to accept bid and fund escrow (15s)..."
@@ -172,7 +166,7 @@ done
 ## Step 3: Inspect the Escrow
 
 ```bash
-# If ESCROW_ID is not set, pick the newest funded escrow assigned to you
+# If ESCROW_ID is not set, discover one funded escrow assigned to you
 if [ -z "${ESCROW_ID:-}" ]; then
   ESCROW_ID=$(escrow-cli escrow list --output json --role worker --address "$WORKER" --status funded \
     | jq -r 'sort_by(.id) | last | .id')

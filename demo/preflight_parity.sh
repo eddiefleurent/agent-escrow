@@ -76,6 +76,17 @@ VERIFIER_ADDR="$(cast wallet address --private-key "$VERIFIER_KEY")"
 ARBITRATOR_ADDR="$(cast wallet address --private-key "$ARBITRATOR_KEY")"
 BACKUP_ADDR="$(cast wallet address --private-key "$BACKUP_KEY_RESOLVED")"
 
+declare -A ROLE_BY_ADDR=()
+for role in BUYER WORKER VERIFIER ARBITRATOR BACKUP; do
+  addr_var="${role}_ADDR"
+  addr="${!addr_var}"
+  prior_role="${ROLE_BY_ADDR[$addr]:-}"
+  if [[ -n "$prior_role" ]]; then
+    fail "role addresses must be distinct: $prior_role and $role both resolve to $addr"
+  fi
+  ROLE_BY_ADDR["$addr"]="$role"
+done
+
 echo "BUYER=$BUYER_ADDR"
 echo "WORKER=$WORKER_ADDR"
 echo "VERIFIER=$VERIFIER_ADDR"

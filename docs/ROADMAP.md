@@ -2,7 +2,7 @@
 
 Implementation roadmap for the ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) paper (Tomašev, Franklin, Osindero -- Google DeepMind, 2026).
 
-**Current phase: Phase 2 (R1-R4 revisits), after V3 closeout completion. Pre-V4 security gate (SH1-SH4) must complete before V4 work starts.**
+**Current phase: Phase 2 (R1-R4 revisits), after V3 closeout completion. Pre-V4 security gate (SH1-SH5) must complete before V4 work starts.**
 
 ---
 
@@ -147,7 +147,7 @@ Recommended near-term order: `R1 -> R2 -> R3 -> R4 -> SH1 -> SH2 -> SH3 -> SH4 -
 
 ### Pre-V4 Security Gate
 
-All four items below are **blocking gates**: V4 work does not start until all are done.
+All five items below are **blocking gates**: V4 work does not start until all are done.
 
 #### SH1: Admin auth for emergency endpoints
 

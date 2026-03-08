@@ -70,10 +70,10 @@ echo "Funded escrow $ESCROW_ID"
 ```bash
 POLLS=0
 while true; do
-  STATUS=$(escrow-cli escrow get "$ESCROW_ID" --output json | jq -r '.status')
+  STATUS=$(escrow-cli escrow get "$ESCROW_ID" --output json | jq -r '.status' | tr '[:upper:]' '[:lower:]')
   case "$STATUS" in
-    Submitted|Approved|Settled) break ;;
-    Refunded|Cancelled) echo "Escrow ended early: $STATUS"; exit 0 ;;
+    submitted|approved|settled) break ;;
+    refunded|cancelled) echo "Escrow ended early: $STATUS"; exit 0 ;;
     *) POLLS=$((POLLS+1))
        [ $POLLS -ge 40 ] && { echo "TIMEOUT: worker has not submitted after 10 minutes"; exit 1; }
        echo "[$POLLS/40] State: $STATUS — waiting for worker submission (15s)..."
@@ -159,8 +159,8 @@ echo "Posted RFQ: $RFQ_ID"
 # Wait for reveal phase to pass, then check revealed bids
 POLLS=0
 while true; do
-  BID_COUNT=$(escrow-cli bid list "$RFQ_ID" --output json | jq 'length')
-  [ "$BID_COUNT" -gt 0 ] && break
+  REVEALED_BID_COUNT=$(escrow-cli bid list "$RFQ_ID" --output json | jq '[.[] | select(.revealed == true)] | length')
+  [ "$REVEALED_BID_COUNT" -gt 0 ] && break
   POLLS=$((POLLS+1))
   [ $POLLS -ge 40 ] && { echo "TIMEOUT: no bids received"; exit 1; }
   echo "[$POLLS/40] No bids yet — waiting (15s)..."
@@ -174,8 +174,10 @@ escrow-cli bid list "$RFQ_ID" --output json | jq '.[] | {bid_id, bidder, amount,
 
 ```bash
 # Review bidder reputation before accepting
-BEST_BID_ID=$(escrow-cli bid list "$RFQ_ID" --output json | jq '[.[] | select(.revealed == true)] | sort_by(.amount | tonumber) | .[0].bid_id')
+BEST_BID_ID=$(escrow-cli bid list "$RFQ_ID" --output json | jq -r '[.[] | select(.revealed == true)] | sort_by(.amount | tonumber) | .[0].bid_id // empty')
 BEST_BIDDER=$(escrow-cli bid list "$RFQ_ID" --output json | jq -r '[.[] | select(.revealed == true)] | sort_by(.amount | tonumber) | .[0].bidder')
+
+[ -n "$BEST_BID_ID" ] || { echo "ERROR: no revealed bid available to accept"; exit 1; }
 
 escrow-cli reputation get "$BEST_BIDDER" --output json --role worker
 
@@ -247,9 +249,13 @@ for MILESTONE_INDEX in 0 1 2; do
     sleep 15
   done
 
-  escrow-cli escrow approve "$ESCROW_ID" --output json --data \
-    "{\"role\": \"buyer\", \"milestone_index\": $MILESTONE_INDEX}"
-  echo "Approved milestone $MILESTONE_INDEX"
+  if [ "$MILESTONE_STATUS" = "submitted" ]; then
+    escrow-cli escrow approve "$ESCROW_ID" --output json --data \
+      "{\"role\": \"buyer\", \"milestone_index\": $MILESTONE_INDEX}"
+    echo "Approved milestone $MILESTONE_INDEX"
+  else
+    echo "Milestone $MILESTONE_INDEX already settled; skipping approval"
+  fi
 done
 
 echo "All milestones approved. Polling for final settlement..."
@@ -279,10 +285,10 @@ echo "Dispute raised. Waiting for arbitrator resolution..."
 # Poll for Resolved or Settled
 POLLS=0
 while true; do
-  STATUS=$(escrow-cli escrow get "$ESCROW_ID" --output json | jq -r '.status')
+  STATUS=$(escrow-cli escrow get "$ESCROW_ID" --output json | jq -r '.status' | tr '[:upper:]' '[:lower:]')
   case "$STATUS" in
-    Resolved|Settled) break ;;
-    Refunded|Cancelled) echo "Escrow ended: $STATUS"; exit 0 ;;
+    resolved|settled) break ;;
+    refunded|cancelled) echo "Escrow ended: $STATUS"; exit 0 ;;
     *) POLLS=$((POLLS+1))
        [ $POLLS -ge 40 ] && { echo "TIMEOUT waiting for arbitrator"; exit 1; }
        echo "[$POLLS/40] State: $STATUS — waiting 15s..."
