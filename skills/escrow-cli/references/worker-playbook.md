@@ -96,10 +96,11 @@ Concrete example values:
 Use `cast keccak` so the example works on stock environments:
 
 ```bash
+LOWERCASE_WORKER=$(printf '%s' "$WORKER" | tr '[:upper:]' '[:lower:]')
 MILESTONES_HASH=$(cast keccak "[]")
 MESSAGE_HASH=$(cast keccak "demo bid")
 STAKE_MANDATE_HASH=$(cast keccak "")
-PREIMAGE="agent-escrow:sealed-bid:v1|42|0x1111111111111111111111111111111111111111|100000000000000|259200|0|${MILESTONES_HASH#0x}|${MESSAGE_HASH#0x}|<reveal_deadline>|${STAKE_MANDATE_HASH#0x}|worker-nonce-1|my-secret-salt-abc123"
+PREIMAGE="agent-escrow:sealed-bid:v1|42|${LOWERCASE_WORKER}|100000000000000|259200|0|${MILESTONES_HASH#0x}|${MESSAGE_HASH#0x}|<reveal_deadline>|${STAKE_MANDATE_HASH#0x}|worker-nonce-1|my-secret-salt-abc123"
 COMMITMENT=$(cast keccak "$PREIMAGE")
 printf 'Preimage: %s\nCommitment: %s\n' "$PREIMAGE" "$COMMITMENT"
 ```
@@ -112,9 +113,10 @@ printf 'Preimage: %s\nCommitment: %s\n' "$PREIMAGE" "$COMMITMENT"
 ```bash
 MY_COMMITMENT="0xYourPrecomputedKeccak256Hash"
 MY_NONCE="worker-nonce-1"
+LOWERCASE_WORKER=$(printf '%s' "$WORKER" | tr '[:upper:]' '[:lower:]')
 
 escrow-cli bid commit "$RFQ_ID" --output json --data "{
-  \"bidder\": \"$WORKER\",
+  \"bidder\": \"$LOWERCASE_WORKER\",
   \"commitment\": \"$MY_COMMITMENT\",
   \"nonce\": \"$MY_NONCE\"
 }"
@@ -139,15 +141,19 @@ done
 
 ```bash
 EXPIRES_AT=<reveal_deadline_unix_timestamp>
+LOWERCASE_WORKER=$(printf '%s' "$WORKER" | tr '[:upper:]' '[:lower:]')
 
 escrow-cli bid reveal "$RFQ_ID" --output json --data "{
-  \"bidder\": \"$WORKER\",
+  \"bidder\": \"$LOWERCASE_WORKER\",
   \"nonce\": \"$MY_NONCE\",
   \"salt\": \"my-secret-salt-abc123\",
   \"amount\": \"100000000000000\",
   \"estimated_duration\": 259200,
+  \"reputation_bond\": \"0\",
+  \"milestones_json\": \"[]\",
   \"message\": \"Demo worker — ready to execute\",
-  \"expires_at\": \"$EXPIRES_AT\"
+  \"expires_at\": \"$EXPIRES_AT\",
+  \"stake_mandate_id\": \"\"
 }"
 ```
 

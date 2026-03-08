@@ -80,12 +80,16 @@ def cast_tx(private_key: str, to: str, sig: str, *args: str) -> str:
     ]
     for attempt in range(1, 6):
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode == 0:
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+        if stdout:
             try:
-                return json.loads(result.stdout)["transactionHash"]
-            except (json.JSONDecodeError, KeyError):
-                pass
-        print(f"  cast_tx retry {attempt}/5: {result.stderr[:120]}")
+                tx_hash = json.loads(stdout).get("transactionHash")
+            except json.JSONDecodeError:
+                tx_hash = None
+            if tx_hash:
+                return tx_hash
+        print(f"  cast_tx retry {attempt}/5 (rc={result.returncode}): {(stderr or stdout)[:120]}")
         time.sleep(4)
     print("  cast_tx FAILED", file=sys.stderr)
     sys.exit(1)
