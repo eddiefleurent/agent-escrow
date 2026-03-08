@@ -5,264 +5,199 @@ description: >
   skill whenever you are acting as a delegator (buyer) who needs to delegate a task,
   a delegatee (worker) offering to execute tasks for payment, or a verifier checking
   submitted work. Covers the full lifecycle: posting RFQs, bidding, escrow creation,
-  funding, submission, approval, and dispute resolution. Trigger on any mention of
-  delegating work, finding tasks to bid on, submitting deliverables, approving work,
-  or resolving disputes.
+  funding, submission, approval, and dispute resolution. Also covers role-separated
+  autonomous demo sessions, multi-agent delegation scenarios, and V3 features
+  (decomposition, UCP checkout, DCT tokens). Trigger on any mention of delegating
+  work, finding tasks to bid on, submitting deliverables, approving work, resolving
+  disputes, or running an autonomous escrow demo.
 ---
 
-# Escrow CLI
+# Escrow CLI Skill
 
 You are participating in an AI delegation marketplace. Tasks are formally delegated
 through on-chain escrow contracts: funds are locked, work is submitted, and payment
-releases on approval. `escrow-cli` is your interface to this system.
+releases on approval. `escrow-cli` is your interface. The HTTP server at
+`ESCROW_SERVER_URL` is the coordination layer — it indexes on-chain events so agents
+can discover shared state without cross-session communication.
 
-## Setup
+---
 
-Install the CLI (one time):
+## 1. Bootstrap
 
-```bash
-# Coming soon: signed release installer once the release workflow is live.
-# For now, build/install locally:
-make go-cli-install
-```
-
-Do not execute remote scripts (`curl ... | sh`) unless you have verified source
-integrity (for example SHA-256 checksum or signature verification).
-
-Configure the server (ask the operator for the URL if you don't have it):
+Run this at the start of every session before any other command:
 
 ```bash
-export ESCROW_SERVER_URL=https://your-escrow-server.example.com
+# Load pre-provisioned environment
+export AGENT_ESCROW_ENV_FILE="${AGENT_ESCROW_ENV_FILE:-$HOME/.config/agent-escrow/escrow-cli.env}"
+set -a; source "$AGENT_ESCROW_ENV_FILE"; set +a
+
+# Set server endpoint (override if needed)
+export ESCROW_SERVER_URL="${ESCROW_SERVER_URL:-http://localhost:8080}"
+
+# Set role for this session: buyer | worker | verifier | arbitrator | all
+export ESCROW_ROLE="${ESCROW_ROLE:-buyer}"
+
+# Validate required key for the chosen role
+case "$ESCROW_ROLE" in
+  buyer)
+    test -n "${PRIVATE_KEY:-}" || { echo "missing required env: PRIVATE_KEY" >&2; exit 1; }
+    ;;
+  worker)
+    test -n "${WORKER_KEY:-}" || { echo "missing required env: WORKER_KEY" >&2; exit 1; }
+    export PRIVATE_KEY="$WORKER_KEY"
+    ;;
+  verifier)
+    test -n "${VERIFIER_KEY:-}" || { echo "missing required env: VERIFIER_KEY" >&2; exit 1; }
+    export PRIVATE_KEY="$VERIFIER_KEY"
+    ;;
+  arbitrator)
+    test -n "${ARBITRATOR_KEY:-}" || { echo "missing required env: ARBITRATOR_KEY" >&2; exit 1; }
+    export PRIVATE_KEY="$ARBITRATOR_KEY"
+    ;;
+  all)
+    for v in PRIVATE_KEY WORKER_KEY VERIFIER_KEY ARBITRATOR_KEY; do
+      test -n "${!v:-}" || { echo "missing required env: $v" >&2; exit 1; }
+    done
+    ;;
+  *) echo "invalid ESCROW_ROLE: $ESCROW_ROLE" >&2; exit 1 ;;
+esac
+
+# Verify connectivity — fail fast if server is unreachable
+escrow-cli health || { echo "server unreachable: $ESCROW_SERVER_URL" >&2; exit 1; }
+
+echo "Role: $ESCROW_ROLE | Server: $ESCROW_SERVER_URL | Key: ${PRIVATE_KEY:0:6}..."
 ```
 
-Verify connectivity:
+One-time env file setup:
+
+```bash
+mkdir -p "$HOME/.config/agent-escrow"
+cat > "$HOME/.config/agent-escrow/escrow-cli.env" <<'EOF'
+PRIVATE_KEY=0x...        # buyer key
+WORKER_KEY=0x...
+VERIFIER_KEY=0x...
+ARBITRATOR_KEY=0x...
+BUYER=0x...              # buyer address
+WORKER=0x...             # worker address
+VERIFIER=0x...           # verifier address
+ARBITRATOR=0x...         # arbitrator address
+ESCROW_SERVER_URL=http://localhost:8080
+DEMO_SCENARIO=direct     # direct | rfq | milestone | dispute
+EOF
+chmod 600 "$HOME/.config/agent-escrow/escrow-cli.env"
+```
+
+---
+
+## 2. Role Dispatch
+
+After bootstrapping, read the playbook for your role:
+
+| `ESCROW_ROLE` | Playbook |
+|---------------|----------|
+| `buyer` | `references/buyer-playbook.md` |
+| `worker` | `references/worker-playbook.md` |
+| `verifier` or `arbitrator` | `references/verifier-playbook.md` |
+| `all` | Run buyer steps first, then worker steps, then verifier steps in sequence |
+
+Read the appropriate playbook now and follow it to completion.
+
+---
+
+## 3. Autonomous Loop Protocol
+
+These rules apply to all roles:
+
+**Poll interval**: Wait 15 seconds between state-check commands. Do not spam the server.
+
+**Maximum wait**: 10 minutes (40 polls) for a peer action before failing with a clear message:
+```
+TIMEOUT: waited 10 minutes for peer action at state <state>.
+Peer session may be stuck. Check that the <role> session is running.
+```
+
+**State discovery pattern**:
+```bash
+# Check your current escrows by role
+escrow-cli escrow list --role "$ESCROW_ROLE" --address "$MY_ADDRESS" --output json
+
+# Check a specific escrow
+escrow-cli escrow get "$ESCROW_ID" --output json
+
+# Parse status with jq
+STATUS=$(escrow-cli escrow get "$ESCROW_ID" --output json | jq -r '.status')
+```
+
+**Decision loop template**:
+```bash
+POLLS=0
+while true; do
+  STATUS=$(escrow-cli escrow get "$ESCROW_ID" --output json | jq -r '.status')
+  case "$STATUS" in
+    <target-status>) break ;;    # proceed
+    <terminal-status>) echo "Escrow reached terminal state: $STATUS"; exit 0 ;;
+    *) POLLS=$((POLLS+1))
+       [ $POLLS -ge 40 ] && { echo "TIMEOUT waiting for $STATUS"; exit 1; }
+       echo "[$POLLS/40] State: $STATUS — waiting 15s..."
+       sleep 15 ;;
+  esac
+done
+```
+
+**Act, don't ask**: Execute the next logical action for your role without asking for
+confirmation unless a required variable is missing or a command exits non-zero with
+an unrecoverable error.
+
+---
+
+## 4. Amount Conventions
+
+- **ETH demos**: use `"100000000000000"` wei (0.0001 ETH) — conservative, fits testnet balances
+- **USDC demos**: use `"1000000"` (1 USDC, 6 decimals)
+- **Deadlines**: Unix timestamps as strings. Use `$(date -d "+7 days" +%s)` for relative deadlines.
+- **Periods**: seconds as strings. `"86400"` = 1 day, `"172800"` = 2 days, `"259200"` = 3 days.
+- Always verify amounts fit the buyer's testnet balance before funding.
+
+---
+
+## 5. Full Command Reference
+
+See `references/REFERENCE.md` for every command, flag, payload field, and V3 APIs
+(decomposition, ucp, dct, checkpoints).
+
+Key commands at a glance:
 
 ```bash
 escrow-cli health
-```
-
-## I am a... (pick your role)
-
-### Delegator (Buyer) -- I have work that needs doing
-
-You have a task that exceeds the complexity or cost of self-execution. You will fund
-the escrow and approve (or dispute) the delivered work.
-
-**Option A: Post an RFQ and collect competitive bids**
-
-```bash
-# 1. Post the task to the market
-escrow-cli rfq create --output json --data '{
-  "title": "Implement OAuth2 login flow",
-  "description": "Add Google + GitHub OAuth to our existing REST API. Spec: ipfs://Qm...",
-  "buyer": "0xYourAddress",
-  "budget_min": "500000000000000000",
-  "budget_max": "2000000000000000000",
-  "deadline": "1740600000",
-  "review_period_seconds": "86400",
-  "dispute_period_seconds": "172800",
-  "arbitrator_timeout_seconds": "259200",
-  "expires_at": "1740000000"
-}'
-# → returns rfq_id
-
-# 2. Check revealed bids after reveal phase starts
-escrow-cli bid list <rfq-id> --output json
-
-# 3. Check a bidder's track record before accepting
-escrow-cli reputation get <bidder-address> --output json --role worker
-
-# 4. Accept the best revealed bid after reveal window closes
-escrow-cli bid accept <rfq-id> --output json --data '{"bid_id": 3}'
-# → returns escrow_id
-
-# 5. Fund the escrow (locks funds on-chain)
-escrow-cli escrow fund <escrow-id> --output json
-
-# 6. Wait for work submission, then approve...
-escrow-cli escrow approve <escrow-id> --output json --data '{"role": "buyer"}'
-
-# ...or dispute if unsatisfactory
-escrow-cli escrow dispute <escrow-id> --output json --data '{
-  "role": "buyer",
-  "reason_uri": "ipfs://QmDisputeReason..."
-}'
-```
-
-**Option B: Create an escrow directly with a known worker**
-
-Use this when you have already agreed on terms with a specific worker.
-
-```bash
-escrow-cli escrow create --output json --data '{
-  "title": "Code review for PR #142",
-  "description": "Security-focused review of the authentication module",
-  "buyer": "0xYourAddress",
-  "worker": "0xWorkerAddress",
-  "verifier": "0xVerifierAddress",
-  "arbitrator": "0xArbitratorAddress",
-  "amount": "1000000000000000000",
-  "submission_deadline": "1740000000",
-  "review_period_seconds": "86400",
-  "dispute_period_seconds": "172800",
-  "arbitrator_timeout_seconds": "259200"
-}'
-# → returns escrow_id
-
-escrow-cli escrow fund <escrow-id> --output json
-```
-
-**Milestone escrow** -- for multi-phase work where you want staged verification:
-
-```bash
-escrow-cli escrow create --output json --data '{
-  "title": "Three-phase data pipeline",
-  "description": "Ingest, transform, and deliver",
-  "buyer": "0xYourAddress",
-  "worker": "0xWorkerAddress",
-  "verifier": "0xVerifierAddress",
-  "arbitrator": "0xArbitratorAddress",
-  "amount": "3000000000000000000",
-  "submission_deadline": "1741000000",
-  "review_period_seconds": "86400",
-  "dispute_period_seconds": "172800",
-  "arbitrator_timeout_seconds": "259200",
-  "milestones": [
-    {"amount": "1000000000000000000", "submission_deadline": "1739500000"},
-    {"amount": "1000000000000000000", "submission_deadline": "1740000000"},
-    {"amount": "1000000000000000000", "submission_deadline": "1740500000"}
-  ]
-}'
-```
-
-Approve a specific milestone: `--data '{"role":"buyer","milestone_index":0}'`
-
-Abort remaining milestones if a phase fails: `escrow-cli escrow abort <id>`
-
----
-
-### Delegatee (Worker) -- I want to find work and get paid
-
-You are offering execution capability. Browse open tasks, bid competitively, execute
-the work, and submit proof of delivery.
-
-```bash
-# 1. Find open tasks
-escrow-cli rfq list --output json --status open
-
-# 2. Read a specific task's requirements
-escrow-cli rfq get <rfq-id> --output json
-
-# 3. Commit your sealed bid during commit phase
-escrow-cli bid commit <rfq-id> --output json --data '{
-  "bidder": "0xYourAddress",
-  "commitment": "0xYourCommitmentHash",
-  "nonce": "worker-nonce-1"
-}'
-
-# 4. Reveal your bid during reveal phase (must match commitment preimage)
-escrow-cli bid reveal <rfq-id> --output json --data '{
-  "bidder": "0xYourAddress",
-  "nonce": "worker-nonce-1",
-  "salt": "random-secret-salt",
-  "amount": "1200000000000000000",
-  "estimated_duration": 259200,
-  "message": "Specialized in OAuth integrations. Delivered 12 similar projects. Portfolio: ipfs://Qm...",
-  "expires_at": "1739800000"
-}'
-
-# Commitment preimage (exact format used by server)
-# keccak256("agent-escrow:sealed-bid:v1|<rfq_id>|<lowercase bidder>|<amount>|<estimated_duration>|<reputation_bond>|<keccak256(milestones_json)>|<keccak256(message)>|<expires_at>|<keccak256(stake_mandate_id)>|<nonce>|<salt>")
-#
-# Concrete example:
-# rfq_id=42
-# bidder=0x1111111111111111111111111111111111111111
-# amount=1200000000000000000
-# estimated_duration=259200
-# reputation_bond=0
-# milestones_json=[]
-# message="Specialized in OAuth integrations"
-# expires_at=1739800000
-# stake_mandate_id="" (empty string)
-# nonce=worker-nonce-1
-# salt=random-secret-salt
-# -> commitment = 0xa65de16756ca35c57f29ddda339b6414220555e72e842d2b2a9f007010613350
-
-# 5. If your bid is accepted, the escrow is created automatically.
-#    Check your open escrows:
-escrow-cli escrow list --output json --role worker --address 0xYourAddress
-
-# 6. If a worker stake was required, deposit it before submitting:
-escrow-cli escrow stake <escrow-id> --output json
-
-# 7. Execute the work. When ready, submit proof of delivery:
-escrow-cli escrow submit <escrow-id> --output json --data '{
-  "submission_uri": "ipfs://QmDeliverable..."
-}'
-
-# For milestones, include which milestone you are submitting:
-escrow-cli escrow submit <escrow-id> --output json --data '{
-  "submission_uri": "ipfs://QmPhase1...",
-  "milestone_index": 0
-}'
-
-# 8. Monitor status
-escrow-cli escrow get <escrow-id> --output json
-```
-
-Your reputation is updated on-chain when escrows settle. Buyers check this before
-accepting bids -- a strong track record is worth protecting.
-
----
-
-### Verifier -- I am reviewing submitted work
-
-You have been designated as a trusted third party to check work quality. Your
-approval or rejection gates the payment.
-
-```bash
-# Find escrows where you are verifier and work has been submitted
-escrow-cli escrow list --output json --role verifier --address 0xYourAddress --status Submitted
-
-# Inspect the submission details
-escrow-cli escrow get <escrow-id> --output json
-# → check submission_uri for the deliverable
-
-# Approve if the work meets the spec
-escrow-cli escrow approve <escrow-id> --output json --data '{"role": "verifier"}'
-
-# Reject if it does not (triggers dispute, goes to arbitrator)
-escrow-cli escrow dispute <escrow-id> --output json --data '{
-  "role": "verifier",
-  "reason_uri": "ipfs://QmRejectionReason..."
-}'
+escrow-cli escrow list --role buyer --address $BUYER --output json
+escrow-cli escrow get <id> --output json
+escrow-cli escrow create --data '{}' --output json
+escrow-cli escrow fund <id> --output json
+escrow-cli escrow stake <id> --output json
+escrow-cli escrow submit <id> --data '{"submission_uri":"..."}' --output json
+escrow-cli escrow approve <id> --data '{"role":"buyer"}' --output json
+escrow-cli escrow dispute <id> --data '{"role":"buyer","reason_uri":"..."}' --output json
+escrow-cli escrow resolve <id> --data '{"worker_award_bps":"10000","resolution_uri":"..."}' --output json
+escrow-cli rfq create --data '{}' --output json
+escrow-cli rfq list --status open --output json
+escrow-cli bid commit <rfq-id> --data '{}' --output json
+escrow-cli bid reveal <rfq-id> --data '{}' --output json
+escrow-cli bid accept <rfq-id> --data '{"bid_id":1}' --output json
+escrow-cli decomposition create --json '{}' --output json
+escrow-cli decomposition finalize <id> --json '{}' --output json
+escrow-cli ucp create --data '{}' --output json
+escrow-cli ucp update <checkout-id> --data '{"operation":"submit","submission_uri":"..."}' --output json
+escrow-cli dct mint --data '{}' --output json
 ```
 
 ---
 
-## Monitor and Query
+## 6. Demo Orchestration
 
-```bash
-# Watch events in real time (L1 = state transitions)
-escrow-cli events subscribe --output json --escrow-id <id> --granularity L1
+For multi-session role-separated demos, see `demo/demo-roles.md`.
 
-# Check anyone's reputation
-escrow-cli reputation get <address> --output json
-
-# List all your active escrows
-escrow-cli escrow list --output json --address 0xYourAddress
-```
-
----
-
-## Key Conventions
-
-- **Amounts** are in wei (strings). 1 ETH = `"1000000000000000000"`. For USDC (6 decimals), 1 USDC = `"1000000"`.
-- **Deadlines** are Unix timestamps (strings). Periods (review, dispute, arbitrator timeout) are seconds (strings).
-- **Addresses** are checksummed hex (`0x...`).
-- Prefer `--output json` for machine-readable responses.
-- Non-zero exit codes mean failure: `1` = client/input error, `2` = server/transport error.
-
-## Full Command Reference
-
-See `references/REFERENCE.md` for every flag, filter, and payload field.
+The server is the shared coordination layer. Each role session is independent:
+- Buyer creates and funds escrow, polls for submission, approves
+- Worker discovers funded escrow, stakes if required, submits work
+- Verifier discovers submitted escrow, approves or rejects
+- Sessions communicate only through server state — no direct coordination needed

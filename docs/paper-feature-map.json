@@ -246,8 +246,9 @@
       {
         "id": "S6-AgentKit",
         "status": "planned",
-        "notes": "Migration to agent-owned wallets remains architecture direction.",
+        "notes": "Migration to agent-owned wallets tracked as SH5: CLI and MCP tools sign transactions locally; server PRIVATE_KEY becomes operator-only. DID integration (item 26) builds on top of this.",
         "roadmap_items": [
+          "SH5",
           "26"
         ]
       }
