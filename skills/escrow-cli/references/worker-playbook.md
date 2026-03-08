@@ -78,7 +78,7 @@ escrow-cli rfq get "$RFQ_ID" --output json | jq '{title, description, budget_min
 
 The commitment preimage format (exact):
 
-```
+```text
 keccak256("agent-escrow:sealed-bid:v1|<rfq_id>|<lowercase bidder>|<amount>|<estimated_duration>|<reputation_bond>|<keccak256(milestones_json)>|<keccak256(message)>|<expires_at>|<keccak256(stake_mandate_id)>|<nonce>|<salt>")
 ```
 
@@ -171,6 +171,7 @@ if [ -z "${ESCROW_ID:-}" ]; then
   ESCROW_ID=$(escrow-cli escrow list --output json --role worker --address "$WORKER" --status funded \
     | jq -r 'sort_by(.id) | last | .id')
 fi
+[ -n "$ESCROW_ID" ] && [ "$ESCROW_ID" != "null" ] || { echo "No funded escrow found for $WORKER" >&2; exit 1; }
 
 echo "Working on escrow: $ESCROW_ID"
 escrow-cli escrow get "$ESCROW_ID" --output json | jq '{id, title, description, amount, worker_stake, submission_deadline}'
@@ -185,7 +186,25 @@ WORKER_STAKE=$(escrow-cli escrow get "$ESCROW_ID" --output json | jq -r '.worker
 
 if [ "$WORKER_STAKE" != "0" ] && [ "$WORKER_STAKE" != "" ]; then
   echo "Worker stake required: $WORKER_STAKE wei. Depositing..."
-  escrow-cli escrow stake "$ESCROW_ID" --output json
+  STAKE_TX_HASH=$(escrow-cli escrow stake "$ESCROW_ID" --output json | jq -r '.tx_hash // .transactionHash // empty')
+  [ -n "$STAKE_TX_HASH" ] || { echo "ERROR: stake command did not return a tx hash for escrow $ESCROW_ID" >&2; exit 1; }
+  POLLS=0
+  while true; do
+    STAKE_RECEIPT=$(cast receipt "$STAKE_TX_HASH" --rpc-url "${RPC_URL:-https://sepolia.base.org}" --json 2>/dev/null || true)
+    if [ -n "$STAKE_RECEIPT" ]; then
+      STAKE_STATUS=$(echo "$STAKE_RECEIPT" | jq -r '.status // empty')
+      [ "$STAKE_STATUS" = "0x1" ] || [ "$STAKE_STATUS" = "1" ] || {
+        echo "ERROR: stake tx failed for escrow $ESCROW_ID: $STAKE_TX_HASH" >&2
+        echo "$STAKE_RECEIPT" >&2
+        exit 1
+      }
+      break
+    fi
+    POLLS=$((POLLS+1))
+    [ $POLLS -ge 40 ] && { echo "TIMEOUT: stake tx not confirmed for escrow $ESCROW_ID: $STAKE_TX_HASH" >&2; exit 1; }
+    echo "[$POLLS/40] Waiting for stake tx confirmation (15s)..."
+    sleep 15
+  done
   echo "Stake deposited."
 else
   echo "No worker stake required."

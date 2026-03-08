@@ -128,8 +128,20 @@ def main():
     buyer_key = require_env("PRIVATE_KEY")
     worker_key = require_env("WORKER_KEY")
     buyer_addr = Account.from_key(buyer_key).address
+    derived_worker_addr = Account.from_key(worker_key).address
+    configured_worker_addr = os.environ.get("WORKER_ADDRESS")
+    if (
+        configured_worker_addr
+        and configured_worker_addr.lower() != derived_worker_addr.lower()
+    ):
+        print(
+            "ERROR: WORKER_ADDRESS does not match WORKER_KEY-derived address: "
+            f"{configured_worker_addr} != {derived_worker_addr}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     # Default worker address is derived from WORKER_KEY to avoid key/address drift.
-    worker_addr = os.environ.get("WORKER_ADDRESS") or Account.from_key(worker_key).address
+    worker_addr = derived_worker_addr
 
     print("=" * 64)
     print("  AP2 Mandate Bridge Demo — EIP-3009 Gasless Funding")

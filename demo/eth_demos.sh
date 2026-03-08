@@ -616,9 +616,9 @@ section "DEMO G: Bidding Protocol — RFQ to Escrow"
 ########################################################################
 
 G_DEADLINE=$(ts_plus 7200)
-G_COMMIT_DEADLINE=$(ts_plus 30)
-G_REVEAL_DEADLINE=$(ts_plus 60)
-G_EXPIRES=$(ts_plus 120)
+G_COMMIT_DEADLINE=$(ts_plus 90)
+G_REVEAL_DEADLINE=$(ts_plus 180)
+G_EXPIRES=$(ts_plus 360)
 
 step "Creating RFQ"
 RESP=$(api POST /api/v1/rfqs -d "{
@@ -824,20 +824,22 @@ FROZEN_EXIT=$?
 set -e
 echo "  Exit code: $FROZEN_EXIT (expected revert)"
 echo "  Response: $(echo "$FROZEN_RESP" | head -c 200)"
-if [ "$FROZEN_EXIT" -eq 0 ]; then
-  FROZEN_TX_HASH=$(echo "$FROZEN_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin)['transactionHash'])")
-  FROZEN_RECEIPT=$(wait_tx_receipt "$FROZEN_TX_HASH") || {
-    echo "ERROR: frozen submit tx broadcast but no receipt found: $FROZEN_TX_HASH" >&2
-    exit 1
-  }
-  FROZEN_STATUS=$(echo "$FROZEN_RECEIPT" | python3 -c "import json,sys; s=json.load(sys.stdin).get('status'); print(int(s, 0) if isinstance(s, str) else int(s))")
-  echo "  Receipt: $(echo "$FROZEN_RECEIPT" | head -c 400)"
-  [ "$FROZEN_STATUS" -eq 0 ] || {
-    echo "ERROR: frozen submit unexpectedly succeeded" >&2
-    echo "$FROZEN_RECEIPT" >&2
-    exit 1
-  }
+if [ "$FROZEN_EXIT" -ne 0 ]; then
+  echo "ERROR: frozen submit failed before broadcast: $FROZEN_RESP" >&2
+  exit 1
 fi
+FROZEN_TX_HASH=$(echo "$FROZEN_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin)['transactionHash'])")
+FROZEN_RECEIPT=$(wait_tx_receipt "$FROZEN_TX_HASH") || {
+  echo "ERROR: frozen submit tx broadcast but no receipt found: $FROZEN_TX_HASH" >&2
+  exit 1
+}
+FROZEN_STATUS=$(echo "$FROZEN_RECEIPT" | python3 -c "import json,sys; s=json.load(sys.stdin).get('status'); print(int(s, 0) if isinstance(s, str) else int(s))")
+echo "  Receipt: $(echo "$FROZEN_RECEIPT" | head -c 400)"
+[ "$FROZEN_STATUS" -eq 0 ] || {
+  echo "ERROR: frozen submit unexpectedly succeeded" >&2
+  echo "$FROZEN_RECEIPT" >&2
+  exit 1
+}
 
 step "Emergency resolve (full refund to buyer, 0 bps)"
 RESP=$(api_retry POST /api/v1/emergency/resolve -d "{\"escrow_id\": $I_ID, \"worker_award_bps\": 0}")

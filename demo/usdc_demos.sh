@@ -58,6 +58,7 @@ M2_AMOUNT="40000"        # 0.04 USDC
 TOTAL_REQUIRED_USDC="600000" # 0.60 USDC across demos C-I
 WORKER_REQUIRED_USDC="150000" # 0.15 USDC for worker stake deposits across C/E/F
 BACKUP_REQUIRED_USDC="50000"  # 0.05 USDC for backup stake in F
+MIN_REQUIRED_GAS_WEI="10000000000000000" # 0.01 ETH
 
 BUYER_USDC_BALANCE=$(cast call "$USDC" "balanceOf(address)(uint256)" "$BUYER" --rpc-url "$RPC_URL" 2>/dev/null | awk '{print $1}' || echo "0")
 if ! [[ "$BUYER_USDC_BALANCE" =~ ^[0-9]+$ ]]; then
@@ -93,6 +94,42 @@ if [ "$BACKUP_USDC_BALANCE" -lt "$BACKUP_REQUIRED_USDC" ]; then
   echo "  Backup worker: $BACKUP_WORKER" >&2
   echo "  Balance: $BACKUP_USDC_BALANCE (6 decimals)" >&2
   echo "  Required: $BACKUP_REQUIRED_USDC (6 decimals)" >&2
+  exit 1
+fi
+
+WORKER_ETH_BALANCE=$(cast balance "$WORKER" --rpc-url "$RPC_URL" 2>/dev/null | awk '{print $1}' || echo "0")
+if ! [[ "$WORKER_ETH_BALANCE" =~ ^[0-9]+$ ]]; then
+  WORKER_ETH_BALANCE=0
+fi
+if [ "$WORKER_ETH_BALANCE" -lt "$MIN_REQUIRED_GAS_WEI" ]; then
+  echo "ERROR: insufficient ETH balance for worker gas." >&2
+  echo "  Worker: $WORKER" >&2
+  echo "  Balance: $WORKER_ETH_BALANCE wei" >&2
+  echo "  Required: $MIN_REQUIRED_GAS_WEI wei" >&2
+  exit 1
+fi
+
+BACKUP_WORKER_ETH_BALANCE=$(cast balance "$BACKUP_WORKER" --rpc-url "$RPC_URL" 2>/dev/null | awk '{print $1}' || echo "0")
+if ! [[ "$BACKUP_WORKER_ETH_BALANCE" =~ ^[0-9]+$ ]]; then
+  BACKUP_WORKER_ETH_BALANCE=0
+fi
+if [ "$BACKUP_WORKER_ETH_BALANCE" -lt "$MIN_REQUIRED_GAS_WEI" ]; then
+  echo "ERROR: insufficient ETH balance for backup worker gas." >&2
+  echo "  Backup worker: $BACKUP_WORKER" >&2
+  echo "  Balance: $BACKUP_WORKER_ETH_BALANCE wei" >&2
+  echo "  Required: $MIN_REQUIRED_GAS_WEI wei" >&2
+  exit 1
+fi
+
+ARBITRATOR_ETH_BALANCE=$(cast balance "$ARBITRATOR" --rpc-url "$RPC_URL" 2>/dev/null | awk '{print $1}' || echo "0")
+if ! [[ "$ARBITRATOR_ETH_BALANCE" =~ ^[0-9]+$ ]]; then
+  ARBITRATOR_ETH_BALANCE=0
+fi
+if [ "$ARBITRATOR_ETH_BALANCE" -lt "$MIN_REQUIRED_GAS_WEI" ]; then
+  echo "ERROR: insufficient ETH balance for arbitrator gas." >&2
+  echo "  Arbitrator: $ARBITRATOR" >&2
+  echo "  Balance: $ARBITRATOR_ETH_BALANCE wei" >&2
+  echo "  Required: $MIN_REQUIRED_GAS_WEI wei" >&2
   exit 1
 fi
 
@@ -688,10 +725,9 @@ section "USDC DEMO G: Bidding Protocol — RFQ to Escrow"
 ########################################################################
 
 G_DEADLINE=$(ts_plus 7200)
-G_COMMIT_DEADLINE=$(ts_plus 30)
-G_REVEAL_DEADLINE=$(ts_plus 60)
-G_EXPIRES=$(ts_plus 120)
-
+G_COMMIT_DEADLINE=$(ts_plus 90)
+G_REVEAL_DEADLINE=$(ts_plus 180)
+G_EXPIRES=$(ts_plus 360)
 step "Creating RFQ (USDC)"
 RESP=$(api POST /api/v1/rfqs -d "{
   \"title\": \"USDC Demo G: Smart Contract Audit\",
@@ -898,20 +934,22 @@ FROZEN_EXIT=$?
 set -e
 echo "  Exit code: $FROZEN_EXIT (expected revert)"
 echo "  Response: $(echo "$FROZEN_RESP" | head -c 200)"
-if [ "$FROZEN_EXIT" -eq 0 ]; then
-  FROZEN_TX_HASH=$(echo "$FROZEN_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin)['transactionHash'])")
-  FROZEN_RECEIPT=$(wait_tx_receipt "$FROZEN_TX_HASH") || {
-    echo "ERROR: frozen submit tx broadcast but no receipt found: $FROZEN_TX_HASH" >&2
-    exit 1
-  }
-  FROZEN_STATUS=$(echo "$FROZEN_RECEIPT" | python3 -c "import json,sys; s=json.load(sys.stdin).get('status'); print(int(s, 0) if isinstance(s, str) else int(s))")
-  echo "  Receipt: $(echo "$FROZEN_RECEIPT" | head -c 400)"
-  [ "$FROZEN_STATUS" -eq 0 ] || {
-    echo "ERROR: frozen submit unexpectedly succeeded" >&2
-    echo "$FROZEN_RECEIPT" >&2
-    exit 1
-  }
+FROZEN_TX_HASH=$(echo "$FROZEN_RESP" | python3 -c "import json,sys; data=json.load(sys.stdin); print(data.get('transactionHash',''))" 2>/dev/null || true)
+if [ "$FROZEN_EXIT" -ne 0 ] && [ -z "$FROZEN_TX_HASH" ]; then
+  echo "ERROR: frozen submit failed before broadcast: $FROZEN_RESP" >&2
+  exit 1
 fi
+FROZEN_RECEIPT=$(wait_tx_receipt "$FROZEN_TX_HASH") || {
+  echo "ERROR: frozen submit tx broadcast but no receipt found: $FROZEN_TX_HASH" >&2
+  exit 1
+}
+FROZEN_STATUS=$(echo "$FROZEN_RECEIPT" | python3 -c "import json,sys; s=json.load(sys.stdin).get('status'); print(int(s, 0) if isinstance(s, str) else int(s))")
+echo "  Receipt: $(echo "$FROZEN_RECEIPT" | head -c 400)"
+[ "$FROZEN_STATUS" -eq 0 ] || {
+  echo "ERROR: frozen submit unexpectedly succeeded" >&2
+  echo "$FROZEN_RECEIPT" >&2
+  exit 1
+}
 
 step "Emergency resolve (full refund to buyer, 0 bps)"
 RESP=$(api_retry POST /api/v1/emergency/resolve -d "{\"escrow_id\": $I_ID, \"worker_award_bps\": 0}")
