@@ -10,8 +10,10 @@ RPC_URL="${RPC_URL:-https://sepolia.base.org}"
 USDC="${USDC_ADDRESS:-0x036CbD53842c5426634e7929541eC2318f3dCF7e}"
 
 # Tunable thresholds (wei for ETH, 6-decimals for USDC)
-MIN_BUYER_ETH_WEI="${MIN_BUYER_ETH_WEI:-300000000000000}"   # 0.0003 ETH
-MIN_WORKER_ETH_WEI="${MIN_WORKER_ETH_WEI:-100000000000000}" # 0.0001 ETH
+MIN_BUYER_ETH_WEI="${MIN_BUYER_ETH_WEI:-300000000000000}"       # 0.0003 ETH
+MIN_WORKER_ETH_WEI="${MIN_WORKER_ETH_WEI:-100000000000000}"     # 0.0001 ETH
+MIN_ARBITRATOR_ETH_WEI="${MIN_ARBITRATOR_ETH_WEI:-100000000000000}" # 0.0001 ETH
+MIN_BACKUP_ETH_WEI="${MIN_BACKUP_ETH_WEI:-100000000000000}"     # 0.0001 ETH
 MIN_BUYER_USDC="${MIN_BUYER_USDC:-600000}"                  # 0.60 USDC
 MIN_WORKER_USDC="${MIN_WORKER_USDC:-150000}"                # 0.15 USDC
 MIN_BACKUP_USDC="${MIN_BACKUP_USDC:-50000}"                 # 0.05 USDC
@@ -104,12 +106,20 @@ echo "OK: API status=$STATUS chain_id=${CHAIN_ID:-unknown} block=${BLOCK_NO:-unk
 print_section "ETH balances"
 BUYER_ETH_WEI="$(cast balance "$BUYER_ADDR" --rpc-url "$RPC_URL" | extract_uint)"
 WORKER_ETH_WEI="$(cast balance "$WORKER_ADDR" --rpc-url "$RPC_URL" | extract_uint)"
+ARBITRATOR_ETH_WEI="$(cast balance "$ARBITRATOR_ADDR" --rpc-url "$RPC_URL" | extract_uint)"
+BACKUP_ETH_WEI="$(cast balance "$BACKUP_ADDR" --rpc-url "$RPC_URL" | extract_uint)"
 is_uint "$BUYER_ETH_WEI" || fail "could not parse buyer ETH balance"
 is_uint "$WORKER_ETH_WEI" || fail "could not parse worker ETH balance"
-echo "Buyer ETH (wei):  $BUYER_ETH_WEI"
-echo "Worker ETH (wei): $WORKER_ETH_WEI"
+is_uint "$ARBITRATOR_ETH_WEI" || fail "could not parse arbitrator ETH balance"
+is_uint "$BACKUP_ETH_WEI" || fail "could not parse backup ETH balance"
+echo "Buyer ETH (wei):      $BUYER_ETH_WEI"
+echo "Worker ETH (wei):     $WORKER_ETH_WEI"
+echo "Arbitrator ETH (wei): $ARBITRATOR_ETH_WEI"
+echo "Backup ETH (wei):     $BACKUP_ETH_WEI"
 cmp_ge "$BUYER_ETH_WEI" "$MIN_BUYER_ETH_WEI" || fail "buyer ETH below threshold ($MIN_BUYER_ETH_WEI)"
 cmp_ge "$WORKER_ETH_WEI" "$MIN_WORKER_ETH_WEI" || fail "worker ETH below threshold ($MIN_WORKER_ETH_WEI)"
+cmp_ge "$ARBITRATOR_ETH_WEI" "$MIN_ARBITRATOR_ETH_WEI" || fail "arbitrator ETH below threshold ($MIN_ARBITRATOR_ETH_WEI)"
+cmp_ge "$BACKUP_ETH_WEI" "$MIN_BACKUP_ETH_WEI" || fail "backup ETH below threshold ($MIN_BACKUP_ETH_WEI)"
 
 if [[ "$REQUIRE_USDC" -eq 1 ]]; then
   print_section "USDC balances"

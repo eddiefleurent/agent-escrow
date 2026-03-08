@@ -287,6 +287,7 @@ echo "  Stake approve tx: $C_TX_STAKE_APPROVE"
 step "Worker deposits stake (0.05 USDC via cast)"
 C_TX_STAKE=$(cast_tx "$WORKER_KEY" "$C_ADDR" "depositStake()") || exit 1
 echo "  Stake tx: $C_TX_STAKE"
+wait_tx_mined "$C_TX_STAKE"
 
 wait_indexer
 
@@ -498,6 +499,7 @@ echo "  Stake approve tx: $E_TX_STAKE_APPROVE"
 step "Worker deposits stake (0.05 USDC)"
 E_TX_STAKE=$(cast_tx "$WORKER_KEY" "$E_ADDR" "depositStake()") || exit 1
 echo "  Stake tx: $E_TX_STAKE"
+wait_tx_mined "$E_TX_STAKE"
 
 wait_indexer
 
@@ -639,6 +641,7 @@ echo "  Backup stake approve tx: $F_TX_BSTAKE_APPROVE"
 step "Backup worker deposits stake (0.05 USDC)"
 F_TX_BSTAKE=$(cast_tx "$BACKUP_KEY" "$F_ADDR" "depositStake()") || exit 1
 echo "  Backup stake tx: $F_TX_BSTAKE"
+wait_tx_mined "$F_TX_BSTAKE"
 
 wait_indexer
 
@@ -685,9 +688,9 @@ section "USDC DEMO G: Bidding Protocol — RFQ to Escrow"
 ########################################################################
 
 G_DEADLINE=$(ts_plus 7200)
-G_COMMIT_DEADLINE=$(ts_plus 8)
-G_REVEAL_DEADLINE=$(ts_plus 25)
-G_EXPIRES=$(ts_plus 60)
+G_COMMIT_DEADLINE=$(ts_plus 30)
+G_REVEAL_DEADLINE=$(ts_plus 60)
+G_EXPIRES=$(ts_plus 120)
 
 step "Creating RFQ (USDC)"
 RESP=$(api POST /api/v1/rfqs -d "{

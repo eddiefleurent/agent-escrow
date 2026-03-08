@@ -233,6 +233,7 @@ wait_indexer
 step "Worker deposits stake (0.00005 ETH via cast)"
 C_TX_STAKE=$(cast_tx_value "$WORKER_KEY" "$C_ADDR" "depositStake()" "50000000000000") || exit 1
 echo "  Stake tx: $C_TX_STAKE"
+wait_tx_mined "$C_TX_STAKE"
 
 wait_indexer
 
@@ -437,6 +438,7 @@ wait_indexer
 step "Worker deposits stake (0.00005 ETH)"
 E_TX_STAKE=$(cast_tx_value "$WORKER_KEY" "$E_ADDR" "depositStake()" "50000000000000") || exit 1
 echo "  Stake tx: $E_TX_STAKE"
+wait_tx_mined "$E_TX_STAKE"
 
 wait_indexer
 
@@ -569,6 +571,7 @@ wait_indexer
 step "Backup worker deposits stake (required after activation)"
 F_TX_BSTAKE=$(cast_tx_value "$BACKUP_KEY" "$F_ADDR" "depositStake()" "50000000000000") || exit 1
 echo "  Backup stake tx: $F_TX_BSTAKE"
+wait_tx_mined "$F_TX_BSTAKE"
 
 wait_indexer
 
@@ -613,9 +616,9 @@ section "DEMO G: Bidding Protocol — RFQ to Escrow"
 ########################################################################
 
 G_DEADLINE=$(ts_plus 7200)
-G_COMMIT_DEADLINE=$(ts_plus 8)
-G_REVEAL_DEADLINE=$(ts_plus 25)
-G_EXPIRES=$(ts_plus 60)
+G_COMMIT_DEADLINE=$(ts_plus 30)
+G_REVEAL_DEADLINE=$(ts_plus 60)
+G_EXPIRES=$(ts_plus 120)
 
 step "Creating RFQ"
 RESP=$(api POST /api/v1/rfqs -d "{

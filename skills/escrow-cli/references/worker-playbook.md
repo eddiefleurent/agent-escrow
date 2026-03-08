@@ -250,9 +250,11 @@ for MILESTONE_INDEX in $(seq 0 $((MILESTONE_COUNT - 1))); do
   POLLS=0
   while true; do
     M_STATUS=$(escrow-cli escrow get "$ESCROW_ID" --output json \
-      | jq -r ".milestones[$MILESTONE_INDEX].status // \"pending\"")
-    [ "$M_STATUS" = "settled" ] || [ "$M_STATUS" = "approved" ] && break
-    [ "$M_STATUS" = "disputed" ] && { echo "Milestone $MILESTONE_INDEX disputed"; exit 1; }
+      | jq -r ".milestones[$MILESTONE_INDEX].status // \"pending\"" | tr '[:upper:]' '[:lower:]')
+    case "$M_STATUS" in
+      settled|approved) break ;;
+      disputed) echo "Milestone $MILESTONE_INDEX disputed"; exit 1 ;;
+    esac
     POLLS=$((POLLS+1))
     [ $POLLS -ge 40 ] && { echo "TIMEOUT waiting for milestone $MILESTONE_INDEX approval"; exit 1; }
     echo "[$POLLS/40] Milestone $MILESTONE_INDEX: $M_STATUS — waiting 15s..."

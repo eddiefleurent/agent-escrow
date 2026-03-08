@@ -267,7 +267,12 @@ def main():
     print(f"    Mandate ID: {mandate_id}")
     print(f"    Status: {fund_resp['status']}")
 
-    time.sleep(8)
+    fund_receipt = wait_for_receipt(tx_fund, timeout_seconds=90)
+    fund_status = fund_receipt.get("status")
+    fund_status_int = int(fund_status, 0) if isinstance(fund_status, str) else int(fund_status)
+    if fund_status_int != 1:
+        print(f"    Fund tx failed: {fund_receipt}", file=sys.stderr)
+        sys.exit(1)
 
     # Step 4: Verify escrow is funded
     print("  → Step 4: Verify escrow status")

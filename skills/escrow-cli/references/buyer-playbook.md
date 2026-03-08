@@ -97,7 +97,7 @@ echo "Approved. Polling for settlement..."
 # Poll for settlement
 POLLS=0
 while true; do
-  STATUS=$(escrow-cli escrow get "$ESCROW_ID" --output json | jq -r '.status')
+  STATUS=$(escrow-cli escrow get "$ESCROW_ID" --output json | jq -r '.status' | tr '[:upper:]' '[:lower:]')
   [ "$STATUS" = "settled" ] && break
   POLLS=$((POLLS+1))
   [ $POLLS -ge 40 ] && { echo "TIMEOUT waiting for Settled"; exit 1; }
