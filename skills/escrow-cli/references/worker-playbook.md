@@ -220,6 +220,16 @@ fi
 
 ## Step 5: Execute the Work and Submit
 
+`proof_hash` and checkpoint `snapshot_hash` are optional Keccak-256 commitments over the raw file bytes. Use a portable helper instead of `sha256sum`:
+
+```bash
+keccak_file() {
+  local file_hex
+  file_hex=$(od -An -tx1 -v "$1" | tr -d ' \n')
+  cast keccak "0x${file_hex}"
+}
+```
+
 ### Single-deliverable escrow
 
 ```bash
@@ -231,7 +241,7 @@ echo "Task output for escrow $ESCROW_ID — $(date -u)" > "$DELIVERABLE_PATH"
 # ... perform real work here, append to $DELIVERABLE_PATH ...
 
 # Compute proof hash
-PROOF_HASH=$(sha256sum "$DELIVERABLE_PATH" | awk '{print "0x"$1}')
+PROOF_HASH=$(keccak_file "$DELIVERABLE_PATH")
 echo "Deliverable: $DELIVERABLE_PATH"
 echo "Proof hash:  $PROOF_HASH"
 
@@ -261,7 +271,7 @@ for MILESTONE_INDEX in $(seq 0 $((MILESTONE_COUNT - 1))); do
   echo "Milestone $MILESTONE_INDEX output — $(date -u)" > "$DELIVERABLE_PATH"
   # ... perform real work for this phase ...
 
-  PROOF_HASH=$(sha256sum "$DELIVERABLE_PATH" | awk '{print "0x"$1}')
+  PROOF_HASH=$(keccak_file "$DELIVERABLE_PATH")
 
   escrow-cli escrow submit "$ESCROW_ID" --output json --data "{
     \"submission_uri\": \"file://$DELIVERABLE_PATH\",
@@ -296,7 +306,7 @@ Commit intermediate state so the task can resume if interrupted:
 ```bash
 CHECKPOINT_PATH="/tmp/escrow-${ESCROW_ID}-checkpoint.json"
 echo '{"progress": "50%", "last_step": "data_ingest"}' > "$CHECKPOINT_PATH"
-SNAP_HASH=$(sha256sum "$CHECKPOINT_PATH" | awk '{print "0x"$1}')
+SNAP_HASH=$(keccak_file "$CHECKPOINT_PATH")
 
 escrow-cli escrow checkpoint-commit "$ESCROW_ID" --output json --data "{
   \"state_snapshot_uri\": \"file://$CHECKPOINT_PATH\",

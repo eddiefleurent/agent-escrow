@@ -101,11 +101,30 @@ def wait_for_receipt(tx_hash: str, *, timeout_seconds: int = 60) -> dict:
             text=True,
             timeout=10,
         )
-        if result.returncode == 0 and result.stdout.strip():
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+        if result.returncode != 0 or stderr:
+            print(
+                f"cast receipt failed for {tx_hash}: returncode={result.returncode}",
+                file=sys.stderr,
+            )
+            if stderr:
+                print(f"stderr: {stderr}", file=sys.stderr)
+            if stdout:
+                print(f"stdout: {stdout}", file=sys.stderr)
+            sys.exit(1)
+        if stdout:
             try:
-                return json.loads(result.stdout)
-            except json.JSONDecodeError:
-                pass
+                receipt = json.loads(stdout)
+            except json.JSONDecodeError as exc:
+                print(f"Invalid JSON receipt for {tx_hash}: {exc}", file=sys.stderr)
+                print(f"stdout: {stdout}", file=sys.stderr)
+                sys.exit(1)
+            if receipt.get("status") is None:
+                print(f"Receipt for {tx_hash} is missing required field: status", file=sys.stderr)
+                print(f"stdout: {stdout}", file=sys.stderr)
+                sys.exit(1)
+            return receipt
         time.sleep(2)
     print(f"Timed out waiting for receipt: {tx_hash}", file=sys.stderr)
     sys.exit(1)
@@ -140,7 +159,7 @@ def main():
     derived_worker_addr = Account.from_key(worker_key).address
     verifier_addr = Account.from_key(verifier_key).address
     arbitrator_addr = Account.from_key(arbitrator_key).address
-    configured_worker_addr = os.environ.get("WORKER_ADDRESS")
+    configured_worker_addr = (os.environ.get("WORKER_ADDRESS") or "").strip() or None
     if (
         configured_worker_addr
         and configured_worker_addr.lower() != derived_worker_addr.lower()
