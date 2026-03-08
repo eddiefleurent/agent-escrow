@@ -113,6 +113,8 @@ def wait_for_receipt(tx_hash: str, *, timeout_seconds: int = 60) -> dict:
 
 def receipt_status_int(receipt: dict) -> int:
     status = receipt.get("status")
+    if status is None:
+        raise ValueError("Missing 'status' field in receipt")
     return int(status, 0) if isinstance(status, str) else int(status)
 
 

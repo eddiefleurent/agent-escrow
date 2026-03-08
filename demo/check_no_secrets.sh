@@ -41,13 +41,15 @@ if ! command -v rg >/dev/null 2>&1; then
   exit 1
 fi
 for pattern in "${TARGETS[@]}"; do
-  matches=($pattern)
+  matches=()
+  mapfile -t matches < <(compgen -G "$pattern" || true)
   if [ ${#matches[@]} -gt 0 ]; then
     EXPANDED_TARGETS+=("${matches[@]}")
   fi
 done
 for pattern in "${MARKDOWN_TARGETS[@]}"; do
-  matches=($pattern)
+  matches=()
+  mapfile -t matches < <(compgen -G "$pattern" || true)
   if [ ${#matches[@]} -gt 0 ]; then
     EXPANDED_MARKDOWN_TARGETS+=("${matches[@]}")
   fi
@@ -58,7 +60,9 @@ printf '  %s\n' "${EXPANDED_TARGETS[@]}"
 printf 'Markdown broad-scan targets (%d files):\n' "${#EXPANDED_MARKDOWN_TARGETS[@]}"
 printf '  %s\n' "${EXPANDED_MARKDOWN_TARGETS[@]}"
 
-if rg -n --pcre2 "$PAT" "${EXPANDED_TARGETS[@]}" >"$TMPFILE" 2>/dev/null; then
+if [ ${#EXPANDED_TARGETS[@]} -eq 0 ]; then
+  echo "Info: no files matched the high-risk scan patterns."
+elif rg -n --pcre2 "$PAT" "${EXPANDED_TARGETS[@]}" >"$TMPFILE" 2>/dev/null; then
   echo "ERROR: possible secret leak detected:" >&2
   cat "$TMPFILE" >&2
   exit 1
@@ -66,6 +70,10 @@ fi
 
 # Optional warning-only broad hex scan in markdown (can include tx hashes)
 BROAD='0x[a-fA-F0-9]{64}'
-COUNT=$( (rg -n --pcre2 "$BROAD" "${EXPANDED_MARKDOWN_TARGETS[@]}" 2>/dev/null || true) | wc -l | tr -d ' ' )
+if [ ${#EXPANDED_MARKDOWN_TARGETS[@]} -eq 0 ]; then
+  COUNT=0
+else
+  COUNT=$( (rg -n --pcre2 "$BROAD" "${EXPANDED_MARKDOWN_TARGETS[@]}" 2>/dev/null || true) | wc -l | tr -d ' ' )
+fi
 echo "OK: no explicit private-key assignments found."
 echo "Info: markdown contains $COUNT hex-64 values (expected for tx hashes/nonces)."

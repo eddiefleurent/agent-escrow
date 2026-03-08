@@ -41,7 +41,7 @@ escrow-cli escrow list --output json --role worker --address "$WORKER" --status 
   | jq '.[] | {id, title, amount, buyer, submission_deadline}'
 ```
 
-**If you find a funded escrow directly assigned to you**, set `ESCROW_ID` and skip to Step 3.
+**If you find a funded escrow directly assigned to you**, copy its `id` into `ESCROW_ID` and skip to Step 3.
 
 **If you find an open RFQ you can bid on**, proceed to Step 2.
 
@@ -51,8 +51,12 @@ escrow-cli escrow list --output json --role worker --address "$WORKER" --status 
 POLLS=0
 while true; do
   FUNDED_ESCROWS_JSON=$(escrow-cli escrow list --output json --role worker --address "$WORKER" --status funded)
-  ESCROW_ID=$(echo "$FUNDED_ESCROWS_JSON" | jq -r 'sort_by(.id) | last | .id // empty')
-  [ -n "$ESCROW_ID" ] && break
+  FUNDED_ESCROW_COUNT=$(echo "$FUNDED_ESCROWS_JSON" | jq 'length')
+  if [ "$FUNDED_ESCROW_COUNT" -gt 0 ]; then
+    echo "Funded escrows are available. Select one explicitly and export ESCROW_ID before proceeding:"
+    echo "$FUNDED_ESCROWS_JSON" | jq '.[] | {id, title, amount, buyer, submission_deadline}'
+    exit 1
+  fi
   OPEN_RFQS=$(escrow-cli rfq list --output json --status open | jq 'length')
   [ "$OPEN_RFQS" -gt 0 ] && { echo "Open RFQs available — proceed to bid"; break; }
   POLLS=$((POLLS+1))
@@ -167,12 +171,12 @@ done
 ## Step 3: Inspect the Escrow
 
 ```bash
-# If ESCROW_ID is not set, discover one funded escrow assigned to you
-if [ -z "${ESCROW_ID:-}" ]; then
-  ESCROW_ID=$(escrow-cli escrow list --output json --role worker --address "$WORKER" --status funded \
-    | jq -r 'sort_by(.id) | last | .id')
-fi
-[ -n "$ESCROW_ID" ] && [ "$ESCROW_ID" != "null" ] || { echo "No funded escrow found for $WORKER" >&2; exit 1; }
+[ -n "${ESCROW_ID:-}" ] && [ "$ESCROW_ID" != "null" ] || {
+  echo "ESCROW_ID must be set explicitly for direct-assigned work." >&2
+  echo "List funded escrows first and export the specific id you want to work on:" >&2
+  echo '  escrow-cli escrow list --output json --role worker --address "$WORKER" --status funded' >&2
+  exit 1
+}
 
 echo "Working on escrow: $ESCROW_ID"
 escrow-cli escrow get "$ESCROW_ID" --output json | jq '{id, title, description, amount, worker_stake, submission_deadline}'
