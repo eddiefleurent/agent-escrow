@@ -3,7 +3,7 @@
 #
 # Orchestrates a buyer agent and a worker agent running as separate Codex processes.
 # The buyer posts an RFQ, the worker bids and submits work, the buyer approves.
-# Coordination happens through files in demo/.agent-state/.
+# Coordination happens through files in demo/runtime/agent-state/.
 #
 # Usage:
 #   bash demo/run-escrow-agent-demo.sh
@@ -23,9 +23,9 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 CODEX_BIN="${CODEX_BIN:-codex}"
-STATE_DIR="demo/.agent-state"
-BUYER_PROMPT="demo/codex-buyer-agent.md"
-WORKER_PROMPT="demo/codex-worker-agent.md"
+STATE_DIR="demo/runtime/agent-state"
+BUYER_PROMPT="demo/agents/codex-buyer-agent.md"
+WORKER_PROMPT="demo/agents/codex-worker-agent.md"
 BUYER_PID=""
 
 cleanup_buyer() {
@@ -110,7 +110,7 @@ echo "Buyer agent PID: $BUYER_PID"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Wait for buyer to post the RFQ (writes demo/.agent-state/rfq_id)
+# Wait for buyer to post the RFQ (writes demo/runtime/agent-state/rfq_id)
 # ---------------------------------------------------------------------------
 
 echo "--- Waiting for buyer to post RFQ ---"

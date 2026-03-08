@@ -5,7 +5,7 @@ wait for a worker to bid, accept the bid, fund the escrow, wait for work to be
 submitted, and approve it. All on-chain actions go through the escrow server.
 
 A separate **worker agent** process will discover your RFQ, place a bid, and submit work.
-You coordinate via shared state files in `demo/.agent-state/`.
+You coordinate via shared state files in `demo/runtime/agent-state/`.
 
 ## Prerequisites
 
@@ -34,9 +34,9 @@ Write intermediate results here so the orchestrator and worker agent can coordin
 
 | File | Contents |
 |------|---------|
-| `demo/.agent-state/rfq_id` | RFQ ID (plain integer, no newline) — write after Step 1 |
-| `demo/.agent-state/escrow` | JSON with `escrow_id` and `escrow_address` — write after Step 3 |
-| `demo/.agent-state/buyer-done` | Final status JSON — write after Step 8 |
+| `demo/runtime/agent-state/rfq_id` | RFQ ID (plain integer, no newline) — write after Step 1 |
+| `demo/runtime/agent-state/escrow` | JSON with `escrow_id` and `escrow_address` — write after Step 3 |
+| `demo/runtime/agent-state/buyer-done` | Final status JSON — write after Step 8 |
 
 ---
 
@@ -79,7 +79,7 @@ Extract `id` from the response → `RFQ_ID`.
 
 **Write RFQ_ID to shared state:**
 ```bash
-printf '%s' "$RFQ_ID" > demo/.agent-state/rfq_id
+printf '%s' "$RFQ_ID" > demo/runtime/agent-state/rfq_id
 ```
 
 ### Step 2: Poll for bids (max 5 minutes, 15-second interval)
@@ -117,7 +117,7 @@ Extract `escrow_id` → `ESCROW_ID`. Extract `escrow_address` → `ESCROW_ADDR`.
 
 **Write escrow info to shared state:**
 ```bash
-printf '{"escrow_id": "%s", "escrow_address": "%s"}' "$ESCROW_ID" "$ESCROW_ADDR" > demo/.agent-state/escrow
+printf '{"escrow_id": "%s", "escrow_address": "%s"}' "$ESCROW_ID" "$ESCROW_ADDR" > demo/runtime/agent-state/escrow
 ```
 
 ### Step 4: Fund the escrow
@@ -175,7 +175,7 @@ Assert `status == "settled"` (or `"approved"` if indexer lag — re-check after 
 
 ```bash
 printf '{"escrow_id": "%s", "escrow_address": "%s", "status": "%s"}' \
-  "$ESCROW_ID" "$ESCROW_ADDR" "$STATUS" > demo/.agent-state/buyer-done
+  "$ESCROW_ID" "$ESCROW_ADDR" "$STATUS" > demo/runtime/agent-state/buyer-done
 echo "Buyer agent done. Escrow $ESCROW_ID settled."
 ```
 

@@ -1,0 +1,117 @@
+{
+  "meta": {
+    "date_utc": "",
+    "commit_sha": "",
+    "chain_id": 84532,
+    "factory_address": "",
+    "base_url": ""
+  },
+  "scenarios": {
+    "parity_a_eth_happy_path": {
+      "http": {
+        "result": "pending",
+        "escrow_id": null,
+        "escrow_address": "",
+        "tx_create": "",
+        "tx_fund": "",
+        "tx_submit": "",
+        "tx_approve": "",
+        "final_status": ""
+      },
+      "cli": {
+        "result": "pending",
+        "escrow_id": null,
+        "escrow_address": "",
+        "tx_create": "",
+        "tx_fund": "",
+        "tx_submit": "",
+        "tx_approve": "",
+        "final_status": ""
+      },
+      "mcp": {
+        "result": "pending",
+        "escrow_id": null,
+        "escrow_address": "",
+        "tx_create": "",
+        "tx_fund": "",
+        "tx_submit": "",
+        "tx_approve": "",
+        "final_status": ""
+      }
+    },
+    "parity_b_eth_bidding": {
+      "http": {
+        "result": "pending",
+        "rfq_id": null,
+        "commit_id": null,
+        "bid_id": null,
+        "escrow_id": null,
+        "escrow_address": "",
+        "tx_accept_create": "",
+        "tx_fund": "",
+        "tx_submit": "",
+        "tx_approve": "",
+        "final_status": ""
+      },
+      "cli": {
+        "result": "pending",
+        "rfq_id": null,
+        "commit_id": null,
+        "bid_id": null,
+        "escrow_id": null,
+        "escrow_address": "",
+        "tx_accept_create": "",
+        "tx_fund": "",
+        "tx_submit": "",
+        "tx_approve": "",
+        "final_status": ""
+      },
+      "mcp": {
+        "result": "pending",
+        "rfq_id": null,
+        "commit_id": null,
+        "bid_id": null,
+        "escrow_id": null,
+        "escrow_address": "",
+        "tx_accept_create": "",
+        "tx_fund": "",
+        "tx_submit": "",
+        "tx_approve": "",
+        "final_status": ""
+      }
+    },
+    "parity_c_cross_interface_handoff": {
+      "result": "pending",
+      "step_interface_map": {
+        "create": "",
+        "fund": "",
+        "submit": "",
+        "approve": ""
+      },
+      "escrow_id": null,
+      "escrow_address": "",
+      "tx_create": "",
+      "tx_fund": "",
+      "tx_submit": "",
+      "tx_approve": "",
+      "final_status": ""
+    },
+    "ucp_adapter": {
+      "result": "pending",
+      "checkout_id": "",
+      "escrow_id": null,
+      "escrow_address": "",
+      "tx_create_or_bind": "",
+      "tx_fund": "",
+      "tx_submit": "",
+      "tx_approve": "",
+      "final_status": ""
+    }
+  },
+  "parity_verdict": {
+    "a": "pending",
+    "b": "pending",
+    "c": "pending",
+    "notes": []
+  }
+}

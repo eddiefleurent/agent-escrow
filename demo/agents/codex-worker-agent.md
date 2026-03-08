@@ -34,8 +34,8 @@ export WORKER_PRIVATE_KEY=<0x...>                # worker's private key (from .e
 
 | File | Contents |
 |------|---------|
-| `demo/.agent-state/rfq_id` | RFQ ID to bid on — read at startup |
-| `demo/.agent-state/worker-done` | Final result — write after Step 6 |
+| `demo/runtime/agent-state/rfq_id` | RFQ ID to bid on — read at startup |
+| `demo/runtime/agent-state/worker-done` | Final result — write after Step 6 |
 
 ---
 
@@ -46,7 +46,7 @@ Run each step in order. Capture stdout. Assert exit code 0 before proceeding.
 ### Step 0: Read RFQ ID and verify server
 
 ```bash
-RFQ_ID=$(cat demo/.agent-state/rfq_id)
+RFQ_ID=$(cat demo/runtime/agent-state/rfq_id)
 echo "Using RFQ_ID: $RFQ_ID"
 
 escrow-cli health
@@ -163,7 +163,7 @@ Assert `status == "submitted"`.
 
 ```bash
 printf '{"escrow_id": "%s", "escrow_address": "%s", "submission_uri": "%s", "status": "submitted"}' \
-  "$ESCROW_ID" "$ESCROW_ADDR" "$SUBMISSION_URI" > demo/.agent-state/worker-done
+  "$ESCROW_ID" "$ESCROW_ADDR" "$SUBMISSION_URI" > demo/runtime/agent-state/worker-done
 echo "Worker agent done. Escrow $ESCROW_ID submitted."
 ```
 

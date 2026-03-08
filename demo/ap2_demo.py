@@ -74,21 +74,97 @@ def cast_tx(private_key: str, to: str, sig: str, *args: str) -> str:
     """Send a transaction via cast and return the tx hash."""
     cmd = [
         "cast", "send", to, sig, *args,
+        "--async",
         "--private-key", private_key,
         "--rpc-url", RPC_URL,
         "--json",
     ]
     for attempt in range(1, 6):
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode == 0:
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            print("  cast_tx timed out before returning a transaction hash", file=sys.stderr)
+            sys.exit(1)
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+        if stdout:
             try:
-                return json.loads(result.stdout)["transactionHash"]
-            except (json.JSONDecodeError, KeyError):
-                pass
-        print(f"  cast_tx retry {attempt}/5: {result.stderr[:120]}")
+                tx_hash = json.loads(stdout).get("transactionHash")
+            except json.JSONDecodeError:
+                tx_hash = None
+            if tx_hash:
+                return tx_hash
+            if result.returncode == 0 and tx_hash is None:
+                print(
+                    "  cast_tx succeeded but response was ambiguous; refusing to rebroadcast",
+                    file=sys.stderr,
+                )
+                if stdout:
+                    print(f"  stdout: {stdout[:240]}", file=sys.stderr)
+                if stderr:
+                    print(f"  stderr: {stderr[:240]}", file=sys.stderr)
+                sys.exit(1)
+        print(f"  cast_tx retry {attempt}/5 (rc={result.returncode}): {(stderr or stdout)[:120]}")
         time.sleep(4)
     print("  cast_tx FAILED", file=sys.stderr)
     sys.exit(1)
+
+
+def wait_for_receipt(tx_hash: str, *, timeout_seconds: int = 60) -> dict:
+    """Wait for cast receipt to return a mined transaction receipt."""
+    try:
+        result = subprocess.run(
+            ["cast", "receipt", tx_hash, "--rpc-url", RPC_URL, "--json"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        print(f"Timed out waiting for receipt: {tx_hash}", file=sys.stderr)
+        sys.exit(1)
+
+    stdout = result.stdout.strip()
+    stderr = result.stderr.strip()
+    if stderr:
+        print(
+            f"cast receipt stderr for {tx_hash}: returncode={result.returncode}",
+            file=sys.stderr,
+        )
+        if stderr:
+            print(f"stderr: {stderr}", file=sys.stderr)
+        if stdout:
+            print(f"stdout: {stdout}", file=sys.stderr)
+    if result.returncode != 0:
+        print(
+            f"cast receipt failed for {tx_hash}: returncode={result.returncode}",
+            file=sys.stderr,
+        )
+        if stderr:
+            print(f"stderr: {stderr}", file=sys.stderr)
+        if stdout:
+            print(f"stdout: {stdout}", file=sys.stderr)
+        sys.exit(1)
+    if not stdout:
+        print(f"Receipt for {tx_hash} was empty", file=sys.stderr)
+        sys.exit(1)
+    try:
+        receipt = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        print(f"Invalid JSON receipt for {tx_hash}: {exc}", file=sys.stderr)
+        print(f"stdout: {stdout}", file=sys.stderr)
+        sys.exit(1)
+    if receipt.get("status") is None:
+        print(f"Receipt for {tx_hash} is missing required field: status", file=sys.stderr)
+        print(f"stdout: {stdout}", file=sys.stderr)
+        sys.exit(1)
+    return receipt
+
+
+def receipt_status_int(receipt: dict) -> int:
+    status = receipt.get("status")
+    if status is None:
+        raise ValueError("Missing 'status' field in receipt")
+    return int(status, 0) if isinstance(status, str) else int(status)
 
 
 def require_env(name: str) -> str:
@@ -100,6 +176,19 @@ def require_env(name: str) -> str:
     return value
 
 
+def require_address_env(name: str) -> str:
+    value = require_env(name).strip()
+    if not value.startswith("0x") or len(value) != 42:
+        print(f"ERROR: invalid Ethereum address for {name}: {value}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        int(value[2:], 16)
+    except ValueError:
+        print(f"ERROR: invalid Ethereum address for {name}: {value}", file=sys.stderr)
+        sys.exit(1)
+    return "0x" + value[2:].lower()
+
+
 def main():
     load_dotenv()
     global BASE_URL
@@ -107,10 +196,25 @@ def main():
 
     buyer_key = require_env("PRIVATE_KEY")
     worker_key = require_env("WORKER_KEY")
+    verifier_addr = require_address_env("VERIFIER_ADDR")
+    arbitrator_addr = require_address_env("ARBITRATOR_ADDR")
     buyer_addr = Account.from_key(buyer_key).address
-    worker_addr = os.environ.get(
-        "WORKER_ADDRESS", "0x9A085AC334a38F0C2881615003FFeD3C7E5Ac7F6"
-    )
+    derived_worker_addr = Account.from_key(worker_key).address
+    configured_worker_addr = (os.environ.get("WORKER_ADDRESS") or "").strip() or None
+    if configured_worker_addr:
+        configured_worker_addr = require_address_env("WORKER_ADDRESS")
+    if (
+        configured_worker_addr
+        and configured_worker_addr.lower() != derived_worker_addr.lower()
+    ):
+        print(
+            "ERROR: WORKER_ADDRESS does not match WORKER_KEY-derived address: "
+            f"{configured_worker_addr} != {derived_worker_addr}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    # Default worker address is derived from WORKER_KEY to avoid key/address drift.
+    worker_addr = derived_worker_addr
 
     print("=" * 64)
     print("  AP2 Mandate Bridge Demo — EIP-3009 Gasless Funding")
@@ -130,8 +234,11 @@ def main():
         "description": "Escrow funded via AP2 mandate bridge with receiveWithAuthorization",
         "buyer": buyer_addr,
         "worker": worker_addr,
-        "verifier": "0xEa62Afd342704CF52A48A50BC5a7e57B45e3de7A",
-        "arbitrator": "0x98586bC45A9D6B9D2C5F11292d4a9bfA4a50b097",
+        "verifier": verifier_addr,
+        "arbitrator": arbitrator_addr,
+        "verifier_panel": [verifier_addr],
+        "quorum_verifier_count": 1,
+        "quorum_threshold": 1,
         "amount": ESCROW_AMOUNT,
         "token": USDC,
         "submission_deadline": str(deadline),
@@ -148,21 +255,9 @@ def main():
 
     # Wait for create tx to be mined
     print("  → Waiting for create tx to be mined...")
-    mined = False
-    for _ in range(20):
-        result = subprocess.run(
-            ["cast", "receipt", tx_create, "--rpc-url", RPC_URL, "--json"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            mined = True
-            break
-        time.sleep(2)
-    if not mined:
-        print(
-            f"  Create tx not mined after 20 attempts: tx={tx_create} rpc={RPC_URL}",
-            file=sys.stderr,
-        )
+    create_receipt = wait_for_receipt(tx_create, timeout_seconds=40)
+    if receipt_status_int(create_receipt) != 1:
+        print(f"  Create tx failed: {create_receipt}", file=sys.stderr)
         sys.exit(1)
     time.sleep(3)
 
@@ -201,7 +296,7 @@ def main():
     # Step 3: Construct mandate envelope and call AP2 fund
     print("  → Step 3: Fund via AP2 mandate bridge")
     mandate_payload = {
-        "escrow_id": str(escrow_id),
+        "escrow_id": escrow_id,
         "mandate_envelope": {
             "type": "payment",
             "payload": {
@@ -245,7 +340,10 @@ def main():
     print(f"    Mandate ID: {mandate_id}")
     print(f"    Status: {fund_resp['status']}")
 
-    time.sleep(8)
+    fund_receipt = wait_for_receipt(tx_fund, timeout_seconds=90)
+    if receipt_status_int(fund_receipt) != 1:
+        print(f"    Fund tx failed: {fund_receipt}", file=sys.stderr)
+        sys.exit(1)
 
     # Step 4: Verify escrow is funded
     print("  → Step 4: Verify escrow status")
@@ -267,20 +365,24 @@ def main():
     ).stdout.strip()
     tx_submit = cast_tx(
         worker_key, escrow_addr,
-        "submit(bytes32,string)",
-        sub_hash, "ipfs://QmAP2_demo_submission",
+        "submit(bytes32,string,bytes32)",
+        sub_hash, "ipfs://QmAP2_demo_submission", "0x" + ("00" * 32),
     )
     print(f"    Submit tx: {tx_submit}")
-
-    time.sleep(8)
+    submit_receipt = wait_for_receipt(tx_submit, timeout_seconds=90)
+    if receipt_status_int(submit_receipt) != 1:
+        print(f"    Submit tx failed: {submit_receipt}", file=sys.stderr)
+        sys.exit(1)
 
     # Step 7: Buyer approves
     print("  → Step 7: Buyer approves")
     approve_resp = api_post(f"/api/v1/escrows/{escrow_id}/approve", {"role": "buyer"})
     tx_approve = approve_resp["tx_hash"]
     print(f"    Approve tx: {tx_approve}")
-
-    time.sleep(8)
+    approve_receipt = wait_for_receipt(tx_approve, timeout_seconds=90)
+    if receipt_status_int(approve_receipt) != 1:
+        print(f"    Approve tx failed: {approve_receipt}", file=sys.stderr)
+        sys.exit(1)
 
     # Step 8: Final status
     print("  → Step 8: Verify final state")

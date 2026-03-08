@@ -3,7 +3,7 @@
 This file is a Codex task prompt. Run it with:
 
 ```bash
-codex exec --dangerously-bypass-approvals-and-sandbox -C . "$(cat demo/codex-skill-test.md)"
+codex exec --dangerously-bypass-approvals-and-sandbox -C . "$(cat demo/agents/codex-skill-test.md)"
 ```
 
 It demonstrates a complete escrow lifecycle using the `escrow-cli` skill against a live
@@ -62,7 +62,7 @@ Run each step in order. After each command:
 2. Assert exit code is 0 — on failure record raw output and stop
 3. Extract IDs from the response for the next step
 
-Write all results to `demo/codex-skill-test-results.json` as a JSON array:
+Write all results to `demo/agents/codex-skill-test-results.json` as a JSON array:
 ```json
 [{"step": "<name>", "exit_code": 0, "output": { ... }}, ...]
 ```
@@ -191,5 +191,5 @@ Assert status is `approved` or `settled`. Record final status in results.
 
 ## Results file
 
-Write `demo/codex-skill-test-results.json` (gitignored).
+Write `demo/agents/codex-skill-test-results.json` (gitignored).
 Format: JSON array with one object per step.

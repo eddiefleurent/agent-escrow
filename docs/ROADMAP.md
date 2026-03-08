@@ -2,7 +2,7 @@
 
 Implementation roadmap for the ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) paper (Tomašev, Franklin, Osindero -- Google DeepMind, 2026).
 
-**Current phase: Phase 2 (R1-R4 revisits), after V3 closeout completion.**
+**Current phase: Phase 2 (R1-R4 revisits), after V3 closeout completion. Pre-V4 security gate (SH1-SH5) must complete before V4 work starts.**
 
 ---
 
@@ -26,7 +26,7 @@ Implementation roadmap for the ["Intelligent AI Delegation"](https://arxiv.org/a
 - **Monitoring depth:** L0/L1 production; L2/L3 remains staged.
 - **Opinionated implementations worth revisiting now:** items `12`, `15`, `20`, and `21`.
 
-Recommended near-term order: `R1 -> R2 -> R3 -> R4 -> 25 -> 29 -> 30 -> 23 -> 24 -> 26 -> 28 -> 27`.
+Recommended near-term order: `R1 -> R2 -> R3 -> R4 -> SH1 -> SH2 -> SH3 -> SH4 -> SH5 -> 25 -> 29 -> 30 -> 23 -> 24 -> 26 -> 28 -> 27`.
 
 ---
 
@@ -74,6 +74,16 @@ Recommended near-term order: `R1 -> R2 -> R3 -> R4 -> 25 -> 29 -> 30 -> 23 -> 24
 | 20 | Market stability mechanisms | done | 4.4 | opinionated | Concrete policy knobs: cooldowns, surcharge windows, damped overlays. |
 | 21 | Contract-first decomposition tooling | done | 4.1 | opinionated | Human/AI preference and market depth signals are advisory in V3 (not hard gates). |
 | 22 | UCP fulfillment provider | done | 6 | direct | UCP adapter implemented as an interoperability envelope over shared escrow orchestration; escrow remains settlement source of truth. |
+
+### Pre-V4 Security Gate (must ship before any V4 work)
+
+| ID | Item | Status | Alignment | Notes |
+|---|---|---|---|---|
+| SH1 | Admin auth for emergency endpoints | planned | gap_fill | Bearer token middleware gating all `/api/v1/emergency/*` and `/api/v1/dcts/emergency-override` routes. Token configured via env var. No contract-layer guard exists for these endpoints; any caller can currently trigger emergency freeze/resolve on-chain. |
+| SH2 | Per-IP rate limiting on POST endpoints | planned | gap_fill | Token-bucket rate limiter on all POST routes. Prevents gas drain via transaction spam and RPC quota exhaustion. No ceiling currently exists. |
+| SH3 | Request body size cap | planned | gap_fill | `http.MaxBytesReader` before decode on all handlers. Prevents memory exhaustion from unbounded body reads. |
+| SH4 | Request ID tracing | planned | gap_fill | `X-Request-ID` header echoed in responses and included in all structured log entries. Required for operational traceability before real traffic hits. |
+| SH5 | Agent-owned wallet / client-side signing | planned | gap_fill | CLI and MCP tools sign and broadcast transactions locally using the caller's `PRIVATE_KEY` + `RPC_URL`. Server becomes a pure coordination and indexing layer; its `PRIVATE_KEY` is for operator/admin operations only (emergency, indexer gas). Blocks real multi-agent demos and any production deployment where buyer, worker, and verifier are different principals. |
 
 ### V4 -- Ethical Safeguards and Ecosystem Maturity (ordered by planned implementation sequence)
 
@@ -134,6 +144,48 @@ Recommended near-term order: `R1 -> R2 -> R3 -> R4 -> 25 -> 29 -> 30 -> 23 -> 24
 - [ ] Introduce policy modes (`advisory`, `require_human`, `require_ai`, `any`) scoped by risk/task class.
 - [ ] Enforce policy mode during decomposition finalize and bid acceptance paths.
 - [ ] Record explicit override reason/audit events for exception handling.
+
+### Pre-V4 Security Gate
+
+All five items below are **blocking gates**: V4 work does not start until all are done.
+
+#### SH1: Admin auth for emergency endpoints
+
+- [ ] Add `ADMIN_TOKEN` env var (required when `EMERGENCY_ENABLED=true`; startup fails if absent).
+- [ ] Add middleware that checks `Authorization: Bearer <ADMIN_TOKEN>` on all `/api/v1/emergency/*` and `/api/v1/dcts/emergency-override` routes before routing to handlers.
+- [ ] Return `401 Unauthorized` with no body leakage on mismatch.
+- [ ] Add middleware unit tests covering present/absent/wrong token cases.
+- [ ] Update `docs/SETUP.md` with `ADMIN_TOKEN` provisioning instructions.
+
+#### SH2: Per-IP rate limiting on POST endpoints
+
+- [ ] Implement token-bucket rate limiter in middleware (stdlib only; no external deps).
+- [ ] Apply to all POST routes; exempt GET and SSE/WebSocket endpoints.
+- [ ] Configurable via `RATE_LIMIT_RPS` and `RATE_LIMIT_BURST` env vars with sane defaults (e.g. 10 RPS, burst 20).
+- [ ] Return `429 Too Many Requests` with `Retry-After` header.
+- [ ] Add middleware unit tests for limit enforcement and recovery.
+
+#### SH3: Request body size cap
+
+- [ ] Wrap `r.Body` with `http.MaxBytesReader(w, r.Body, maxBytes)` in a middleware applied to all POST/PATCH routes.
+- [ ] Default cap: `65536` bytes (64 KB); configurable via `MAX_BODY_BYTES` env var.
+- [ ] Return `413 Request Entity Too Large` on exceeded limit.
+- [ ] Add test covering oversized body rejection.
+
+#### SH4: Request ID tracing
+
+- [ ] Generate `X-Request-ID` (UUID v4) in middleware if not provided by caller; echo it in the response header.
+- [ ] Thread request ID through all `slog` log entries for the request lifetime via `context`.
+- [ ] Include request ID in error response bodies for client-side correlation.
+- [ ] Add test verifying header round-trip and log field presence.
+
+#### SH5: Agent-owned wallet / client-side signing
+
+- [ ] Add `RPC_URL` and `PRIVATE_KEY` loading to the `escrow-cli` binary; build a per-command chain client for transaction-sending commands instead of routing through the server signer.
+- [ ] Refactor all transaction-sending CLI commands (`fund`, `submit`, `approve`, `stake`, `dispute`, `resolve`, `quorum-vote`, `bid commit`, `bid reveal`, `bid accept`) to sign and broadcast locally, then POST off-chain metadata (submission URI, proof hash, etc.) to the server API.
+- [ ] MCP tools: accept optional `signing_key` parameter on all transaction-sending tools; build an ephemeral per-call signer rather than using the server's persistent key.
+- [ ] Document that the server `PRIVATE_KEY` is the operator/admin key only (emergency ops, indexer gas subsidy); participant operations must originate from a correctly-keyed CLI or MCP client.
+- [x] Update `demo/demo-roles.md` and skill playbooks to reflect the single-server multi-participant topology.
 
 ### Phase 3: Human Control Foundations (V4)
 
@@ -219,3 +271,4 @@ Long-horizon items that remain important but are not V3/V4 blockers:
 - Safety controls becoming cost-prohibitive without governance floor enforcement.
 - Reputation and monitoring signals being overfit or gamed without periodic calibration.
 - Privacy expectations outpacing current on-chain transparency model.
+- **Emergency endpoints have no HTTP-layer auth today**: any caller who can reach the server can freeze addresses or force-resolve escrows on-chain. SH1 is a hard gate before public exposure or V4 work.

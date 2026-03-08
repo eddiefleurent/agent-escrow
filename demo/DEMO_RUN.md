@@ -14,11 +14,308 @@ Six demo sets below:
 
 ---
 
+## V3 Baseline Demo Plan (2026-03-04)
+
+This plan is the execution baseline before Phase 2 roadmap revisits (`R1`-`R4`). The goal is to prove current V3 behavior on live Base Sepolia, then iterate hardening from a known-good checkpoint.
+
+### Scope
+
+- Defer `demo/run-escrow-agent-demo.sh` until SH5 client-side signing lands; the current single-server signer model is not the target real multi-party demo architecture.
+- Run legacy regression sets:
+  - `demo/eth_demos.sh`
+  - `demo/usdc_demos.sh`
+  - `demo/ap2_demo.py`
+- Capture all produced tx hashes, escrow addresses, and output artifacts.
+
+### Environment and preflight
+
+1. Source `.env`.
+2. Confirm required tools: `cast`, `jq`, `curl`, `python3`, `escrow-cli`, `codex`.
+3. Start server with fresh DB and wait for indexer sync:
+   ```bash
+   lsof -ti :8080 | xargs kill -9 2>/dev/null || true
+   rm -f go-server/delegation.db*
+   set -a && source .env && set +a
+   (cd go-server && ./bin/server > /tmp/agent-escrow-server.log 2>&1 &)
+   sleep 30
+   ```
+4. Confirm API health:
+   ```bash
+   curl -sf http://localhost:8080/api/v1/health
+   ```
+
+### Acceptance criteria
+
+- Every planned run either:
+  - completes with settled or expected terminal states and mined txs, or
+  - fails with a recorded, actionable blocker (funding, key, RPC, auth, or infra).
+- Artifact files are produced and preserved:
+  - `/tmp/v2_demo_results.json`
+  - `/tmp/v2_usdc_demo_results.json`
+  - AP2 output JSON path (script-selected temp file unless overridden)
+  - `demo/runtime/agent-state/buyer-agent.log` (only for legacy agent-demo reruns)
+- This document is updated with:
+  - date/time of run
+  - commit SHA used
+  - pass/fail per run
+  - blocker list (if any)
+
+### Execution log template
+
+| Run | Command | Start (UTC) | End (UTC) | Result | Artifacts / Notes |
+|---|---|---|---|---|---|
+| Agent demo (deferred pending SH5) | `bash demo/run-escrow-agent-demo.sh` | `TBD` | `TBD` | `blocked` | `demo/runtime/agent-state/*` |
+| V2 ETH regression | `bash demo/eth_demos.sh` | `TBD` | `TBD` | `pending` | `/tmp/v2_demo_results.json` |
+| V2 USDC regression | `bash demo/usdc_demos.sh` | `TBD` | `TBD` | `pending` | `/tmp/v2_usdc_demo_results.json` |
+| AP2 regression | `uv run demo/ap2_demo.py` | `TBD` | `TBD` | `pending` | `tempfile or AP2_RESULTS_FILE` |
+
+### Execution log (2026-03-04, V3 refresh)
+
+| Run | Result | Notes |
+|---|---|---|
+| ETH full feature (`demo/eth_demos.sh`) | `pass` | Demos C-I completed against current V3 API/contract flow (sealed bidding commit/reveal, backup activation, emergency). |
+| USDC full feature (`demo/usdc_demos.sh`) | `pass (completed with one manual resume after operator interrupt)` | C-F completed in-script; G settled (`escrow_id=83`), H reputation snapshot captured, I emergency flow completed (`escrow_id=84`). |
+| AP2 (`demo/ap2_demo.py`) | `pass` | Completed with timeout guard; escrow `86`, mandate `7172ec61b82fc20b`, final status `settled`. |
+
+Key USDC V3 references from this run:
+- Demo G escrow: `escrow_id=83`, status `settled`.
+- Demo I escrow: `escrow_id=84`, freeze tx `0x008b633601e59b08859249d21356fc534f3903583d90669502b0ea304dd0e7c4`, resolve tx `0xd4c0b75d03fca664d15574ea92ffeec38d6751546f119cbe3c1e858bc8284040`.
+
+### Immediate next after baseline
+
+- Start roadmap Phase 2 revisits in order: `R1 -> R2 -> R3 -> R4`.
+- After at least one revisit lands, run a short "V3.1 hardening demo" and append a new dated section below.
+
+---
+
+## Parity Demo Plan — HTTP vs CLI vs MCP (+ UCP)
+
+Purpose: demonstrate interface parity by running equivalent escrow lifecycles through all three primary access paths:
+- HTTP API
+- `escrow-cli`
+- MCP tools (agent-driven, Codex or Claude)
+
+UCP is included as an adapter demo to show checkout-to-escrow compatibility.
+
+### Scope
+
+Three parity scenarios:
+1. **Parity A (ETH happy path)**  
+   `create -> fund -> submit -> approve -> settled`
+2. **Parity B (ETH bidding path)**  
+   `create RFQ -> commit -> reveal -> accept -> fund -> submit -> approve -> settled`
+3. **Parity C (cross-interface handoff)**  
+   same lifecycle, but each step intentionally performed via a different interface.
+
+One adapter scenario:
+1. **UCP adapter flow**  
+   `UCP checkout` creates/funds escrow, then continue lifecycle via HTTP/CLI/MCP.
+
+### Preflight (all lanes)
+
+1. Source environment:
+   ```bash
+   set -a && source .env && set +a
+   ```
+2. Verify health:
+   ```bash
+   curl -sf "$BASE_URL/api/v1/health"
+   ```
+3. Confirm tooling:
+   ```bash
+   cast --version
+   escrow-cli --version
+   ```
+4. Confirm buyer/worker addresses resolve from keys (no hardcoded role drift).
+
+### Setup contract (before any parity run)
+
+Use this as a strict setup checklist so every lane runs against identical assumptions.
+
+1. Required env keys must be present:
+   - `BASE_URL`
+   - `PRIVATE_KEY`
+   - `WORKER_KEY`
+   - `VERIFIER_KEY`
+   - `ARBITRATOR_KEY`
+   - `BACKUP_KEY` (or `BACKUP_WORKER_KEY`)
+2. Resolve and print role addresses from keys (do not hardcode role addresses):
+   ```bash
+   BUYER=$(cast wallet address --private-key "$PRIVATE_KEY")
+   WORKER=$(cast wallet address --private-key "$WORKER_KEY")
+   VERIFIER=$(cast wallet address --private-key "$VERIFIER_KEY")
+   ARBITRATOR=$(cast wallet address --private-key "$ARBITRATOR_KEY")
+   BACKUP=$(cast wallet address --private-key "${BACKUP_KEY:-$BACKUP_WORKER_KEY}")
+   printf "BUYER=%s\nWORKER=%s\nVERIFIER=%s\nARBITRATOR=%s\nBACKUP=%s\n" \
+     "$BUYER" "$WORKER" "$VERIFIER" "$ARBITRATOR" "$BACKUP"
+   ```
+3. Confirm API chain/factory context is expected:
+   ```bash
+   curl -sf "$BASE_URL/api/v1/health"
+   ```
+4. Confirm buyer has ETH gas headroom for full sequence.
+5. For USDC/AP2/UCP runs, confirm USDC balances for all participating signers.
+6. Verify emergency endpoints are configured if demo includes emergency paths (`OWNER_ADDRESS` present server-side).
+7. Run automated preflight:
+   ```bash
+   # ETH lanes
+   bash demo/preflight_parity.sh
+   # USDC/AP2/UCP lanes
+   bash demo/preflight_parity.sh --require-usdc
+   ```
+8. Initialize a parity results file:
+   ```bash
+   cp demo/parity_results.template.json /tmp/parity_results.json
+   ```
+
+### Safety and logging guardrails
+
+1. Never print or copy private keys into logs, markdown, or screenshots.
+2. Only log:
+   - addresses
+   - ids
+   - tx hashes
+   - final statuses
+3. Use redacted env dumps if troubleshooting (`env | grep KEY` is disallowed).
+4. Keep output artifacts in temp files (`/tmp/...`) and copy only non-secret fields into docs.
+5. Run secret guardrail scan before any commit:
+   ```bash
+   bash demo/check_no_secrets.sh
+   ```
+
+### Standard timeout wrappers
+
+Use explicit hard timeouts for all demo entrypoints:
+
+```bash
+timeout 900 bash demo/eth_demos.sh
+timeout 900 bash demo/usdc_demos.sh
+timeout 900 uv run demo/ap2_demo.py
+```
+
+For manual API sequences, wrap long waits with bounded loops and absolute cutoffs.
+
+### Lane launch templates
+
+These are setup templates only; replace placeholders per scenario run sheet.
+
+#### HTTP lane template
+
+```bash
+set -a && source .env && set +a
+export BASE_URL="${BASE_URL:-http://localhost:8080}"
+timeout 900 bash demo/eth_demos.sh
+```
+
+#### CLI lane template
+
+```bash
+set -a && source .env && set +a
+export BASE_URL="${BASE_URL:-http://localhost:8080}"
+# example only; use scenario-specific CLI sequence
+escrow-cli health
+```
+
+#### MCP lane template (Codex or Claude)
+
+```bash
+set -a && source .env && set +a
+export BASE_URL="${BASE_URL:-http://localhost:8080}"
+# start agent with MCP-enabled profile and deterministic prompt for the scenario
+```
+
+#### UCP adapter template
+
+```bash
+set -a && source .env && set +a
+export BASE_URL="${BASE_URL:-http://localhost:8080}"
+# create checkout -> complete checkout -> continue escrow lifecycle via HTTP/CLI/MCP
+```
+
+### Lane A — HTTP baseline
+
+Run with HTTP endpoints plus `cast` for non-server signers:
+- Use existing scripts or minimal explicit calls for Parity A/B/C.
+- Record:
+  - escrow IDs and addresses
+  - RFQ and bid IDs (for bidding path)
+  - all tx hashes
+  - terminal status
+
+### Lane B — CLI-only
+
+Run equivalent flow using `escrow-cli` commands only:
+- Parity A:
+  - create escrow
+  - fund
+  - submit
+  - approve
+- Parity B:
+  - create RFQ
+  - bid commit/reveal
+  - accept
+  - fund/submit/approve
+- Capture same IDs/hashes/status as HTTP lane.
+
+### Lane C — MCP-only (agent)
+
+Use Codex or Claude with MCP tools enabled:
+- Buyer and worker prompts are constrained to deterministic task checklists.
+- No manual intervention except start/stop and log capture.
+- Execute Parity A and B in MCP tools only.
+- Capture tool outputs + tx hashes + final status.
+
+### Parity C — Cross-interface handoff
+
+One demo where each stage uses a different interface, for example:
+1. create via HTTP
+2. fund via CLI
+3. submit via MCP
+4. approve via HTTP
+
+Pass if lifecycle settles cleanly and economics match single-lane runs.
+
+### UCP adapter demo
+
+Separate from the three primary lanes:
+1. Create checkout via UCP endpoint.
+2. Complete checkout to produce escrow/funding side effects.
+3. Continue submit/approve through one primary lane (HTTP, CLI, or MCP).
+4. Verify resulting escrow state and payouts are equivalent to non-UCP flow.
+
+### Pass criteria
+
+For each parity scenario:
+1. Terminal state is `settled` (or expected terminal state if dispute flow is intentionally used).
+2. Economic outcomes match within deterministic fee math:
+   - protocol fee
+   - worker payout
+   - refunds/stake return where applicable
+3. Role authorization is consistent (no interface bypass of role/state guards).
+4. No interface-specific behavior regressions (same logical outcome across lanes).
+
+### Artifacts to retain
+
+1. Per-lane JSON result files (IDs + tx hashes).
+2. MCP transcript/log for agent lane.
+3. Final comparison table appended here:
+
+| Scenario | HTTP | CLI | MCP | UCP | Notes |
+|---|---|---|---|---|---|
+| Parity A | `pending` | `pending` | `pending` | `n/a` | |
+| Parity B | `pending` | `pending` | `pending` | `n/a` | |
+| Parity C | `pending` | `pending` | `pending` | `n/a` | |
+| UCP adapter | `pending` | `optional` | `optional` | `pending` | |
+
+---
+
 ## Codex Agent Demo (2026-02-24)
 
 Factory: [`0x7006930a9d309ca476b5538800da16525ecb191d`](https://sepolia.basescan.org/address/0x7006930a9d309ca476b5538800da16525ecb191d)
 
-Two autonomous Codex agents ran the full escrow lifecycle with no human intervention. The buyer agent posted an RFQ and waited; the worker agent discovered the RFQ, placed a bid, and submitted work independently; the buyer agent accepted the bid, funded the escrow, and approved on settlement. Each agent operated from its own prompt file (`demo/codex-buyer-agent.md`, `demo/codex-worker-agent.md`) and was launched by an orchestrator script (`demo/run-escrow-agent-demo.sh`).
+Two autonomous Codex agents ran the full escrow lifecycle with no human intervention. The buyer agent posted an RFQ and waited; the worker agent discovered the RFQ, placed a bid, and submitted work independently; the buyer agent accepted the bid, funded the escrow, and approved on settlement. Each agent operated from its own prompt file (`demo/agents/codex-buyer-agent.md`, `demo/agents/codex-worker-agent.md`) and was launched by an orchestrator script (`demo/run-escrow-agent-demo.sh`).
+
+This historical run used the older single-server signer topology. It remains useful as an early proof-of-concept, but it is not the final "real multi-party demo" target described by SH5 in the roadmap.
 
 This is the architecture described in the paper (§6.1): a buyer broadcasts a `Task_RFQ`, a worker responds with a signed `Bid_Object`, and the smart contract enforces payment on approval. Both agents are instances of `gpt-5.3-codex` (Codex v0.104.0).
 
@@ -43,7 +340,7 @@ sequenceDiagram
         Note over BuyerAgent,Server: Buyer agent — off-chain bidding
         BuyerAgent->>Server: escrow-cli rfq create (budget: 0.00005–0.00015 ETH)
         Server-->>BuyerAgent: RFQ #4
-        BuyerAgent->>+BuyerAgent: write rfq_id → demo/.agent-state/rfq_id
+        BuyerAgent->>+BuyerAgent: write rfq_id → demo/runtime/agent-state/rfq_id
     end
 
     rect rgb(230, 245, 230)
