@@ -8,6 +8,7 @@ Implementation roadmap for the ["Intelligent AI Delegation"](https://arxiv.org/a
 
 ## How To Read This Roadmap
 
+- **Repo entrypoint:** start with `AGENTS.md` for the repo harness and `docs/ARCHITECTURE.md` for stable system boundaries. This roadmap owns sequencing, not the full architecture narrative.
 - **Canonical mapping file:** `docs/paper-feature-map.json` is the canonical, machine-readable source of truth for paper coverage, gap tracking, and per-item design decisions. The **Item Register** tables below are human-readable summaries that must be kept in sync with that JSON.
 - **Status legend:** `done` = implemented, `in_progress` = currently being delivered, `planned` = scoped but not implemented.
 - **Alignment legend:**
