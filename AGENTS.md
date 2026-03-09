@@ -79,9 +79,9 @@ This file is the repo harness: start here for reading order, invariants, and cha
 
 ## Documentation Sync Rules
 
-- If settlement states, settlement formulas, or role semantics change: update `docs/SPEC.md` and the relevant diagrams.
-- If system boundaries, major components, or integration paths change: update `docs/ARCHITECTURE.md`.
-- If implementation sequencing, scope, or status changes: update `docs/ROADMAP.md` and `docs/paper-feature-map.json`.
+- When settlement states, settlement formulas, or role semantics change: update `docs/SPEC.md` and the relevant diagrams.
+- For system boundary, major component, or integration path changes: update `docs/ARCHITECTURE.md`.
+- Changes to implementation sequencing, scope, or status require updates to `docs/ROADMAP.md` and `docs/paper-feature-map.json`.
 - When `docs/SPEC.md` or `docs/ARCHITECTURE.md` changes, check whether `docs/diagrams/*.puml` also needs updating.
 - Prefer updating existing docs over creating new ones unless explicitly requested.
 

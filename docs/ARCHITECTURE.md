@@ -18,9 +18,9 @@ Architecture docs are a map, not a substitute for reading the code. They should 
 ## Reading Path
 
 - Start with `docs/ROADMAP.md` to see the active phase and what work is currently in scope.
-- If you are changing contract behavior, read `docs/SPEC.md` before touching Solidity.
-- If you are changing system shape, shared services, or transport exposure, read this file front to back.
-- If you are changing paper-coverage status or roadmap scope, update `docs/ROADMAP.md` and `docs/paper-feature-map.json` with the same change.
+- When changing contract behavior, read `docs/SPEC.md` before touching Solidity.
+- Read this file front to back if you are changing system shape, shared services, or transport exposure.
+- For paper-coverage status or roadmap scope changes, update `docs/ROADMAP.md` and `docs/paper-feature-map.json` with the same change.
 
 ## Architectural Thesis
 
@@ -267,13 +267,13 @@ That single-process shape is a deployment convenience, not a domain assumption. 
 
 The code is organized around responsibility boundaries rather than transport boundaries:
 
-- `internal/chain/` talks to Ethereum and owns ABI-backed contract interaction.
-- `internal/storage/` owns the SQLite schema and read/write queries.
-- `internal/escrow/` owns shared escrow orchestration.
-- `internal/bidding/` owns RFQ, bid, credential, and negotiation logic.
-- `internal/attestation/` owns completion-attestation validation and chain checks.
-- `internal/indexer/` owns on-chain event reconciliation.
-- `internal/events/` owns in-process event fan-out.
+- `internal/chain/` talks to Ethereum and handles ABI-backed contract interaction.
+- `internal/storage/` manages the SQLite schema and read/write queries.
+- `internal/escrow/` is responsible for shared escrow orchestration.
+- `internal/bidding/` covers RFQ, bid, credential, and negotiation logic.
+- `internal/attestation/` performs completion-attestation validation and chain checks.
+- `internal/indexer/` reconciles on-chain events.
+- `internal/events/` provides in-process event fan-out.
 - `internal/api/` and `internal/mcpserver/` are transport adapters over shared logic.
 - `internal/a2a/`, `internal/ap2/`, `internal/ucp/`, and `internal/x402/` are protocol adapters, not separate business silos.
 
