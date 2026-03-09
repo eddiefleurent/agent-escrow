@@ -267,15 +267,15 @@ That single-process shape is a deployment convenience, not a domain assumption. 
 
 The code is organized around responsibility boundaries rather than transport boundaries:
 
-- `internal/chain/` talks to Ethereum and handles ABI-backed contract interaction.
-- `internal/storage/` manages the SQLite schema and read/write queries.
-- `internal/escrow/` is responsible for shared escrow orchestration.
-- `internal/bidding/` covers RFQ, bid, credential, and negotiation logic.
-- `internal/attestation/` performs completion-attestation validation and chain checks.
-- `internal/indexer/` reconciles on-chain events.
-- `internal/events/` provides in-process event fan-out.
-- `internal/api/` and `internal/mcpserver/` are transport adapters over shared logic.
-- `internal/a2a/`, `internal/ap2/`, `internal/ucp/`, and `internal/x402/` are protocol adapters, not separate business silos.
+- `go-server/internal/chain/` talks to Ethereum and handles ABI-backed contract interaction.
+- `go-server/internal/storage/` manages the SQLite schema and read/write queries.
+- `go-server/internal/escrow/` is responsible for shared escrow orchestration.
+- `go-server/internal/bidding/` covers RFQ, bid, credential, and negotiation logic.
+- `go-server/internal/attestation/` performs completion-attestation validation and chain checks.
+- `go-server/internal/indexer/` reconciles on-chain events.
+- `go-server/internal/events/` provides in-process event fan-out.
+- `go-server/internal/api/` and `go-server/internal/mcpserver/` are transport adapters over shared logic.
+- `go-server/internal/a2a/`, `go-server/internal/ap2/`, `go-server/internal/ucp/`, and `go-server/internal/x402/` are protocol adapters, not separate business silos.
 
 The intended dependency direction is:
 

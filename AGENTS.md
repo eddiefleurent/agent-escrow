@@ -14,7 +14,8 @@ This file is the repo harness: start here for reading order, invariants, and cha
 
 ## System In One Screen
 
-- **On-chain:** `TaskEscrowFactory` + `EscrowDeployer` + `TaskEscrow` on Base Sepolia (`84532`), Solidity `0.8.34`, Foundry.
+- **On-chain:** `TaskEscrowFactory` + `EscrowDeployer` + `TaskEscrow`, Solidity `0.8.34`, Foundry.
+- **Current network:** deployed currently on Base Sepolia (`84532`) testnet.
 - **Off-chain:** single Go binary combining MCP server, HTTP API, shared services, and event indexer.
 - **Storage:** SQLite via `modernc.org/sqlite` and `database/sql`.
 - **Interfaces:** MCP tools, HTTP API, and `escrow-cli` for shell agents.
@@ -23,6 +24,7 @@ This file is the repo harness: start here for reading order, invariants, and cha
 ## Non-Negotiables
 
 - This is a public, open-source system intended to handle real funds on Base. Optimize for security, correctness, and auditability.
+- Production target: mainnet Base (handling real funds), even while current deployments run on Base Sepolia testnet.
 - Keep Solidity pinned to `0.8.34` unless explicitly requested.
 - Keep contract behavior aligned with `docs/SPEC.md`.
 - Prefer hard cutoffs over compatibility shims. Do not add legacy branches unless explicitly requested for a specific change.
