@@ -78,6 +78,7 @@ This file is the repo harness: start here for reading order, invariants, and cha
 - `docs/ROADMAP.md` -- execution order, status, and scoped future work.
 - `docs/paper-feature-map.json` -- canonical machine-readable mapping of paper coverage and status.
 - `docs/diagrams/*.puml` -- visual state machines, lifecycle flows, and architecture diagrams.
+- `docs/intelligent-ai-delegation.md` -- full paper text, agent-readable.
 
 ## Documentation Sync Rules
 
@@ -125,6 +126,7 @@ go-server/
   cmd/cli/main.go         CLI entrypoint
   internal/chain/         Chain bindings and client interfaces
   internal/storage/       SQLite schema and queries
+  internal/escrow/        Shared escrow lifecycle orchestration
   internal/indexer/       Event indexing and reconciliation
   internal/bidding/       RFQ + bid lifecycle logic
   internal/attestation/   Completion-attestation-v1 validation
