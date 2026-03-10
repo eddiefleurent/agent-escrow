@@ -1256,6 +1256,16 @@ func TestCommitBid_SealedModeChecksCooldownInsideImmediateTx(t *testing.T) {
 	}
 	defer func() { _ = lockTx.Rollback(ctx) }()
 
+	commitReady := make(chan struct{})
+	commitProceed := make(chan struct{})
+	db.SetBeginImmediateTxTestHook(func() {
+		close(commitReady)
+		<-commitProceed
+	})
+	t.Cleanup(func() {
+		db.SetBeginImmediateTxTestHook(nil)
+	})
+
 	commitErrs := make(chan error, 1)
 	go func() {
 		_, commitErr := svc.CommitBid(ctx, CommitBidParams{
@@ -1267,7 +1277,7 @@ func TestCommitBid_SealedModeChecksCooldownInsideImmediateTx(t *testing.T) {
 		commitErrs <- commitErr
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	<-commitReady
 
 	cooldownUntil := time.Now().Add(5 * time.Minute).Unix()
 	if err := lockTx.UpsertSealedBidderDiscipline(ctx, common.HexToAddress(testWorkerAddr).Hex(), cooldownUntil); err != nil {
@@ -1276,6 +1286,7 @@ func TestCommitBid_SealedModeChecksCooldownInsideImmediateTx(t *testing.T) {
 	if err := lockTx.Commit(ctx); err != nil {
 		t.Fatalf("commit immediate tx: %v", err)
 	}
+	close(commitProceed)
 
 	err = <-commitErrs
 	if err == nil {
@@ -1425,6 +1436,8 @@ func TestFinalizeSealedBidding_ImmediateTxBlocksLateReveal(t *testing.T) {
 	}
 
 	revealResult := make(chan error, 1)
+	revealReady := make(chan struct{})
+	revealProceed := make(chan struct{})
 	go func() {
 		tx, txErr := db.BeginTx(ctx)
 		if txErr != nil {
@@ -1454,22 +1467,18 @@ func TestFinalizeSealedBidding_ImmediateTxBlocksLateReveal(t *testing.T) {
 			revealResult <- updateErr
 			return
 		}
+		close(revealReady)
+		<-revealProceed
 		revealResult <- tx.Commit()
 	}()
 
-	var revealErr error
-	time.Sleep(100 * time.Millisecond)
-	select {
-	case revealErr = <-revealResult:
-	default:
-	}
+	<-revealReady
+	close(revealProceed)
 	if finalizeErr := <-finalizeResult; finalizeErr != nil {
 		t.Fatalf("finalize sealed bidding: %v", finalizeErr)
 	}
 
-	if revealErr == nil {
-		revealErr = <-revealResult
-	}
+	revealErr := <-revealResult
 	if revealErr == nil {
 		t.Fatal("expected late reveal to fail once finalization has started")
 	}

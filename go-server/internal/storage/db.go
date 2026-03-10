@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	_ "modernc.org/sqlite" // SQLite driver registration
@@ -94,6 +95,9 @@ var migration027SQL string
 
 type DB struct {
 	db *sql.DB
+
+	beginImmediateTxHookMu sync.RWMutex
+	beginImmediateTxHook   func()
 }
 
 // ImmediateTx holds a single SQLite connection inside a BEGIN IMMEDIATE
@@ -206,7 +210,22 @@ func (d *DB) BeginTx(ctx context.Context) (*sql.Tx, error) {
 	return d.db.BeginTx(ctx, nil)
 }
 
+// SetBeginImmediateTxTestHook installs a test-only hook that runs immediately
+// before BeginImmediateTx acquires a dedicated connection and issues BEGIN IMMEDIATE.
+func (d *DB) SetBeginImmediateTxTestHook(hook func()) {
+	d.beginImmediateTxHookMu.Lock()
+	defer d.beginImmediateTxHookMu.Unlock()
+	d.beginImmediateTxHook = hook
+}
+
 func (d *DB) BeginImmediateTx(ctx context.Context) (*ImmediateTx, error) {
+	d.beginImmediateTxHookMu.RLock()
+	hook := d.beginImmediateTxHook
+	d.beginImmediateTxHookMu.RUnlock()
+	if hook != nil {
+		hook()
+	}
+
 	conn, err := d.db.Conn(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("acquire db conn: %w", err)
