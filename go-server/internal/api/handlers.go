@@ -1281,7 +1281,7 @@ func (h *Handlers) ListRFQs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, rfqs)
+	writeJSON(w, http.StatusOK, h.biddingService().NormalizeRFQs(rfqs, time.Now()))
 }
 
 func (h *Handlers) GetRFQ(w http.ResponseWriter, r *http.Request) {
@@ -1308,6 +1308,7 @@ func (h *Handlers) GetRFQ(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	rfq = h.biddingService().NormalizeRFQ(rfq, time.Now())
 
 	bids, err := h.db.ListBidsByRFQ(r.Context(), id)
 	if err != nil {

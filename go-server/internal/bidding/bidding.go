@@ -149,6 +149,25 @@ type Service struct {
 	Cfg   *config.Config
 }
 
+func (s *Service) NormalizeRFQ(rfq *storage.RFQ, now time.Time) *storage.RFQ {
+	if rfq == nil {
+		return nil
+	}
+	normalized := *rfq
+	if normalized.BiddingMode == "sealed" {
+		normalized.SealedBidStatus = sealedBidPhase(now.UTC(), &normalized)
+	}
+	return &normalized
+}
+
+func (s *Service) NormalizeRFQs(rfqs []*storage.RFQ, now time.Time) []*storage.RFQ {
+	normalized := make([]*storage.RFQ, 0, len(rfqs))
+	for _, rfq := range rfqs {
+		normalized = append(normalized, s.NormalizeRFQ(rfq, now))
+	}
+	return normalized
+}
+
 type SealedBidSummary struct {
 	RFQID                  int64   `json:"rfq_id"`
 	Finalized              bool    `json:"finalized"`
@@ -841,8 +860,8 @@ func (s *Service) CommitBid(ctx context.Context, p CommitBidParams) (*storage.Bi
 	if err != nil {
 		return nil, fmt.Errorf("begin db tx: %w", err)
 	}
+	defer dbTx.Rollback()
 	if err := s.DB.SupersedeCommittedBidCommitsTx(ctx, dbTx, p.RFQID, p.Bidder); err != nil {
-		dbTx.Rollback()
 		return nil, err
 	}
 	c, err := s.DB.CreateBidCommitTx(ctx, dbTx, &storage.BidCommit{
@@ -853,7 +872,6 @@ func (s *Service) CommitBid(ctx context.Context, p CommitBidParams) (*storage.Bi
 		Status:     "committed",
 	})
 	if err != nil {
-		dbTx.Rollback()
 		if errors.Is(err, storage.ErrDuplicateBidCommitNonce) {
 			existingByNonce, lookupErr := s.DB.GetBidCommitByRFQBidderNonce(ctx, p.RFQID, p.Bidder, p.Nonce)
 			if lookupErr == nil {

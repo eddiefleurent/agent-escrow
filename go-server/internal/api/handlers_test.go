@@ -1538,6 +1538,29 @@ func TestListRFQs_FilterByStatus(t *testing.T) {
 	}
 }
 
+func TestListRFQs_DerivesRevealOpenSealedBidStatus(t *testing.T) {
+	env := setup(t)
+
+	now := time.Now().Unix()
+	createSealedRFQFixture(t, env, now, now-60, now+3600)
+
+	rr := env.request(t, "GET", "/api/v1/rfqs", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var rfqs []map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&rfqs); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(rfqs) != 1 {
+		t.Fatalf("expected 1 rfq, got %d", len(rfqs))
+	}
+	if got := rfqs[0]["sealed_bid_status"]; got != "reveal_open" {
+		t.Fatalf("expected reveal_open sealed bid status, got %v", got)
+	}
+}
+
 func TestGetRFQ_Success(t *testing.T) {
 	env := setup(t)
 	ctx := context.Background()
@@ -1566,6 +1589,27 @@ func TestGetRFQ_Success(t *testing.T) {
 	}
 	if rfqData["title"] != "RFQ 1" {
 		t.Fatalf("expected title 'RFQ 1', got %v", rfqData["title"])
+	}
+}
+
+func TestGetRFQ_DerivesRevealOpenSealedBidStatus(t *testing.T) {
+	env := setup(t)
+
+	now := time.Now().Unix()
+	rfq := createSealedRFQFixture(t, env, now, now-60, now+3600)
+
+	rr := env.request(t, "GET", fmt.Sprintf("/api/v1/rfqs/%d", rfq.ID), "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeJSON(t, rr)
+	rfqData, ok := resp["rfq"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected rfq object in response, got %v", resp)
+	}
+	if got := rfqData["sealed_bid_status"]; got != "reveal_open" {
+		t.Fatalf("expected reveal_open sealed bid status, got %v", got)
 	}
 }
 
