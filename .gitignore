@@ -27,3 +27,4 @@ deploy/
 demo/agents/codex-skill-test-results.json
 demo/runtime/
 demo/agent-demo-results.json
+.code-review-processor/
