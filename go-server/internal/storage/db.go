@@ -96,7 +96,7 @@ var migration027SQL string
 type DB struct {
 	db *sql.DB
 
-	beginImmediateTxHookMu sync.RWMutex
+	beginImmediateTxHookMu       sync.RWMutex
 	beginImmediateTxHook         func()
 	beginImmediateTxAcquiredHook func()
 }

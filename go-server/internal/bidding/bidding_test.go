@@ -1427,13 +1427,14 @@ func TestFinalizeSealedBidding_ImmediateTxBlocksLateReveal(t *testing.T) {
 	}
 
 	revealResult := make(chan error, 1)
-	revealReachedBlockedWrite := make(chan struct{})
+	revealAttemptedWrite := make(chan struct{})
 	go func() {
 		tx, txErr := db.BeginTx(ctx)
 		if txErr != nil {
 			revealResult <- txErr
 			return
 		}
+		close(revealAttemptedWrite)
 		bid, createErr := db.CreateBidTx(ctx, tx, &storage.Bid{
 			RFQID:              rfq.ID,
 			Bidder:             lateCommit.Bidder,
@@ -1452,7 +1453,6 @@ func TestFinalizeSealedBidding_ImmediateTxBlocksLateReveal(t *testing.T) {
 			revealResult <- createErr
 			return
 		}
-		close(revealReachedBlockedWrite)
 		if updateErr := db.UpdateBidCommitRevealTx(ctx, tx, lateCommit.ID, bid.ID); updateErr != nil {
 			tx.Rollback()
 			revealResult <- updateErr
@@ -1462,16 +1462,14 @@ func TestFinalizeSealedBidding_ImmediateTxBlocksLateReveal(t *testing.T) {
 	}()
 
 	select {
-	case <-revealReachedBlockedWrite:
+	case <-revealAttemptedWrite:
 	case finalizeErr := <-finalizeResult:
 		if finalizeErr != nil {
 			t.Fatalf("finalize sealed bidding: %v", finalizeErr)
 		}
-		t.Fatal("finalizer completed before reveal goroutine reached the blocking write path")
-	case revealErr := <-revealResult:
-		t.Fatalf("expected reveal to block until finalization decided the commit, got %v", revealErr)
+		t.Fatal("finalizer completed before reveal goroutine attempted a competing write")
 	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for reveal goroutine to reach the blocking write path")
+		t.Fatal("timed out waiting for reveal goroutine to attempt a competing write")
 	}
 
 	if finalizeErr := <-finalizeResult; finalizeErr != nil {

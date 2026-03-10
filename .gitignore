@@ -24,7 +24,7 @@ deploy/
 .codex-runs/
 .cursor/
 .code-review-processor/
+.code-review-processor/review-result.json
 demo/agents/codex-skill-test-results.json
 demo/runtime/
 demo/agent-demo-results.json
-.code-review-processor/
