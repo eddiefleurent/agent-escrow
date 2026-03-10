@@ -1622,6 +1622,18 @@ func TestGetRFQ_NotFound(t *testing.T) {
 	}
 }
 
+func TestGetRFQ_DBErrorReturns500(t *testing.T) {
+	env := setup(t)
+	if err := env.db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	rr := env.request(t, "GET", "/api/v1/rfqs/1", "")
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestCancelRFQ_Success(t *testing.T) {
 	env := setup(t)
 	ctx := context.Background()

@@ -1293,7 +1293,12 @@ func (h *Handlers) GetRFQ(w http.ResponseWriter, r *http.Request) {
 
 	rfq, err := h.db.GetRFQ(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		slog.Error("failed to fetch rfq", "rfq_id", id, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch rfq"})
 		return
 	}
 	if rfq.BiddingMode == "sealed" && time.Now().Unix() > rfq.RevealDeadline {
@@ -1304,7 +1309,12 @@ func (h *Handlers) GetRFQ(w http.ResponseWriter, r *http.Request) {
 		}
 		rfq, err = h.db.GetRFQ(r.Context(), id)
 		if err != nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			if errors.Is(err, sql.ErrNoRows) {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+				return
+			}
+			slog.Error("failed to refetch rfq after sealed bidding finalization", "rfq_id", id, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch rfq"})
 			return
 		}
 	}

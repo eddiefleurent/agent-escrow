@@ -1,3 +1,3 @@
 {
-  "skip_comment": "I checked this against the current codebase and did not apply a new change. `FinalizeSealedBidding` already starts `BeginImmediateTx` before re-reading the RFQ and computing eligible sealed-bid candidates, then updates the sealed-bidding state in that same transaction. The existing regression test in `go-server/internal/bidding/bidding_test.go` also covers a concurrent late reveal during finalization. This review comment appears to target an older revision that was already fixed."
+  "skip_comment": ""
 }
