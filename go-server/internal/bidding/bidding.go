@@ -186,6 +186,10 @@ type sealedBidCandidate struct {
 	commitTime time.Time
 }
 
+type sealedBidDisciplineReader interface {
+	GetSealedBidderDiscipline(context.Context, string) (*storage.SealedBidderDiscipline, error)
+}
+
 func sortSealedBidCandidates(candidates []sealedBidCandidate) {
 	sort.Slice(candidates, func(i, j int) bool {
 		if cmp := candidates[i].amount.Cmp(candidates[j].amount); cmp != 0 {
@@ -203,10 +207,11 @@ func sortSealedBidCandidates(candidates []sealedBidCandidate) {
 
 func (s *Service) activeSealedBidCooldown(
 	ctx context.Context,
+	reader sealedBidDisciplineReader,
 	bidder string,
 	now time.Time,
 ) (*SealedBidCooldownError, error) {
-	discipline, err := s.DB.GetSealedBidderDiscipline(ctx, bidder)
+	discipline, err := reader.GetSealedBidderDiscipline(ctx, bidder)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -822,15 +827,6 @@ func (s *Service) CommitBid(ctx context.Context, p CommitBidParams) (*storage.Bi
 	if p.Bidder == common.HexToAddress(rfq.Buyer).Hex() {
 		return nil, errors.New("bidder cannot be the same as the rfq buyer")
 	}
-	if rfq.BiddingMode == "sealed" {
-		cooldownErr, cooldownLookupErr := s.activeSealedBidCooldown(ctx, p.Bidder, time.Unix(now, 0).UTC())
-		if cooldownLookupErr != nil {
-			return nil, cooldownLookupErr
-		}
-		if cooldownErr != nil {
-			return nil, errors.Join(storage.ErrSealedBidCooldownActive, cooldownErr)
-		}
-	}
 	if len(p.Nonce) == 0 {
 		return nil, errors.New("nonce is required")
 	}
@@ -861,6 +857,54 @@ func (s *Service) CommitBid(ctx context.Context, p CommitBidParams) (*storage.Bi
 		return nil, fmt.Errorf("duplicate commitment for bidder in rfq (existing_commit_id=%d)", existingByCommitment.ID)
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
+	}
+
+	if rfq.BiddingMode == "sealed" {
+		immediateTx, err := s.DB.BeginImmediateTx(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("begin immediate db tx: %w", err)
+		}
+		defer func() {
+			_ = immediateTx.Rollback(ctx)
+		}()
+		cooldownErr, cooldownLookupErr := s.activeSealedBidCooldown(ctx, immediateTx, p.Bidder, time.Unix(now, 0).UTC())
+		if cooldownLookupErr != nil {
+			return nil, cooldownLookupErr
+		}
+		if cooldownErr != nil {
+			return nil, errors.Join(storage.ErrSealedBidCooldownActive, cooldownErr)
+		}
+		if err := immediateTx.SupersedeCommittedBidCommits(ctx, p.RFQID, p.Bidder); err != nil {
+			return nil, err
+		}
+		c, err := immediateTx.CreateBidCommit(ctx, &storage.BidCommit{
+			RFQID:      p.RFQID,
+			Bidder:     p.Bidder,
+			Commitment: p.Commitment,
+			Nonce:      p.Nonce,
+			Status:     "committed",
+		})
+		if err != nil {
+			if errors.Is(err, storage.ErrDuplicateBidCommitNonce) {
+				existingByNonce, lookupErr := s.DB.GetBidCommitByRFQBidderNonce(ctx, p.RFQID, p.Bidder, p.Nonce)
+				if lookupErr == nil {
+					return nil, fmt.Errorf("duplicate nonce for bidder in rfq (existing_commit_id=%d); replacements require a new nonce", existingByNonce.ID)
+				}
+				return nil, errors.New("duplicate nonce for bidder in rfq; replacements require a new nonce")
+			}
+			if errors.Is(err, storage.ErrDuplicateBidCommitCommitment) {
+				existingByCommitment, lookupErr := s.DB.GetBidCommitByRFQBidderCommitment(ctx, p.RFQID, p.Bidder, p.Commitment)
+				if lookupErr == nil {
+					return nil, fmt.Errorf("duplicate commitment for bidder in rfq (existing_commit_id=%d)", existingByCommitment.ID)
+				}
+				return nil, errors.New("duplicate commitment for bidder in rfq")
+			}
+			return nil, fmt.Errorf("create bid_commit: %w", err)
+		}
+		if err := immediateTx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("commit db tx: %w", err)
+		}
+		return c, nil
 	}
 
 	dbTx, err := s.DB.BeginTx(ctx)

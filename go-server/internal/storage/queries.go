@@ -1861,6 +1861,10 @@ func (d *DB) CreateBidCommitTx(ctx context.Context, tx *sql.Tx, c *BidCommit) (*
 	return createBidCommitOn(ctx, tx, c)
 }
 
+func (tx *ImmediateTx) CreateBidCommit(ctx context.Context, c *BidCommit) (*BidCommit, error) {
+	return createBidCommitOn(ctx, tx, c)
+}
+
 func (d *DB) GetBidCommit(ctx context.Context, id int64) (*BidCommit, error) {
 	row := d.db.QueryRowContext(ctx, `SELECT `+bidCommitColumns+` FROM bid_commits WHERE id = ?`, id)
 	c, err := scanBidCommit(row)
@@ -1987,6 +1991,10 @@ func (d *DB) SupersedeCommittedBidCommits(ctx context.Context, rfqID int64, bidd
 }
 
 func (d *DB) SupersedeCommittedBidCommitsTx(ctx context.Context, tx *sql.Tx, rfqID int64, bidder string) error {
+	return supersedeCommittedBidCommitsOn(ctx, tx, rfqID, bidder)
+}
+
+func (tx *ImmediateTx) SupersedeCommittedBidCommits(ctx context.Context, rfqID int64, bidder string) error {
 	return supersedeCommittedBidCommitsOn(ctx, tx, rfqID, bidder)
 }
 

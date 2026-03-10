@@ -1299,6 +1299,68 @@ func TestFinalizeSealedBidding_AppliesCooldownToNonRevealBidder(t *testing.T) {
 	}
 }
 
+func TestCommitBid_SealedModeChecksCooldownInsideImmediateTx(t *testing.T) {
+	db := openBiddingFileTestDB(t)
+	mock := chain.NewMockClient()
+	svc := &Service{
+		DB:    db,
+		Chain: mock,
+		Idx:   indexer.New(db, mock, testFactoryAddr, indexer.WithStartBlock(0)),
+		Cfg: &config.Config{
+			FactoryAddress: testFactoryAddr,
+			ChainID:        84532,
+		},
+	}
+
+	ctx := context.Background()
+	now := time.Now().Unix()
+	rfq := createSealedRFQForBiddingTests(t, db, now)
+
+	lockTx, err := db.BeginImmediateTx(ctx)
+	if err != nil {
+		t.Fatalf("begin immediate tx: %v", err)
+	}
+	defer func() { _ = lockTx.Rollback(ctx) }()
+
+	commitErrs := make(chan error, 1)
+	go func() {
+		_, commitErr := svc.CommitBid(ctx, CommitBidParams{
+			RFQID:      rfq.ID,
+			Bidder:     testWorkerAddr,
+			Commitment: "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+			Nonce:      "nonce-race",
+		})
+		commitErrs <- commitErr
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	cooldownUntil := time.Now().Add(5 * time.Minute).Unix()
+	if err := lockTx.UpsertSealedBidderDiscipline(ctx, common.HexToAddress(testWorkerAddr).Hex(), cooldownUntil); err != nil {
+		t.Fatalf("upsert bidder discipline: %v", err)
+	}
+	if err := lockTx.Commit(ctx); err != nil {
+		t.Fatalf("commit immediate tx: %v", err)
+	}
+
+	err = <-commitErrs
+	if err == nil {
+		t.Fatal("expected sealed-bid cooldown rejection")
+	}
+	var cooldownErr *SealedBidCooldownError
+	if !errors.As(err, &cooldownErr) {
+		t.Fatalf("expected SealedBidCooldownError, got %v", err)
+	}
+
+	commits, err := db.ListBidCommitsByRFQ(ctx, rfq.ID)
+	if err != nil {
+		t.Fatalf("list bid commits: %v", err)
+	}
+	if len(commits) != 0 {
+		t.Fatalf("expected no bid commits after cooldown rejection, got %d", len(commits))
+	}
+}
+
 func TestFinalizeSealedBidding_ImmediateTxBlocksLateReveal(t *testing.T) {
 	db := openBiddingFileTestDB(t)
 	mock := chain.NewMockClient()
