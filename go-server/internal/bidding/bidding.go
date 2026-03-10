@@ -1081,11 +1081,7 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 		if sealedSummary.SealedBidStatus == "no_valid_reveals" {
 			return nil, errors.New("no valid revealed bids are available for acceptance")
 		}
-		if len(sealedSummary.EligibleBidIDs) > 0 && !containsInt64(sealedSummary.EligibleBidIDs, bid.ID) {
-			return nil, errors.New("bid is not in the finalized eligible sealed-bid set")
-		}
-		if len(sealedSummary.EligibleBidIDs) == 0 &&
-			(sealedSummary.BestBidID == nil || *sealedSummary.BestBidID != bid.ID) {
+		if sealedSummary.BestBidID == nil || *sealedSummary.BestBidID != bid.ID {
 			return nil, errors.New("bid is not the selected best bid for this sealed RFQ")
 		}
 	}
