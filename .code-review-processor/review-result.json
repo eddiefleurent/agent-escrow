@@ -1,3 +1,3 @@
 {
-  "skip_comment": ""
+  "skip_comment": "The reviewed issue is already fixed on the current branch: [go-server/internal/bidding/bidding_test.go](/data/runs/review-3924311798-b57a27e9/worktree/go-server/internal/bidding/bidding_test.go#L1236) now uses explicit synchronization via `SetBeginImmediateTxTestHook`, `commitReady`, `commitProceed`, and `commitErrs` instead of `time.Sleep` in `TestCommitBid_SealedModeChecksCooldownInsideImmediateTx`."
 }
