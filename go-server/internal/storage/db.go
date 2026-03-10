@@ -96,6 +96,13 @@ type DB struct {
 	db *sql.DB
 }
 
+// ImmediateTx holds a single SQLite connection inside a BEGIN IMMEDIATE
+// transaction so reads and writes share the same locked snapshot.
+type ImmediateTx struct {
+	conn *sql.Conn
+	done atomic.Bool
+}
+
 var inMemoryDBCounter atomic.Uint64
 
 func Open(dsn string) (*DB, error) {
@@ -197,6 +204,60 @@ func (d *DB) Close() error {
 
 func (d *DB) BeginTx(ctx context.Context) (*sql.Tx, error) {
 	return d.db.BeginTx(ctx, nil)
+}
+
+func (d *DB) BeginImmediateTx(ctx context.Context) (*ImmediateTx, error) {
+	conn, err := d.db.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire db conn: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("begin immediate tx: %w", err)
+	}
+	return &ImmediateTx{conn: conn}, nil
+}
+
+func (tx *ImmediateTx) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	return tx.conn.ExecContext(ctx, query, args...)
+}
+
+func (tx *ImmediateTx) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return tx.conn.QueryContext(ctx, query, args...)
+}
+
+func (tx *ImmediateTx) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return tx.conn.QueryRowContext(ctx, query, args...)
+}
+
+func (tx *ImmediateTx) Commit(ctx context.Context) error {
+	if !tx.done.CompareAndSwap(false, true) {
+		return nil
+	}
+	_, err := tx.conn.ExecContext(ctx, "COMMIT")
+	closeErr := tx.conn.Close()
+	if err != nil {
+		return fmt.Errorf("commit immediate tx: %w", err)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close immediate tx conn after commit: %w", closeErr)
+	}
+	return nil
+}
+
+func (tx *ImmediateTx) Rollback(ctx context.Context) error {
+	if !tx.done.CompareAndSwap(false, true) {
+		return nil
+	}
+	_, err := tx.conn.ExecContext(ctx, "ROLLBACK")
+	closeErr := tx.conn.Close()
+	if err != nil {
+		return fmt.Errorf("rollback immediate tx: %w", err)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close immediate tx conn after rollback: %w", closeErr)
+	}
+	return nil
 }
 
 func (d *DB) SQLDB() *sql.DB {

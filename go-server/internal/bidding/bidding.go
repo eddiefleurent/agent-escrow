@@ -186,15 +186,6 @@ type sealedBidCandidate struct {
 	commitTime time.Time
 }
 
-func containsInt64(items []int64, target int64) bool {
-	for _, item := range items {
-		if item == target {
-			return true
-		}
-	}
-	return false
-}
-
 func sortSealedBidCandidates(candidates []sealedBidCandidate) {
 	sort.Slice(candidates, func(i, j int) bool {
 		if cmp := candidates[i].amount.Cmp(candidates[j].amount); cmp != 0 {
@@ -251,12 +242,18 @@ func buildSealedBidSummary(
 	}
 }
 
-func (s *Service) eligibleSealedBidCandidates(
+type sealedBidCandidateReader interface {
+	ListBidsByRFQ(context.Context, int64) ([]*storage.Bid, error)
+	GetBidCommitByRevealedBidID(context.Context, int64) (*storage.BidCommit, error)
+}
+
+func (s *Service) eligibleSealedBidCandidatesOn(
 	ctx context.Context,
+	reader sealedBidCandidateReader,
 	rfq *storage.RFQ,
 	now time.Time,
 ) ([]sealedBidCandidate, error) {
-	bids, err := s.DB.ListBidsByRFQ(ctx, rfq.ID)
+	bids, err := reader.ListBidsByRFQ(ctx, rfq.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list bids by rfq: %w", err)
 	}
@@ -279,7 +276,7 @@ func (s *Service) eligibleSealedBidCandidates(
 			continue
 		}
 
-		commit, err := s.DB.GetBidCommitByRevealedBidID(ctx, bid.ID)
+		commit, err := reader.GetBidCommitByRevealedBidID(ctx, bid.ID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
@@ -323,7 +320,26 @@ func (s *Service) FinalizeSealedBidding(ctx context.Context, rfqID int64) (*Seal
 		return nil, errors.New("cannot finalize sealed bidding before reveal phase ends")
 	}
 
-	candidates, err := s.eligibleSealedBidCandidates(ctx, rfq, now)
+	immediateTx, err := s.DB.BeginImmediateTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin immediate db tx: %w", err)
+	}
+	defer func() {
+		_ = immediateTx.Rollback(ctx)
+	}()
+
+	currentRFQ, err := immediateTx.GetRFQ(ctx, rfqID)
+	if err != nil {
+		return nil, fmt.Errorf("get rfq in tx: %w", err)
+	}
+	if currentRFQ.SealedBidStatus == "finalized" || currentRFQ.SealedBidStatus == "no_valid_reveals" {
+		return buildSealedBidSummary(currentRFQ, nil, 0), nil
+	}
+	if now.Unix() <= currentRFQ.RevealDeadline {
+		return nil, errors.New("cannot finalize sealed bidding before reveal phase ends")
+	}
+
+	candidates, err := s.eligibleSealedBidCandidatesOn(ctx, immediateTx, currentRFQ, now)
 	if err != nil {
 		return nil, err
 	}
@@ -340,28 +356,14 @@ func (s *Service) FinalizeSealedBidding(ctx context.Context, rfqID int64) (*Seal
 		bestBidID = &candidates[0].bid.ID
 	}
 
-	dbTx, err := s.DB.BeginTx(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin db tx: %w", err)
-	}
-	defer dbTx.Rollback()
-
-	currentRFQ, err := s.DB.GetRFQTx(ctx, dbTx, rfqID)
-	if err != nil {
-		return nil, fmt.Errorf("get rfq in tx: %w", err)
-	}
-	if currentRFQ.SealedBidStatus == "finalized" || currentRFQ.SealedBidStatus == "no_valid_reveals" {
-		return buildSealedBidSummary(currentRFQ, nil, 0), nil
-	}
-
-	committed, err := s.DB.ListCommittedBidCommitsByRFQTx(ctx, dbTx, rfqID)
+	committed, err := immediateTx.ListCommittedBidCommitsByRFQ(ctx, rfqID)
 	if err != nil {
 		return nil, err
 	}
 
 	bidderCooldowns := make(map[string]int64)
 	for _, commit := range committed {
-		discipline, disciplineErr := s.DB.GetSealedBidderDisciplineTx(ctx, dbTx, commit.Bidder)
+		discipline, disciplineErr := immediateTx.GetSealedBidderDiscipline(ctx, commit.Bidder)
 		strikeCount := 1
 		if disciplineErr == nil {
 			strikeCount = discipline.NonRevealCount + 1
@@ -374,16 +376,15 @@ func (s *Service) FinalizeSealedBidding(ctx context.Context, rfqID int64) (*Seal
 		}
 	}
 	for bidder, cooldownUntil := range bidderCooldowns {
-		if upsertErr := s.DB.UpsertSealedBidderDisciplineTx(ctx, dbTx, bidder, cooldownUntil); upsertErr != nil {
+		if upsertErr := immediateTx.UpsertSealedBidderDiscipline(ctx, bidder, cooldownUntil); upsertErr != nil {
 			return nil, upsertErr
 		}
 	}
-	if err := s.DB.ExpireCommittedBidCommitsTx(ctx, dbTx, rfqID); err != nil {
+	if err := immediateTx.ExpireCommittedBidCommits(ctx, rfqID); err != nil {
 		return nil, err
 	}
-	if err := s.DB.UpdateRFQSealedBiddingStateTx(
+	if err := immediateTx.UpdateRFQSealedBiddingState(
 		ctx,
-		dbTx,
 		rfqID,
 		finalizedStatus,
 		sealedBidSelectionRule,
@@ -392,8 +393,8 @@ func (s *Service) FinalizeSealedBidding(ctx context.Context, rfqID int64) (*Seal
 	); err != nil {
 		return nil, err
 	}
-	if err := dbTx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit db tx: %w", err)
+	if err := immediateTx.Commit(ctx); err != nil {
+		return nil, err
 	}
 
 	currentRFQ.SealedBidStatus = finalizedStatus

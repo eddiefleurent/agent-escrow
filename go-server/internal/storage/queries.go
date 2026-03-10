@@ -14,17 +14,19 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
-// dbExecer is satisfied by both *sql.DB and *sql.Tx, allowing shared query helpers
-// to run inside or outside a transaction.
-type dbExecer interface {
+// QueryExecer is satisfied by *sql.DB, *sql.Tx, and ImmediateTx, allowing shared
+// query helpers to run inside or outside a transaction.
+type QueryExecer interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
+type dbExecer = QueryExecer
+
 // Task queries
 
-func createTaskOn(ctx context.Context, q dbExecer, title, description, specHash string) (*Task, error) {
+func createTaskOn(ctx context.Context, q QueryExecer, title, description, specHash string) (*Task, error) {
 	res, err := q.ExecContext(ctx,
 		`INSERT INTO tasks (title, description, spec_hash) VALUES (?, ?, ?)`,
 		title, description, specHash,
@@ -79,7 +81,7 @@ func (d *DB) GetTask(ctx context.Context, id int64) (*Task, error) {
 
 var ErrDuplicateEscrowCreateIntent = errors.New("duplicate escrow create intent")
 
-func createEscrowOn(ctx context.Context, q dbExecer, e *Escrow) (*Escrow, error) {
+func createEscrowOn(ctx context.Context, q QueryExecer, e *Escrow) (*Escrow, error) {
 	msCount := e.MilestoneCount
 	if msCount == 0 {
 		msCount = 1
@@ -920,8 +922,8 @@ func (d *DB) CreateRFQTx(ctx context.Context, tx *sql.Tx, r *RFQ) (*RFQ, error) 
 	return createRFQOn(ctx, tx, r)
 }
 
-func (d *DB) GetRFQ(ctx context.Context, id int64) (*RFQ, error) {
-	row := d.db.QueryRowContext(ctx, `SELECT `+rfqColumns+` FROM rfqs WHERE id = ?`, id)
+func getRFQOn(ctx context.Context, q QueryExecer, id int64) (*RFQ, error) {
+	row := q.QueryRowContext(ctx, `SELECT `+rfqColumns+` FROM rfqs WHERE id = ?`, id)
 	r, err := scanRFQ(row)
 	if err != nil {
 		return nil, fmt.Errorf("get rfq: %w", err)
@@ -929,13 +931,16 @@ func (d *DB) GetRFQ(ctx context.Context, id int64) (*RFQ, error) {
 	return r, nil
 }
 
+func (d *DB) GetRFQ(ctx context.Context, id int64) (*RFQ, error) {
+	return getRFQOn(ctx, d.db, id)
+}
+
 func (d *DB) GetRFQTx(ctx context.Context, tx *sql.Tx, id int64) (*RFQ, error) {
-	row := tx.QueryRowContext(ctx, `SELECT `+rfqColumns+` FROM rfqs WHERE id = ?`, id)
-	r, err := scanRFQ(row)
-	if err != nil {
-		return nil, fmt.Errorf("get rfq: %w", err)
-	}
-	return r, nil
+	return getRFQOn(ctx, tx, id)
+}
+
+func (tx *ImmediateTx) GetRFQ(ctx context.Context, id int64) (*RFQ, error) {
+	return getRFQOn(ctx, tx, id)
 }
 
 func updateRFQSealedBiddingStateOn(
@@ -983,6 +988,16 @@ func (d *DB) UpdateRFQSealedBiddingState(
 func (d *DB) UpdateRFQSealedBiddingStateTx(
 	ctx context.Context,
 	tx *sql.Tx,
+	rfqID int64,
+	sealedBidStatus, selectionRule string,
+	bestBidID *int64,
+	finalizedAt int64,
+) error {
+	return updateRFQSealedBiddingStateOn(ctx, tx, rfqID, sealedBidStatus, selectionRule, bestBidID, finalizedAt)
+}
+
+func (tx *ImmediateTx) UpdateRFQSealedBiddingState(
+	ctx context.Context,
 	rfqID int64,
 	sealedBidStatus, selectionRule string,
 	bestBidID *int64,
@@ -1613,8 +1628,8 @@ func (d *DB) GetBid(ctx context.Context, id int64) (*Bid, error) {
 	return b, nil
 }
 
-func (d *DB) ListBidsByRFQ(ctx context.Context, rfqID int64) ([]*Bid, error) {
-	rows, err := d.db.QueryContext(ctx,
+func listBidsByRFQOn(ctx context.Context, q QueryExecer, rfqID int64) ([]*Bid, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT `+bidColumns+` FROM bids WHERE rfq_id = ? ORDER BY id DESC`, rfqID,
 	)
 	if err != nil {
@@ -1631,6 +1646,14 @@ func (d *DB) ListBidsByRFQ(ctx context.Context, rfqID int64) ([]*Bid, error) {
 		bids = append(bids, b)
 	}
 	return bids, rows.Err()
+}
+
+func (d *DB) ListBidsByRFQ(ctx context.Context, rfqID int64) ([]*Bid, error) {
+	return listBidsByRFQOn(ctx, d.db, rfqID)
+}
+
+func (tx *ImmediateTx) ListBidsByRFQ(ctx context.Context, rfqID int64) ([]*Bid, error) {
+	return listBidsByRFQOn(ctx, tx, rfqID)
 }
 
 func (d *DB) ListBidsByBidder(ctx context.Context, bidder string) ([]*Bid, error) {
@@ -1883,8 +1906,8 @@ func (d *DB) GetBidCommitByRFQBidderCommitment(ctx context.Context, rfqID int64,
 	return c, nil
 }
 
-func (d *DB) GetBidCommitByRevealedBidID(ctx context.Context, bidID int64) (*BidCommit, error) {
-	row := d.db.QueryRowContext(
+func getBidCommitByRevealedBidIDOn(ctx context.Context, q QueryExecer, bidID int64) (*BidCommit, error) {
+	row := q.QueryRowContext(
 		ctx,
 		`SELECT `+bidCommitColumns+` FROM bid_commits WHERE revealed_bid_id = ?`,
 		bidID,
@@ -1894,6 +1917,14 @@ func (d *DB) GetBidCommitByRevealedBidID(ctx context.Context, bidID int64) (*Bid
 		return nil, fmt.Errorf("get bid_commit by revealed bid id: %w", err)
 	}
 	return c, nil
+}
+
+func (d *DB) GetBidCommitByRevealedBidID(ctx context.Context, bidID int64) (*BidCommit, error) {
+	return getBidCommitByRevealedBidIDOn(ctx, d.db, bidID)
+}
+
+func (tx *ImmediateTx) GetBidCommitByRevealedBidID(ctx context.Context, bidID int64) (*BidCommit, error) {
+	return getBidCommitByRevealedBidIDOn(ctx, tx, bidID)
 }
 
 func (d *DB) ListBidCommitsByRFQ(ctx context.Context, rfqID int64) ([]*BidCommit, error) {
@@ -2060,6 +2091,10 @@ func (d *DB) ListCommittedBidCommitsByRFQTx(ctx context.Context, tx *sql.Tx, rfq
 	return listCommittedBidCommitsByRFQOn(ctx, tx, rfqID)
 }
 
+func (tx *ImmediateTx) ListCommittedBidCommitsByRFQ(ctx context.Context, rfqID int64) ([]*BidCommit, error) {
+	return listCommittedBidCommitsByRFQOn(ctx, tx, rfqID)
+}
+
 func (d *DB) CountRecentBidCommitsByRFQBidder(
 	ctx context.Context, rfqID int64, bidder string, windowSeconds int64, now time.Time,
 ) (int, error) {
@@ -2109,6 +2144,10 @@ func (d *DB) ExpireCommittedBidCommitsTx(ctx context.Context, tx *sql.Tx, rfqID 
 	return expireCommittedBidCommitsOn(ctx, tx, rfqID)
 }
 
+func (tx *ImmediateTx) ExpireCommittedBidCommits(ctx context.Context, rfqID int64) error {
+	return expireCommittedBidCommitsOn(ctx, tx, rfqID)
+}
+
 func scanSealedBidderDiscipline(scanner interface{ Scan(...any) error }) (*SealedBidderDiscipline, error) {
 	d := &SealedBidderDiscipline{}
 	var createdAt, updatedAt string
@@ -2150,6 +2189,10 @@ func (d *DB) GetSealedBidderDisciplineTx(ctx context.Context, tx *sql.Tx, bidder
 	return getSealedBidderDisciplineOn(ctx, tx, bidder)
 }
 
+func (tx *ImmediateTx) GetSealedBidderDiscipline(ctx context.Context, bidder string) (*SealedBidderDiscipline, error) {
+	return getSealedBidderDisciplineOn(ctx, tx, bidder)
+}
+
 func upsertSealedBidderDisciplineOn(
 	ctx context.Context,
 	q dbExecer,
@@ -2180,6 +2223,10 @@ func (d *DB) UpsertSealedBidderDiscipline(ctx context.Context, bidder string, co
 }
 
 func (d *DB) UpsertSealedBidderDisciplineTx(ctx context.Context, tx *sql.Tx, bidder string, cooldownUntil int64) error {
+	return upsertSealedBidderDisciplineOn(ctx, tx, bidder, cooldownUntil)
+}
+
+func (tx *ImmediateTx) UpsertSealedBidderDiscipline(ctx context.Context, bidder string, cooldownUntil int64) error {
 	return upsertSealedBidderDisciplineOn(ctx, tx, bidder, cooldownUntil)
 }
 

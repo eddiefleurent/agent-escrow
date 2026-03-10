@@ -2,8 +2,11 @@ package bidding
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,6 +32,16 @@ func openBiddingTestDB(t *testing.T) *storage.DB {
 	db, err := storage.Open(":memory:")
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+func openBiddingFileTestDB(t *testing.T) *storage.DB {
+	t.Helper()
+	db, err := storage.Open(filepath.Join(t.TempDir(), "bidding.db"))
+	if err != nil {
+		t.Fatalf("open file-backed test db: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
@@ -1203,6 +1216,205 @@ func TestFinalizeSealedBidding_AppliesCooldownToNonRevealBidder(t *testing.T) {
 	}
 	if discipline.CooldownUntil <= now {
 		t.Fatalf("expected cooldown_until in the future, got %d", discipline.CooldownUntil)
+	}
+}
+
+func TestFinalizeSealedBidding_ImmediateTxBlocksLateReveal(t *testing.T) {
+	db := openBiddingFileTestDB(t)
+	mock := chain.NewMockClient()
+	svc := &Service{
+		DB:    db,
+		Chain: mock,
+		Idx:   indexer.New(db, mock, testFactoryAddr, indexer.WithStartBlock(0)),
+		Cfg: &config.Config{
+			FactoryAddress: testFactoryAddr,
+			ChainID:        84532,
+		},
+	}
+
+	ctx := context.Background()
+	now := time.Now().Unix()
+	rfq, err := db.CreateRFQ(ctx, &storage.RFQ{
+		Title:                    "rfq-finalize-lock",
+		Description:              "desc",
+		SpecHash:                 "0xabc",
+		Buyer:                    testBuyerAddr,
+		Token:                    "",
+		BudgetMin:                "100",
+		BudgetMax:                "300",
+		Deadline:                 now + 3600,
+		ReviewPeriodSeconds:      60,
+		DisputePeriodSeconds:     60,
+		ArbitratorTimeoutSeconds: 60,
+		Verifier:                 testVerifierAddr,
+		Arbitrator:               testArbitratorAddr,
+		WorkerStake:              "0",
+		MilestonesJSON:           "[]",
+		RequirementsJSON:         "{}",
+		RequiredCredentialsJSON:  "[]",
+		BiddingMode:              "sealed",
+		CommitDeadline:           now - 600,
+		RevealDeadline:           now - 60,
+		ServiceTier:              0,
+		Status:                   "open",
+		ExpiresAt:                now + 1800,
+	})
+	if err != nil {
+		t.Fatalf("create rfq: %v", err)
+	}
+
+	bestBid, err := db.CreateBid(ctx, &storage.Bid{
+		RFQID:              rfq.ID,
+		Bidder:             testWorkerAltAddr,
+		Amount:             "150",
+		EstimatedDuration:  20,
+		ReputationBond:     "0",
+		MilestonesJSON:     "[]",
+		Message:            "",
+		Status:             "pending",
+		ExpiresAt:          now + 1200,
+		CredentialsJSON:    "[]",
+		CredentialVerified: true,
+	})
+	if err != nil {
+		t.Fatalf("create best bid: %v", err)
+	}
+	if _, err := db.CreateBidCommit(ctx, &storage.BidCommit{
+		RFQID:         rfq.ID,
+		Bidder:        bestBid.Bidder,
+		Commitment:    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		Nonce:         "winner",
+		Status:        "revealed",
+		RevealedBidID: &bestBid.ID,
+	}); err != nil {
+		t.Fatalf("create winning commit: %v", err)
+	}
+
+	lateCommit, err := db.CreateBidCommit(ctx, &storage.BidCommit{
+		RFQID:      rfq.ID,
+		Bidder:     common.HexToAddress("0x8000000000000000000000000000000000000008").Hex(),
+		Commitment: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		Nonce:      "late",
+		Status:     "committed",
+	})
+	if err != nil {
+		t.Fatalf("create late commit: %v", err)
+	}
+
+	immediateTx, err := db.BeginImmediateTx(ctx)
+	if err != nil {
+		t.Fatalf("begin immediate tx: %v", err)
+	}
+	defer immediateTx.Rollback(ctx)
+
+	currentRFQ, err := immediateTx.GetRFQ(ctx, rfq.ID)
+	if err != nil {
+		t.Fatalf("get rfq in immediate tx: %v", err)
+	}
+	candidates, err := svc.eligibleSealedBidCandidatesOn(ctx, immediateTx, currentRFQ, time.Unix(now, 0).UTC())
+	if err != nil {
+		t.Fatalf("eligible candidates in immediate tx: %v", err)
+	}
+	if len(candidates) != 1 || candidates[0].bid.ID != bestBid.ID {
+		t.Fatalf("expected only pre-existing revealed bid %d, got %+v", bestBid.ID, candidates)
+	}
+
+	revealResult := make(chan error, 1)
+	go func() {
+		tx, txErr := db.BeginTx(ctx)
+		if txErr != nil {
+			revealResult <- txErr
+			return
+		}
+		bid, createErr := db.CreateBidTx(ctx, tx, &storage.Bid{
+			RFQID:              rfq.ID,
+			Bidder:             lateCommit.Bidder,
+			Amount:             "140",
+			EstimatedDuration:  10,
+			ReputationBond:     "0",
+			MilestonesJSON:     "[]",
+			Message:            "",
+			Status:             "pending",
+			ExpiresAt:          now + 1200,
+			CredentialsJSON:    "[]",
+			CredentialVerified: true,
+		})
+		if createErr != nil {
+			tx.Rollback()
+			revealResult <- createErr
+			return
+		}
+		if updateErr := db.UpdateBidCommitRevealTx(ctx, tx, lateCommit.ID, bid.ID); updateErr != nil {
+			tx.Rollback()
+			revealResult <- updateErr
+			return
+		}
+		revealResult <- tx.Commit()
+	}()
+
+	var revealErr error
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case revealErr = <-revealResult:
+	default:
+	}
+
+	committed, err := immediateTx.ListCommittedBidCommitsByRFQ(ctx, rfq.ID)
+	if err != nil {
+		t.Fatalf("list committed commits in immediate tx: %v", err)
+	}
+	if len(committed) != 1 || committed[0].ID != lateCommit.ID {
+		t.Fatalf("expected only late committed bid in tx, got %+v", committed)
+	}
+	if err := immediateTx.ExpireCommittedBidCommits(ctx, rfq.ID); err != nil {
+		t.Fatalf("expire committed bids in immediate tx: %v", err)
+	}
+	if err := immediateTx.UpdateRFQSealedBiddingState(
+		ctx,
+		rfq.ID,
+		"finalized",
+		sealedBidSelectionRule,
+		&bestBid.ID,
+		now,
+	); err != nil {
+		t.Fatalf("update sealed bidding state in immediate tx: %v", err)
+	}
+	if err := immediateTx.Commit(ctx); err != nil {
+		t.Fatalf("commit immediate tx: %v", err)
+	}
+
+	if revealErr == nil {
+		revealErr = <-revealResult
+	}
+	if revealErr == nil {
+		t.Fatal("expected late reveal to fail once finalization has started")
+	}
+	if !errors.Is(revealErr, sql.ErrNoRows) && !strings.Contains(revealErr.Error(), "SQLITE_BUSY") {
+		t.Fatalf("expected late reveal to fail with commit expiry or sqlite lock, got %v", revealErr)
+	}
+
+	updatedCommit, err := db.GetBidCommit(ctx, lateCommit.ID)
+	if err != nil {
+		t.Fatalf("get late commit: %v", err)
+	}
+	if updatedCommit.Status != "expired" {
+		t.Fatalf("expected late commit expired, got %q", updatedCommit.Status)
+	}
+
+	updatedRFQ, err := db.GetRFQ(ctx, rfq.ID)
+	if err != nil {
+		t.Fatalf("get updated rfq: %v", err)
+	}
+	if updatedRFQ.BestBidID == nil || *updatedRFQ.BestBidID != bestBid.ID {
+		t.Fatalf("expected finalized best bid %d, got %+v", bestBid.ID, updatedRFQ.BestBidID)
+	}
+
+	bids, err := db.ListBidsByRFQ(ctx, rfq.ID)
+	if err != nil {
+		t.Fatalf("list bids after finalization: %v", err)
+	}
+	if len(bids) != 1 || bids[0].ID != bestBid.ID {
+		t.Fatalf("expected only finalized winning bid to persist, got %+v", bids)
 	}
 }
 
