@@ -64,6 +64,7 @@ For internal wiring, handler-to-service relationships, and event flow detail, se
 
 | Diagram | File | Purpose |
 |---|---|---|
+| Happy path overview | `docs/diagrams/happy-path.png` | Five-step end-to-end delegation flow (buyer -> worker -> approval -> payout) |
 | System architecture | `docs/diagrams/architecture.png` | Top-level system boundary: contracts, server, storage, and clients |
 | Go server detail | `docs/diagrams/architecture-detail.png` | Internal server wiring and shared-component relationships |
 | Single-shot state machine | `docs/diagrams/state-machine.png` | Escrow lifecycle for non-milestone settlement |
@@ -273,6 +274,8 @@ The code is organized around responsibility boundaries rather than transport bou
 - `go-server/internal/escrow/` is responsible for shared escrow orchestration.
 - `go-server/internal/bidding/` covers RFQ, bid, credential, and negotiation logic.
 - `go-server/internal/attestation/` performs completion-attestation validation and chain checks.
+- `go-server/internal/dct/` handles Delegation Capability Token issuance, attenuation, validation, and lifecycle.
+- `go-server/internal/authz/` enforces principal authorization for DCT operations with audited decisions.
 - `go-server/internal/indexer/` reconciles on-chain events.
 - `go-server/internal/events/` provides in-process event fan-out.
 - `go-server/internal/api/` and `go-server/internal/mcpserver/` are transport adapters over shared logic.
