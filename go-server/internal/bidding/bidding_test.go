@@ -331,7 +331,7 @@ func TestFinalizeSealedBidding_SelectsDeterministicBestBid(t *testing.T) {
 		t.Fatalf("create rfq: %v", err)
 	}
 
-	createRevealedBid := func(bidder, amount string, duration int64, nonce string) *storage.Bid {
+	createRevealedBid := func(bidder, amount string, duration int64, nonce string) (*storage.Bid, *storage.BidCommit) {
 		t.Helper()
 		bid, createErr := db.CreateBid(ctx, &storage.Bid{
 			RFQID:              rfq.ID,
@@ -349,7 +349,7 @@ func TestFinalizeSealedBidding_SelectsDeterministicBestBid(t *testing.T) {
 		if createErr != nil {
 			t.Fatalf("create bid %s: %v", nonce, createErr)
 		}
-		_, createErr = db.CreateBidCommit(ctx, &storage.BidCommit{
+		commit, createErr := db.CreateBidCommit(ctx, &storage.BidCommit{
 			RFQID:         rfq.ID,
 			Bidder:        bidder,
 			Commitment:    fmt.Sprintf("0x%064x", len(nonce)),
@@ -360,11 +360,29 @@ func TestFinalizeSealedBidding_SelectsDeterministicBestBid(t *testing.T) {
 		if createErr != nil {
 			t.Fatalf("create commit %s: %v", nonce, createErr)
 		}
-		return bid
+		return bid, commit
 	}
 
-	slower := createRevealedBid(testWorkerAddr, "200", 7200, "a1")
-	faster := createRevealedBid(testWorkerAltAddr, "200", 3600, "b2")
+	setCommitCreatedAt := func(commitID int64, createdAt time.Time) {
+		t.Helper()
+		if _, execErr := db.SQLDB().ExecContext(
+			ctx,
+			"UPDATE bid_commits SET created_at = ?, updated_at = ? WHERE id = ?",
+			createdAt.UTC().Format(time.RFC3339),
+			createdAt.UTC().Format(time.RFC3339),
+			commitID,
+		); execErr != nil {
+			t.Fatalf("set commit %d created_at: %v", commitID, execErr)
+		}
+	}
+
+	slower, slowerCommit := createRevealedBid(testWorkerAddr, "200", 7200, "a1")
+	faster, fasterCommit := createRevealedBid(testWorkerAltAddr, "200", 3600, "b2")
+	tieBreakerBidder := common.HexToAddress("0x9000000000000000000000000000000000000009").Hex()
+	tieBreaker, tieBreakerCommit := createRevealedBid(tieBreakerBidder, "200", 3600, "c3")
+	setCommitCreatedAt(slowerCommit.ID, time.Unix(now-300, 0))
+	setCommitCreatedAt(fasterCommit.ID, time.Unix(now-200, 0))
+	setCommitCreatedAt(tieBreakerCommit.ID, time.Unix(now-100, 0))
 	_, err = db.CreateBidCommit(ctx, &storage.BidCommit{
 		RFQID:      rfq.ID,
 		Bidder:     common.HexToAddress("0x8000000000000000000000000000000000000008").Hex(),
@@ -383,8 +401,14 @@ func TestFinalizeSealedBidding_SelectsDeterministicBestBid(t *testing.T) {
 	if summary.BestBidID == nil || *summary.BestBidID != faster.ID {
 		t.Fatalf("expected faster equal-price bid %d to win, got %+v", faster.ID, summary.BestBidID)
 	}
-	if len(summary.EligibleBidIDs) != 2 {
-		t.Fatalf("expected 2 eligible bids, got %d", len(summary.EligibleBidIDs))
+	if len(summary.EligibleBidIDs) != 3 {
+		t.Fatalf("expected 3 eligible bids, got %d", len(summary.EligibleBidIDs))
+	}
+	expectedEligibleBidIDs := []int64{faster.ID, tieBreaker.ID, slower.ID}
+	for i, bidID := range expectedEligibleBidIDs {
+		if summary.EligibleBidIDs[i] != bidID {
+			t.Fatalf("expected eligible bid %d at position %d, got %d", bidID, i, summary.EligibleBidIDs[i])
+		}
 	}
 
 	updatedRFQ, err := db.GetRFQ(ctx, rfq.ID)
@@ -409,7 +433,7 @@ func TestFinalizeSealedBidding_SelectsDeterministicBestBid(t *testing.T) {
 		t.Fatalf("expected hidden commit to expire, got %q", hidden.Status)
 	}
 
-	if slower.ID == faster.ID {
+	if slower.ID == faster.ID || faster.ID == tieBreaker.ID || slower.ID == tieBreaker.ID {
 		t.Fatal("expected distinct bids in test fixture")
 	}
 }
