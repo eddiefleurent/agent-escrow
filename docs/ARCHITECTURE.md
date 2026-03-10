@@ -351,7 +351,7 @@ Architecturally, the important point is not the exact endpoint list; it is that 
 
 Several off-chain subsystems are central to the architecture because they add delegation-specific behavior without replacing the settlement kernel:
 
-- **Bidding** keeps price discovery, capability matching, and credential verification off-chain until a winning bid is formalized as an escrow.
+- **Bidding** keeps price discovery, capability matching, and credential verification off-chain until a winning bid is formalized as an escrow. In sealed mode, the server applies deterministic post-reveal finalization and bidder cooldowns for commit-without-reveal behavior.
 - **Contract-first decomposition** validates that task breakdowns remain settlement-compatible before leaf tasks become RFQs.
 - **Attestation chains** add transitive accountability for sub-delegation while remaining off-chain evidence rather than on-chain consensus.
 - **Checkpoint/resume** adds restartable work handoff for adaptive delegation without changing escrow custody rules.

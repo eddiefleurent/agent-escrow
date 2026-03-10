@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "generated_at": "2026-03-01T00:00:00Z",
+  "generated_at": "2026-03-10T00:00:00Z",
   "sources": [
     "docs/intelligent-ai-delegation.md",
     "docs/ROADMAP.md",
@@ -722,7 +722,7 @@
         "Define deterministic fallback rules when top commits are not revealed.",
         "Evaluate transport compatibility across MCP, HTTP, and CLI case by case; avoid compatibility shims unless explicitly requested."
       ],
-      "status": "planned"
+      "status": "implemented"
     },
     {
       "revisit_id": "R2",

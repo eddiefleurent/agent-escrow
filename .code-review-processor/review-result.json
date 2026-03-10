@@ -1,0 +1,3 @@
+{
+  "skip_comment": "Skipped this finding: `svc.RevealBid` now rejects after `reveal_deadline` before it opens `BeginTx`, so rewriting `TestFinalizeSealedBidding_ImmediateTxBlocksLateReveal` to call the service would no longer cover the competing-write race the test is asserting. The current direct `CreateBidTx`/`UpdateBidCommitRevealTx` path is exercising the remaining post-deadline write race, and the review suggestion is stale against the current service behavior."
+}

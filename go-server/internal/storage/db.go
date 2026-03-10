@@ -6,6 +6,8 @@ import (
 	_ "embed"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	_ "modernc.org/sqlite" // SQLite driver registration
 )
@@ -88,28 +90,46 @@ var migration025SQL string
 //go:embed migrations/026_add_escrow_create_intent.sql
 var migration026SQL string
 
+//go:embed migrations/027_add_sealed_bid_hardening.sql
+var migration027SQL string
+
 type DB struct {
 	db *sql.DB
+
+	beginImmediateTxHookMu       sync.RWMutex
+	beginImmediateTxHook         func()
+	beginImmediateTxAcquiredHook func()
 }
 
+// ImmediateTx holds a single SQLite connection inside a BEGIN IMMEDIATE
+// transaction so reads and writes share the same locked snapshot.
+type ImmediateTx struct {
+	conn *sql.Conn
+	done atomic.Bool
+}
+
+var inMemoryDBCounter atomic.Uint64
+
 func Open(dsn string) (*DB, error) {
+	// _pragma parameters are applied to every new connection from the pool,
+	// ensuring WAL mode, foreign keys, and busy_timeout are always active.
+	pragmas := "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
+	if dsn == ":memory:" {
+		id := inMemoryDBCounter.Add(1)
+		dsn = fmt.Sprintf("file:agent_escrow_mem_%d?mode=memory&cache=shared&%s", id, pragmas)
+	} else {
+		sep := "?"
+		if strings.Contains(dsn, "?") {
+			sep = "&"
+		}
+		dsn = dsn + sep + pragmas
+	}
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 
 	ctx := context.Background()
-
-	// Enable WAL mode for better concurrent read performance
-	if _, err := sqlDB.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("enable WAL: %w", err)
-	}
-	if _, err := sqlDB.ExecContext(ctx, "PRAGMA foreign_keys=ON"); err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("enable foreign keys: %w", err)
-	}
-
 	if _, err := sqlDB.ExecContext(ctx, migrationSQL); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)
@@ -144,6 +164,7 @@ func Open(dsn string) (*DB, error) {
 		{"024", migration024SQL},
 		{"025", migration025SQL},
 		{"026", migration026SQL},
+		{"027", migration027SQL},
 	}
 
 	for _, m := range migrations {
@@ -182,6 +203,87 @@ func (d *DB) Close() error {
 
 func (d *DB) BeginTx(ctx context.Context) (*sql.Tx, error) {
 	return d.db.BeginTx(ctx, nil)
+}
+
+// SetBeginImmediateTxTestHook installs a test-only hook that runs immediately
+// before BeginImmediateTx acquires a dedicated connection and issues BEGIN IMMEDIATE.
+func (d *DB) SetBeginImmediateTxTestHook(hook func()) {
+	d.beginImmediateTxHookMu.Lock()
+	defer d.beginImmediateTxHookMu.Unlock()
+	d.beginImmediateTxHook = hook
+}
+
+// SetBeginImmediateTxAcquiredTestHook installs a test-only hook that runs
+// immediately after BeginImmediateTx successfully acquires its BEGIN IMMEDIATE lock.
+func (d *DB) SetBeginImmediateTxAcquiredTestHook(hook func()) {
+	d.beginImmediateTxHookMu.Lock()
+	defer d.beginImmediateTxHookMu.Unlock()
+	d.beginImmediateTxAcquiredHook = hook
+}
+
+func (d *DB) BeginImmediateTx(ctx context.Context) (*ImmediateTx, error) {
+	d.beginImmediateTxHookMu.RLock()
+	hook := d.beginImmediateTxHook
+	acquiredHook := d.beginImmediateTxAcquiredHook
+	d.beginImmediateTxHookMu.RUnlock()
+	if hook != nil {
+		hook()
+	}
+
+	conn, err := d.db.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire db conn: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("begin immediate tx: %w", err)
+	}
+	if acquiredHook != nil {
+		acquiredHook()
+	}
+	return &ImmediateTx{conn: conn}, nil
+}
+
+func (tx *ImmediateTx) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	return tx.conn.ExecContext(ctx, query, args...)
+}
+
+func (tx *ImmediateTx) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return tx.conn.QueryContext(ctx, query, args...)
+}
+
+func (tx *ImmediateTx) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return tx.conn.QueryRowContext(ctx, query, args...)
+}
+
+func (tx *ImmediateTx) Commit(ctx context.Context) error {
+	if !tx.done.CompareAndSwap(false, true) {
+		return nil
+	}
+	_, err := tx.conn.ExecContext(ctx, "COMMIT")
+	closeErr := tx.conn.Close()
+	if err != nil {
+		return fmt.Errorf("commit immediate tx: %w", err)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close immediate tx conn after commit: %w", closeErr)
+	}
+	return nil
+}
+
+func (tx *ImmediateTx) Rollback(ctx context.Context) error {
+	if !tx.done.CompareAndSwap(false, true) {
+		return nil
+	}
+	_, err := tx.conn.ExecContext(ctx, "ROLLBACK")
+	closeErr := tx.conn.Close()
+	if err != nil {
+		return fmt.Errorf("rollback immediate tx: %w", err)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close immediate tx conn after rollback: %w", closeErr)
+	}
+	return nil
 }
 
 func (d *DB) SQLDB() *sql.DB {

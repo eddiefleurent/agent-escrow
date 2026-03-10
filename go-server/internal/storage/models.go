@@ -157,6 +157,10 @@ type RFQ struct {
 	BiddingMode              string    `json:"bidding_mode"`
 	CommitDeadline           int64     `json:"commit_deadline"`
 	RevealDeadline           int64     `json:"reveal_deadline"`
+	SealedBidStatus          string    `json:"sealed_bid_status,omitempty"`
+	SealedBidSelectionRule   string    `json:"sealed_bid_selection_rule,omitempty"`
+	BestBidID                *int64    `json:"best_bid_id,omitempty"`
+	SealedBidFinalizedAt     int64     `json:"sealed_bid_finalized_at,omitempty"`
 	ServiceTier              int       `json:"service_tier"` // 0 = low_assurance, 1 = high_assurance (paper §5.3)
 	ParentEscrowID           *int64    `json:"parent_escrow_id,omitempty"`
 	Status                   string    `json:"status"`
@@ -227,6 +231,14 @@ type BidCommit struct {
 	RevealedBidID *int64    `json:"revealed_bid_id,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type SealedBidderDiscipline struct {
+	Bidder         string    `json:"bidder"`
+	NonRevealCount int       `json:"non_reveal_count"`
+	CooldownUntil  int64     `json:"cooldown_until"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // A2ATask represents an A2A protocol task linked to an escrow (paper §6: A2A Task object extension).

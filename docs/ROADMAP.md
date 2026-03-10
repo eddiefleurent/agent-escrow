@@ -18,16 +18,17 @@ Implementation roadmap for the ["Intelligent AI Delegation"](https://arxiv.org/a
 
 ---
 
-## Snapshot (2026-03-01)
+## Snapshot (2026-03-10)
 
 - **Built strongly:** settlement kernel, market primitives, DCT/authz, attestation chains, checkpoints, ZK slot, quorum, stability controls.
 - **V3 status:** complete (items `12`-`22` implemented).
 - **Previously under-tracked paper requirements now explicit:** social intelligence (`29`) and user training (`30`).
 - **Human delegatees:** supported in model and metadata (`delegate_preference`) but not yet policy-enforced routing.
 - **Monitoring depth:** L0/L1 production; L2/L3 remains staged.
-- **Opinionated implementations worth revisiting now:** items `12`, `15`, `20`, and `21`.
+- **R1 status:** complete. Sealed bidding now applies non-reveal cooldowns, deterministic revealed-bid finalization, and consistent transport semantics.
+- **Opinionated implementations worth revisiting now:** items `15`, `20`, and `21`.
 
-Recommended near-term order: `R1 -> R2 -> R3 -> R4 -> SH1 -> SH2 -> SH3 -> SH4 -> SH5 -> 25 -> 29 -> 30 -> 23 -> 24 -> 26 -> 28 -> 27`.
+Recommended near-term order: `R2 -> R3 -> R4 -> SH1 -> SH2 -> SH3 -> SH4 -> SH5 -> 25 -> 29 -> 30 -> 23 -> 24 -> 26 -> 28 -> 27`.
 
 ---
 
@@ -124,9 +125,9 @@ Recommended near-term order: `R1 -> R2 -> R3 -> R4 -> SH1 -> SH2 -> SH3 -> SH4 -
 
 #### R1 (item 12): Sealed bidding hardening
 
-- [ ] Add anti-grief controls for commit-without-reveal behavior.
-- [ ] Define deterministic fallback rules when top commits are not revealed.
-- [ ] Ensure sealed-bid commit/reveal semantics are consistent across transports that surface sealed-bidding operations.
+- [x] Add anti-grief controls for commit-without-reveal behavior.
+- [x] Define deterministic fallback rules when top commits are not revealed.
+- [x] Ensure sealed-bid commit/reveal semantics are consistent across transports that surface sealed-bidding operations.
 
 #### R2 (item 15): Attestation-chain anchoring
 

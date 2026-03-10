@@ -1538,6 +1538,29 @@ func TestListRFQs_FilterByStatus(t *testing.T) {
 	}
 }
 
+func TestListRFQs_DerivesRevealOpenSealedBidStatus(t *testing.T) {
+	env := setup(t)
+
+	now := time.Now().Unix()
+	createSealedRFQFixture(t, env, now, now-60, now+3600)
+
+	rr := env.request(t, "GET", "/api/v1/rfqs", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var rfqs []map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&rfqs); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(rfqs) != 1 {
+		t.Fatalf("expected 1 rfq, got %d", len(rfqs))
+	}
+	if got := rfqs[0]["sealed_bid_status"]; got != "reveal_open" {
+		t.Fatalf("expected reveal_open sealed bid status, got %v", got)
+	}
+}
+
 func TestGetRFQ_Success(t *testing.T) {
 	env := setup(t)
 	ctx := context.Background()
@@ -1569,12 +1592,45 @@ func TestGetRFQ_Success(t *testing.T) {
 	}
 }
 
+func TestGetRFQ_DerivesRevealOpenSealedBidStatus(t *testing.T) {
+	env := setup(t)
+
+	now := time.Now().Unix()
+	rfq := createSealedRFQFixture(t, env, now, now-60, now+3600)
+
+	rr := env.request(t, "GET", fmt.Sprintf("/api/v1/rfqs/%d", rfq.ID), "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeJSON(t, rr)
+	rfqData, ok := resp["rfq"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected rfq object in response, got %v", resp)
+	}
+	if got := rfqData["sealed_bid_status"]; got != "reveal_open" {
+		t.Fatalf("expected reveal_open sealed bid status, got %v", got)
+	}
+}
+
 func TestGetRFQ_NotFound(t *testing.T) {
 	env := setup(t)
 
 	rr := env.request(t, "GET", "/api/v1/rfqs/999", "")
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+}
+
+func TestGetRFQ_DBErrorReturns500(t *testing.T) {
+	env := setup(t)
+	if err := env.db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	rr := env.request(t, "GET", "/api/v1/rfqs/1", "")
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 
@@ -1678,34 +1734,80 @@ func TestCommitBid_DuplicateNonceRejected(t *testing.T) {
 	}
 }
 
-func TestCommitBid_CommitCapExceeded(t *testing.T) {
+func TestCommitBid_ReplacesPriorCommittedBid(t *testing.T) {
 	env := setup(t)
+	ctx := context.Background()
 	now := time.Now().Unix()
 	rfq := createSealedRFQFixture(t, env, now, now+3600, now+7200)
 
-	for i := 0; i < 3; i++ {
-		body := fmt.Sprintf(`{
-			"bidder": "0x2000000000000000000000000000000000000002",
-			"commitment": "0x%064x",
-			"nonce": "n-cap-%d"
-		}`, i+1, i)
-		rr := env.request(t, "POST", fmt.Sprintf("/api/v1/rfqs/%d/bids/commit", rfq.ID), body)
-		if rr.Code != http.StatusCreated {
-			t.Fatalf("expected commit %d to succeed, got %d: %s", i, rr.Code, rr.Body.String())
-		}
+	first := `{
+		"bidder": "0x2000000000000000000000000000000000000002",
+		"commitment": "0x1111111111111111111111111111111111111111111111111111111111111111",
+		"nonce": "n-replace-1"
+	}`
+	rr := env.request(t, "POST", fmt.Sprintf("/api/v1/rfqs/%d/bids/commit", rfq.ID), first)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected first commit 201, got %d: %s", rr.Code, rr.Body.String())
 	}
 
-	overCap := `{
+	second := `{
 		"bidder": "0x2000000000000000000000000000000000000002",
-		"commitment": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-		"nonce": "n-cap-over"
+		"commitment": "0x2222222222222222222222222222222222222222222222222222222222222222",
+		"nonce": "n-replace-2"
 	}`
-	rr := env.request(t, "POST", fmt.Sprintf("/api/v1/rfqs/%d/bids/commit", rfq.ID), overCap)
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected commit cap rejection 400, got %d: %s", rr.Code, rr.Body.String())
+	rr = env.request(t, "POST", fmt.Sprintf("/api/v1/rfqs/%d/bids/commit", rfq.ID), second)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected replacement commit 201, got %d: %s", rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), "commit cap exceeded") {
-		t.Fatalf("expected commit cap error, got: %s", rr.Body.String())
+
+	firstCommit, err := env.db.GetBidCommitByRFQBidderNonce(ctx, rfq.ID, common.HexToAddress("0x2000000000000000000000000000000000000002").Hex(), "n-replace-1")
+	if err != nil {
+		t.Fatalf("get first commit: %v", err)
+	}
+	if firstCommit.Status != "superseded" {
+		t.Fatalf("expected first commit superseded, got %q", firstCommit.Status)
+	}
+}
+
+func TestCommitBid_CooldownRejectedAfterNonReveal(t *testing.T) {
+	env := setup(t)
+	ctx := context.Background()
+	now := time.Now().Unix()
+
+	expiredRFQ := createSealedRFQFixture(t, env, now, now-120, now-60)
+	_, err := env.db.CreateBidCommit(ctx, &storage.BidCommit{
+		RFQID:      expiredRFQ.ID,
+		Bidder:     common.HexToAddress("0x2000000000000000000000000000000000000002").Hex(),
+		Commitment: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Nonce:      "n-cooldown-old",
+		Status:     "committed",
+	})
+	if err != nil {
+		t.Fatalf("setup expired commit: %v", err)
+	}
+
+	// Trigger sealed-bid finalization and strike accounting.
+	rr := env.request(t, "GET", fmt.Sprintf("/api/v1/rfqs/%d", expiredRFQ.ID), "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected finalization GET 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	openRFQ := createSealedRFQFixture(t, env, now, now+3600, now+7200)
+	body := `{
+		"bidder": "0x2000000000000000000000000000000000000002",
+		"commitment": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"nonce": "n-cooldown-new"
+	}`
+	rr = env.request(t, "POST", fmt.Sprintf("/api/v1/rfqs/%d/bids/commit", openRFQ.ID), body)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp := decodeJSON(t, rr)
+	if resp["retry_after_seconds"] == nil {
+		t.Fatalf("expected retry_after_seconds in response, got %v", resp)
+	}
+	if rr.Header().Get("Retry-After") == "" {
+		t.Fatal("expected Retry-After header")
 	}
 }
 
@@ -1987,6 +2089,100 @@ func TestRevealBid_ExpiredCommitMarkedWhenRevealWindowEnded(t *testing.T) {
 	}
 	if updated.Status != "expired" {
 		t.Fatalf("expected committed bid to be marked expired, got %q", updated.Status)
+	}
+}
+
+func TestGetRFQ_FinalizesSealedBiddingAfterRevealDeadline(t *testing.T) {
+	env := setup(t)
+	ctx := context.Background()
+	now := time.Now().Unix()
+
+	rfq := createSealedRFQFixture(t, env, now, now-200, now-100)
+
+	bid1, err := env.db.CreateBid(ctx, &storage.Bid{
+		RFQID:              rfq.ID,
+		Bidder:             "0x2000000000000000000000000000000000000002",
+		Amount:             "200",
+		EstimatedDuration:  7200,
+		ReputationBond:     "0",
+		MilestonesJSON:     "[]",
+		Message:            "",
+		Status:             "pending",
+		ExpiresAt:          now + 600,
+		CredentialsJSON:    "[]",
+		CredentialVerified: true,
+	})
+	if err != nil {
+		t.Fatalf("create bid1: %v", err)
+	}
+	bid2, err := env.db.CreateBid(ctx, &storage.Bid{
+		RFQID:              rfq.ID,
+		Bidder:             "0x3000000000000000000000000000000000000003",
+		Amount:             "200",
+		EstimatedDuration:  3600,
+		ReputationBond:     "0",
+		MilestonesJSON:     "[]",
+		Message:            "",
+		Status:             "pending",
+		ExpiresAt:          now + 600,
+		CredentialsJSON:    "[]",
+		CredentialVerified: true,
+	})
+	if err != nil {
+		t.Fatalf("create bid2: %v", err)
+	}
+
+	_, err = env.db.CreateBidCommit(ctx, &storage.BidCommit{
+		RFQID:         rfq.ID,
+		Bidder:        bid1.Bidder,
+		Commitment:    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Nonce:         "n-best-1",
+		Status:        "revealed",
+		RevealedBidID: &bid1.ID,
+	})
+	if err != nil {
+		t.Fatalf("create bid1 commit: %v", err)
+	}
+	_, err = env.db.CreateBidCommit(ctx, &storage.BidCommit{
+		RFQID:         rfq.ID,
+		Bidder:        bid2.Bidder,
+		Commitment:    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		Nonce:         "n-best-2",
+		Status:        "revealed",
+		RevealedBidID: &bid2.ID,
+	})
+	if err != nil {
+		t.Fatalf("create bid2 commit: %v", err)
+	}
+	_, err = env.db.CreateBidCommit(ctx, &storage.BidCommit{
+		RFQID:      rfq.ID,
+		Bidder:     "0x8000000000000000000000000000000000000008",
+		Commitment: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		Nonce:      "n-hidden",
+		Status:     "committed",
+	})
+	if err != nil {
+		t.Fatalf("create hidden commit: %v", err)
+	}
+
+	rr := env.request(t, "GET", fmt.Sprintf("/api/v1/rfqs/%d", rfq.ID), "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeJSON(t, rr)
+	rfqResp, ok := resp["rfq"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected rfq object, got %T", resp["rfq"])
+	}
+	if got := rfqResp["sealed_bid_status"]; got != "finalized" {
+		t.Fatalf("expected finalized sealed bid status, got %v", got)
+	}
+	if got := rfqResp["best_bid_id"]; got != float64(bid2.ID) {
+		t.Fatalf("expected best_bid_id %d, got %v", bid2.ID, got)
+	}
+	if rfqResp["sealed_bid_selection_rule"] == "" {
+		t.Fatal("expected sealed_bid_selection_rule in rfq response")
 	}
 }
 

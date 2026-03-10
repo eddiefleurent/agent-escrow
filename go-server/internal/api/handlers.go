@@ -1281,7 +1281,7 @@ func (h *Handlers) ListRFQs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, rfqs)
+	writeJSON(w, http.StatusOK, h.biddingService().NormalizeRFQs(rfqs, time.Now()))
 }
 
 func (h *Handlers) GetRFQ(w http.ResponseWriter, r *http.Request) {
@@ -1293,16 +1293,32 @@ func (h *Handlers) GetRFQ(w http.ResponseWriter, r *http.Request) {
 
 	rfq, err := h.db.GetRFQ(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		slog.Error("failed to fetch rfq", "rfq_id", id, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch rfq"})
 		return
 	}
-	if time.Now().Unix() > rfq.RevealDeadline {
-		if err := h.db.ExpireCommittedBidCommits(r.Context(), rfq.ID); err != nil {
-			slog.Error("failed to expire committed bid commits", "rfq_id", id, "error", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to expire stale bid commits"})
+	if rfq.BiddingMode == "sealed" && time.Now().Unix() > rfq.RevealDeadline {
+		if _, err := h.biddingService().FinalizeSealedBidding(r.Context(), rfq.ID); err != nil {
+			slog.Error("failed to finalize sealed bidding", "rfq_id", id, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to finalize sealed bidding"})
+			return
+		}
+		rfq, err = h.db.GetRFQ(r.Context(), id)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+				return
+			}
+			slog.Error("failed to refetch rfq after sealed bidding finalization", "rfq_id", id, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch rfq"})
 			return
 		}
 	}
+	rfq = h.biddingService().NormalizeRFQ(rfq, time.Now())
 
 	bids, err := h.db.ListBidsByRFQ(r.Context(), id)
 	if err != nil {
@@ -1338,7 +1354,6 @@ func (h *Handlers) GetRFQ(w http.ResponseWriter, r *http.Request) {
 			UpdatedAt:     c.UpdatedAt,
 		})
 	}
-
 	writeJSON(w, http.StatusOK, map[string]any{
 		"rfq":        rfq,
 		"bids":       bids,
@@ -1429,6 +1444,17 @@ func (h *Handlers) CommitBid(w http.ResponseWriter, r *http.Request) {
 		Nonce:      req.Nonce,
 	})
 	if err != nil {
+		var cooldownErr *bidding.SealedBidCooldownError
+		if errors.As(err, &cooldownErr) {
+			w.Header().Set("Retry-After", strconv.FormatInt(cooldownErr.RetryAfterSeconds(), 10))
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{
+				"error":               cooldownErr.Error(),
+				"retry_after_seconds": cooldownErr.RetryAfterSeconds(),
+				"retry_at":            cooldownErr.RetryAt.Unix(),
+				"strike_count":        cooldownErr.StrikeCount,
+			})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -1489,10 +1515,10 @@ func (h *Handlers) ListBids(w http.ResponseWriter, r *http.Request) {
 	}
 	rfq, err := h.db.GetRFQ(r.Context(), rfqID)
 	if err == nil {
-		if time.Now().Unix() > rfq.RevealDeadline {
-			if expireErr := h.db.ExpireCommittedBidCommits(r.Context(), rfqID); expireErr != nil {
-				slog.Error("failed to expire committed bid commits", "rfq_id", rfqID, "error", expireErr)
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to expire stale bid commits"})
+		if rfq.BiddingMode == "sealed" && time.Now().Unix() > rfq.RevealDeadline {
+			if _, finalizeErr := h.biddingService().FinalizeSealedBidding(r.Context(), rfqID); finalizeErr != nil {
+				slog.Error("failed to finalize sealed bidding", "rfq_id", rfqID, "error", finalizeErr)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to finalize sealed bidding"})
 				return
 			}
 		}
