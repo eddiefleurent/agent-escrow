@@ -295,49 +295,13 @@ func (s *Service) FinalizeSealedBidding(ctx context.Context, rfqID int64) (*Seal
 	if rfq.BiddingMode != "sealed" {
 		return buildSealedBidSummary(rfq, nil, 0), nil
 	}
+	if rfq.SealedBidStatus == "finalized" || rfq.SealedBidStatus == "no_valid_reveals" {
+		return buildSealedBidSummary(rfq, nil, 0), nil
+	}
 
 	now := time.Now().UTC()
 	if now.Unix() <= rfq.RevealDeadline {
 		return nil, errors.New("cannot finalize sealed bidding before reveal phase ends")
-	}
-
-	committed, err := s.DB.ListCommittedBidCommitsByRFQ(ctx, rfqID)
-	if err != nil {
-		return nil, err
-	}
-
-	dbTx, err := s.DB.BeginTx(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin db tx: %w", err)
-	}
-
-	bidderCooldowns := make(map[string]int64)
-	for _, commit := range committed {
-		discipline, disciplineErr := s.DB.GetSealedBidderDisciplineTx(ctx, dbTx, commit.Bidder)
-		strikeCount := 1
-		if disciplineErr == nil {
-			strikeCount = discipline.NonRevealCount + 1
-		} else if !errors.Is(disciplineErr, sql.ErrNoRows) {
-			dbTx.Rollback()
-			return nil, disciplineErr
-		}
-		cooldownUntil := now.Add(sealedBidCooldownDuration(strikeCount)).Unix()
-		if existing, ok := bidderCooldowns[commit.Bidder]; !ok || cooldownUntil > existing {
-			bidderCooldowns[commit.Bidder] = cooldownUntil
-		}
-	}
-	for bidder, cooldownUntil := range bidderCooldowns {
-		if upsertErr := s.DB.UpsertSealedBidderDisciplineTx(ctx, dbTx, bidder, cooldownUntil); upsertErr != nil {
-			dbTx.Rollback()
-			return nil, upsertErr
-		}
-	}
-	if err := s.DB.ExpireCommittedBidCommitsTx(ctx, dbTx, rfqID); err != nil {
-		dbTx.Rollback()
-		return nil, err
-	}
-	if err := dbTx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit db tx: %w", err)
 	}
 
 	candidates, err := s.eligibleSealedBidCandidates(ctx, rfq, now)
@@ -356,8 +320,51 @@ func (s *Service) FinalizeSealedBidding(ctx context.Context, rfqID int64) (*Seal
 		finalizedStatus = "finalized"
 		bestBidID = &candidates[0].bid.ID
 	}
-	if err := s.DB.UpdateRFQSealedBiddingState(
+
+	dbTx, err := s.DB.BeginTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin db tx: %w", err)
+	}
+	defer dbTx.Rollback()
+
+	currentRFQ, err := s.DB.GetRFQTx(ctx, dbTx, rfqID)
+	if err != nil {
+		return nil, fmt.Errorf("get rfq in tx: %w", err)
+	}
+	if currentRFQ.SealedBidStatus == "finalized" || currentRFQ.SealedBidStatus == "no_valid_reveals" {
+		return buildSealedBidSummary(currentRFQ, nil, 0), nil
+	}
+
+	committed, err := s.DB.ListCommittedBidCommitsByRFQTx(ctx, dbTx, rfqID)
+	if err != nil {
+		return nil, err
+	}
+
+	bidderCooldowns := make(map[string]int64)
+	for _, commit := range committed {
+		discipline, disciplineErr := s.DB.GetSealedBidderDisciplineTx(ctx, dbTx, commit.Bidder)
+		strikeCount := 1
+		if disciplineErr == nil {
+			strikeCount = discipline.NonRevealCount + 1
+		} else if !errors.Is(disciplineErr, sql.ErrNoRows) {
+			return nil, disciplineErr
+		}
+		cooldownUntil := now.Add(sealedBidCooldownDuration(strikeCount)).Unix()
+		if existing, ok := bidderCooldowns[commit.Bidder]; !ok || cooldownUntil > existing {
+			bidderCooldowns[commit.Bidder] = cooldownUntil
+		}
+	}
+	for bidder, cooldownUntil := range bidderCooldowns {
+		if upsertErr := s.DB.UpsertSealedBidderDisciplineTx(ctx, dbTx, bidder, cooldownUntil); upsertErr != nil {
+			return nil, upsertErr
+		}
+	}
+	if err := s.DB.ExpireCommittedBidCommitsTx(ctx, dbTx, rfqID); err != nil {
+		return nil, err
+	}
+	if err := s.DB.UpdateRFQSealedBiddingStateTx(
 		ctx,
+		dbTx,
 		rfqID,
 		finalizedStatus,
 		sealedBidSelectionRule,
@@ -366,12 +373,16 @@ func (s *Service) FinalizeSealedBidding(ctx context.Context, rfqID int64) (*Seal
 	); err != nil {
 		return nil, err
 	}
-
-	updatedRFQ, err := s.DB.GetRFQ(ctx, rfqID)
-	if err != nil {
-		return nil, fmt.Errorf("get finalized rfq: %w", err)
+	if err := dbTx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit db tx: %w", err)
 	}
-	return buildSealedBidSummary(updatedRFQ, eligibleBidIDs, len(committed)), nil
+
+	currentRFQ.SealedBidStatus = finalizedStatus
+	currentRFQ.SealedBidSelectionRule = sealedBidSelectionRule
+	currentRFQ.BestBidID = bestBidID
+	currentRFQ.SealedBidFinalizedAt = now.Unix()
+
+	return buildSealedBidSummary(currentRFQ, eligibleBidIDs, len(committed)), nil
 }
 
 type CreateRFQParams struct {

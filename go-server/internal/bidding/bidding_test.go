@@ -394,6 +394,110 @@ func TestFinalizeSealedBidding_SelectsDeterministicBestBid(t *testing.T) {
 	}
 }
 
+func TestFinalizeSealedBidding_IsIdempotentAfterInitialFinalization(t *testing.T) {
+	svc, db, _ := newBiddingService(t, 0)
+	ctx := context.Background()
+	now := time.Now().Unix()
+
+	rfq, err := db.CreateRFQ(ctx, &storage.RFQ{
+		Title:                    "rfq-finalize-idempotent",
+		Description:              "desc",
+		SpecHash:                 "0xabc",
+		Buyer:                    testBuyerAddr,
+		Token:                    "",
+		BudgetMin:                "100",
+		BudgetMax:                "500",
+		Deadline:                 now + 3600,
+		ReviewPeriodSeconds:      60,
+		DisputePeriodSeconds:     60,
+		ArbitratorTimeoutSeconds: 60,
+		Verifier:                 testVerifierAddr,
+		Arbitrator:               testArbitratorAddr,
+		WorkerStake:              "0",
+		MilestonesJSON:           "[]",
+		RequirementsJSON:         "{}",
+		RequiredCredentialsJSON:  "[]",
+		BiddingMode:              "sealed",
+		CommitDeadline:           now - 1200,
+		RevealDeadline:           now - 600,
+		ServiceTier:              0,
+		Status:                   "open",
+		ExpiresAt:                now + 1800,
+	})
+	if err != nil {
+		t.Fatalf("create rfq: %v", err)
+	}
+
+	createRevealedBid := func(bidder, amount string, duration int64, nonce string, expiresAt int64) *storage.Bid {
+		t.Helper()
+		bid, createErr := db.CreateBid(ctx, &storage.Bid{
+			RFQID:              rfq.ID,
+			Bidder:             bidder,
+			Amount:             amount,
+			EstimatedDuration:  duration,
+			ReputationBond:     "0",
+			MilestonesJSON:     "[]",
+			Message:            "",
+			Status:             "pending",
+			ExpiresAt:          expiresAt,
+			CredentialsJSON:    "[]",
+			CredentialVerified: true,
+		})
+		if createErr != nil {
+			t.Fatalf("create bid %s: %v", nonce, createErr)
+		}
+		_, createErr = db.CreateBidCommit(ctx, &storage.BidCommit{
+			RFQID:         rfq.ID,
+			Bidder:        bidder,
+			Commitment:    fmt.Sprintf("0x%064x", len(nonce)),
+			Nonce:         nonce,
+			Status:        "revealed",
+			RevealedBidID: &bid.ID,
+		})
+		if createErr != nil {
+			t.Fatalf("create commit %s: %v", nonce, createErr)
+		}
+		return bid
+	}
+
+	winningBid := createRevealedBid(testWorkerAddr, "200", 1800, "winner", now+300)
+	fallbackBid := createRevealedBid(testWorkerAltAddr, "210", 1200, "fallback", now+1200)
+
+	firstSummary, err := svc.FinalizeSealedBidding(ctx, rfq.ID)
+	if err != nil {
+		t.Fatalf("first finalize sealed bidding: %v", err)
+	}
+	if firstSummary.BestBidID == nil || *firstSummary.BestBidID != winningBid.ID {
+		t.Fatalf("expected initial best bid %d, got %+v", winningBid.ID, firstSummary.BestBidID)
+	}
+
+	if _, err := db.SQLDB().ExecContext(ctx, "UPDATE bids SET expires_at = ? WHERE id = ?", now-1, winningBid.ID); err != nil {
+		t.Fatalf("expire winning bid after finalize: %v", err)
+	}
+
+	secondSummary, err := svc.FinalizeSealedBidding(ctx, rfq.ID)
+	if err != nil {
+		t.Fatalf("second finalize sealed bidding: %v", err)
+	}
+	if secondSummary.BestBidID == nil || *secondSummary.BestBidID != winningBid.ID {
+		t.Fatalf("expected persisted best bid %d, got %+v", winningBid.ID, secondSummary.BestBidID)
+	}
+	if len(secondSummary.EligibleBidIDs) != 0 {
+		t.Fatalf("expected idempotent summary to avoid recomputing eligible bids, got %d", len(secondSummary.EligibleBidIDs))
+	}
+
+	updatedRFQ, err := db.GetRFQ(ctx, rfq.ID)
+	if err != nil {
+		t.Fatalf("get rfq after second finalize: %v", err)
+	}
+	if updatedRFQ.BestBidID == nil || *updatedRFQ.BestBidID != winningBid.ID {
+		t.Fatalf("expected persisted best bid to remain %d, got %+v", winningBid.ID, updatedRFQ.BestBidID)
+	}
+	if updatedRFQ.BestBidID != nil && *updatedRFQ.BestBidID == fallbackBid.ID {
+		t.Fatalf("expected fallback bid %d not to replace persisted winner", fallbackBid.ID)
+	}
+}
+
 func TestFinalizeSealedBidding_NoValidReveals(t *testing.T) {
 	svc, db, _ := newBiddingService(t, 0)
 	ctx := context.Background()

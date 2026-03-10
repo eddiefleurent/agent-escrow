@@ -929,6 +929,15 @@ func (d *DB) GetRFQ(ctx context.Context, id int64) (*RFQ, error) {
 	return r, nil
 }
 
+func (d *DB) GetRFQTx(ctx context.Context, tx *sql.Tx, id int64) (*RFQ, error) {
+	row := tx.QueryRowContext(ctx, `SELECT `+rfqColumns+` FROM rfqs WHERE id = ?`, id)
+	r, err := scanRFQ(row)
+	if err != nil {
+		return nil, fmt.Errorf("get rfq: %w", err)
+	}
+	return r, nil
+}
+
 func updateRFQSealedBiddingStateOn(
 	ctx context.Context,
 	q dbExecer,
