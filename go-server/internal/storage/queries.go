@@ -975,16 +975,6 @@ func updateRFQSealedBiddingStateOn(
 	return nil
 }
 
-func (d *DB) UpdateRFQSealedBiddingState(
-	ctx context.Context,
-	rfqID int64,
-	sealedBidStatus, selectionRule string,
-	bestBidID *int64,
-	finalizedAt int64,
-) error {
-	return updateRFQSealedBiddingStateOn(ctx, d.db, rfqID, sealedBidStatus, selectionRule, bestBidID, finalizedAt)
-}
-
 func (d *DB) UpdateRFQSealedBiddingStateTx(
 	ctx context.Context,
 	tx *sql.Tx,

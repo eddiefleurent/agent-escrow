@@ -311,6 +311,9 @@ func (s *Service) FinalizeSealedBidding(ctx context.Context, rfqID int64) (*Seal
 	if rfq.BiddingMode != "sealed" {
 		return buildSealedBidSummary(rfq, nil, 0), nil
 	}
+	if rfq.Status != "open" {
+		return buildSealedBidSummary(rfq, nil, 0), nil
+	}
 	if rfq.SealedBidStatus == "finalized" || rfq.SealedBidStatus == "no_valid_reveals" {
 		return buildSealedBidSummary(rfq, nil, 0), nil
 	}
@@ -333,6 +336,9 @@ func (s *Service) FinalizeSealedBidding(ctx context.Context, rfqID int64) (*Seal
 		return nil, fmt.Errorf("get rfq in tx: %w", err)
 	}
 	if currentRFQ.SealedBidStatus == "finalized" || currentRFQ.SealedBidStatus == "no_valid_reveals" {
+		return buildSealedBidSummary(currentRFQ, nil, 0), nil
+	}
+	if currentRFQ.Status != "open" {
 		return buildSealedBidSummary(currentRFQ, nil, 0), nil
 	}
 	if now.Unix() <= currentRFQ.RevealDeadline {

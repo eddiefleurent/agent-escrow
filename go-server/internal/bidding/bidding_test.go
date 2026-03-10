@@ -511,6 +511,86 @@ func TestFinalizeSealedBidding_IsIdempotentAfterInitialFinalization(t *testing.T
 	}
 }
 
+func TestFinalizeSealedBidding_SkipsClosedRFQWithoutPersistedStatus(t *testing.T) {
+	svc, db, _ := newBiddingService(t, 0)
+	ctx := context.Background()
+	now := time.Now().Unix()
+
+	rfq, err := db.CreateRFQ(ctx, &storage.RFQ{
+		Title:                    "rfq-finalize-closed",
+		Description:              "desc",
+		SpecHash:                 "0xabc",
+		Buyer:                    testBuyerAddr,
+		Token:                    "",
+		BudgetMin:                "100",
+		BudgetMax:                "500",
+		Deadline:                 now + 3600,
+		ReviewPeriodSeconds:      60,
+		DisputePeriodSeconds:     60,
+		ArbitratorTimeoutSeconds: 60,
+		Verifier:                 testVerifierAddr,
+		Arbitrator:               testArbitratorAddr,
+		WorkerStake:              "0",
+		MilestonesJSON:           "[]",
+		RequirementsJSON:         "{}",
+		RequiredCredentialsJSON:  "[]",
+		BiddingMode:              "sealed",
+		CommitDeadline:           now - 1200,
+		RevealDeadline:           now - 600,
+		ServiceTier:              0,
+		Status:                   "closed",
+		ExpiresAt:                now - 1,
+	})
+	if err != nil {
+		t.Fatalf("create rfq: %v", err)
+	}
+
+	acceptedBid, err := db.CreateBid(ctx, &storage.Bid{
+		RFQID:              rfq.ID,
+		Bidder:             testWorkerAddr,
+		Amount:             "120",
+		EstimatedDuration:  1800,
+		ReputationBond:     "0",
+		MilestonesJSON:     "[]",
+		Message:            "",
+		Status:             "accepted",
+		ExpiresAt:          now + 300,
+		CredentialsJSON:    "[]",
+		CredentialVerified: true,
+	})
+	if err != nil {
+		t.Fatalf("create accepted bid: %v", err)
+	}
+	if _, err := db.SQLDB().ExecContext(ctx, "UPDATE rfqs SET best_bid_id = ? WHERE id = ?", acceptedBid.ID, rfq.ID); err != nil {
+		t.Fatalf("set best bid: %v", err)
+	}
+
+	summary, err := svc.FinalizeSealedBidding(ctx, rfq.ID)
+	if err != nil {
+		t.Fatalf("finalize sealed bidding: %v", err)
+	}
+	if summary.Finalized {
+		t.Fatal("expected closed RFQ with empty sealed status to skip finalization")
+	}
+	if summary.BestBidID == nil || *summary.BestBidID != acceptedBid.ID {
+		t.Fatalf("expected accepted bid %d to remain selected, got %+v", acceptedBid.ID, summary.BestBidID)
+	}
+
+	updatedRFQ, err := db.GetRFQ(ctx, rfq.ID)
+	if err != nil {
+		t.Fatalf("get updated rfq: %v", err)
+	}
+	if updatedRFQ.SealedBidStatus != "" {
+		t.Fatalf("expected sealed bid status to remain empty, got %q", updatedRFQ.SealedBidStatus)
+	}
+	if updatedRFQ.BestBidID == nil || *updatedRFQ.BestBidID != acceptedBid.ID {
+		t.Fatalf("expected persisted best bid %d, got %+v", acceptedBid.ID, updatedRFQ.BestBidID)
+	}
+	if updatedRFQ.SealedBidFinalizedAt != 0 {
+		t.Fatalf("expected finalized_at to remain unset, got %d", updatedRFQ.SealedBidFinalizedAt)
+	}
+}
+
 func TestFinalizeSealedBidding_NoValidReveals(t *testing.T) {
 	svc, db, _ := newBiddingService(t, 0)
 	ctx := context.Background()

@@ -1,3 +1,1 @@
-{
-  "skip_comment": "I verified this against the current branch and the handler already does the requested split: `GetRFQ` returns 404 only for `errors.Is(err, sql.ErrNoRows)` and logs plus returns 500 for other database failures. There is no separate repository `ErrNotFound` sentinel in the storage layer to add here."
-}
+{"skip_comment":""}
