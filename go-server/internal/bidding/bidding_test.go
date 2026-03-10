@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -1480,8 +1479,8 @@ func TestFinalizeSealedBidding_ImmediateTxBlocksLateReveal(t *testing.T) {
 	if revealErr == nil {
 		t.Fatal("expected late reveal to fail once finalization has started")
 	}
-	if !errors.Is(revealErr, sql.ErrNoRows) && !strings.Contains(revealErr.Error(), "SQLITE_BUSY") {
-		t.Fatalf("expected late reveal to fail with commit expiry or sqlite lock, got %v", revealErr)
+	if !errors.Is(revealErr, sql.ErrNoRows) {
+		t.Fatalf("expected late reveal to fail with commit expiry, got %v", revealErr)
 	}
 
 	updatedCommit, err := db.GetBidCommit(ctx, lateCommit.ID)
