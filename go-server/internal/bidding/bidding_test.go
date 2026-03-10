@@ -252,6 +252,14 @@ func TestCommitBid_ReplacesPriorCommittedBid(t *testing.T) {
 		t.Fatalf("expected first commit to be superseded, got %q", updatedFirst.Status)
 	}
 
+	updatedSecond, err := db.GetBidCommit(ctx, second.ID)
+	if err != nil {
+		t.Fatalf("get second commit: %v", err)
+	}
+	if updatedSecond.Status != "committed" {
+		t.Fatalf("expected second commit status committed, got %q", updatedSecond.Status)
+	}
+
 	activeCount, err := db.CountActiveBidCommitsByRFQBidder(ctx, rfq.ID, common.HexToAddress(testWorkerAddr).Hex())
 	if err != nil {
 		t.Fatalf("count active commits: %v", err)
@@ -981,80 +989,6 @@ func TestAcceptBid_RejectsLosingEligibleBidOnInitialSealedFinalization(t *testin
 	}
 }
 
-func TestCommitBid_SupersedesPriorCommittedBidForBidder(t *testing.T) {
-	svc, db, _ := newBiddingService(t, 0)
-	ctx := context.Background()
-	now := time.Now().Unix()
-
-	rfq, err := db.CreateRFQ(ctx, &storage.RFQ{
-		Title:                    "rfq-supersede",
-		Description:              "desc",
-		SpecHash:                 "0xabc",
-		Buyer:                    testBuyerAddr,
-		Token:                    "",
-		BudgetMin:                "100",
-		BudgetMax:                "300",
-		Deadline:                 now + 3600,
-		ReviewPeriodSeconds:      60,
-		DisputePeriodSeconds:     60,
-		ArbitratorTimeoutSeconds: 60,
-		Verifier:                 testVerifierAddr,
-		Arbitrator:               testArbitratorAddr,
-		WorkerStake:              "0",
-		MilestonesJSON:           "[]",
-		RequirementsJSON:         "{}",
-		RequiredCredentialsJSON:  "[]",
-		BiddingMode:              "sealed",
-		CommitDeadline:           now + 600,
-		RevealDeadline:           now + 1200,
-		ServiceTier:              0,
-		Status:                   "open",
-		ExpiresAt:                now + 1800,
-	})
-	if err != nil {
-		t.Fatalf("create rfq: %v", err)
-	}
-
-	first, err := svc.CommitBid(ctx, CommitBidParams{
-		RFQID:      rfq.ID,
-		Bidder:     testWorkerAddr,
-		Commitment: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Nonce:      "nonce-1",
-	})
-	if err != nil {
-		t.Fatalf("first commit: %v", err)
-	}
-
-	second, err := svc.CommitBid(ctx, CommitBidParams{
-		RFQID:      rfq.ID,
-		Bidder:     testWorkerAddr,
-		Commitment: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		Nonce:      "nonce-2",
-	})
-	if err != nil {
-		t.Fatalf("second commit: %v", err)
-	}
-	if second.ID == first.ID {
-		t.Fatalf("expected a replacement commit, got the same id %d", second.ID)
-	}
-
-	updatedFirst, err := db.GetBidCommit(ctx, first.ID)
-	if err != nil {
-		t.Fatalf("get first commit: %v", err)
-	}
-	if updatedFirst.Status != "superseded" {
-		t.Fatalf("expected first commit status superseded, got %q", updatedFirst.Status)
-	}
-
-	activeCount, err := db.CountActiveBidCommitsByRFQBidder(ctx, rfq.ID, common.HexToAddress(testWorkerAddr).Hex())
-	if err != nil {
-		t.Fatalf("count active commits: %v", err)
-	}
-	if activeCount != 1 {
-		t.Fatalf("expected exactly one active commit, got %d", activeCount)
-	}
-}
-
 func TestFinalizeSealedBidding_ExpiresUnrevealedAndSelectsBestBid(t *testing.T) {
 	svc, db, _ := newBiddingService(t, 0)
 	ctx := context.Background()
@@ -1565,84 +1499,5 @@ func TestFinalizeSealedBidding_ImmediateTxBlocksLateReveal(t *testing.T) {
 	}
 	if len(bids) != 1 || bids[0].ID != bestBid.ID {
 		t.Fatalf("expected only finalized winning bid to persist, got %+v", bids)
-	}
-}
-
-func TestCommitBid_ReplacesExistingCommittedBidForBidder(t *testing.T) {
-	svc, db, _ := newBiddingService(t, 0)
-	ctx := context.Background()
-	now := time.Now().Unix()
-
-	rfq, err := db.CreateRFQ(ctx, &storage.RFQ{
-		Title:                    "rfq-commit-replace",
-		Description:              "desc",
-		SpecHash:                 "0xabc",
-		Buyer:                    testBuyerAddr,
-		Token:                    "",
-		BudgetMin:                "100",
-		BudgetMax:                "300",
-		Deadline:                 now + 3600,
-		ReviewPeriodSeconds:      60,
-		DisputePeriodSeconds:     60,
-		ArbitratorTimeoutSeconds: 60,
-		Verifier:                 testVerifierAddr,
-		Arbitrator:               testArbitratorAddr,
-		WorkerStake:              "0",
-		MilestonesJSON:           "[]",
-		RequirementsJSON:         "{}",
-		RequiredCredentialsJSON:  "[]",
-		BiddingMode:              "sealed",
-		CommitDeadline:           now + 600,
-		RevealDeadline:           now + 1200,
-		ServiceTier:              0,
-		Status:                   "open",
-		ExpiresAt:                now + 1800,
-	})
-	if err != nil {
-		t.Fatalf("create rfq: %v", err)
-	}
-
-	first, err := svc.CommitBid(ctx, CommitBidParams{
-		RFQID:      rfq.ID,
-		Bidder:     testWorkerAddr,
-		Commitment: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Nonce:      "nonce-1",
-	})
-	if err != nil {
-		t.Fatalf("first commit: %v", err)
-	}
-
-	second, err := svc.CommitBid(ctx, CommitBidParams{
-		RFQID:      rfq.ID,
-		Bidder:     testWorkerAddr,
-		Commitment: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		Nonce:      "nonce-2",
-	})
-	if err != nil {
-		t.Fatalf("second commit: %v", err)
-	}
-
-	updatedFirst, err := db.GetBidCommit(ctx, first.ID)
-	if err != nil {
-		t.Fatalf("get first commit: %v", err)
-	}
-	if updatedFirst.Status != "superseded" {
-		t.Fatalf("expected first commit status superseded, got %q", updatedFirst.Status)
-	}
-
-	updatedSecond, err := db.GetBidCommit(ctx, second.ID)
-	if err != nil {
-		t.Fatalf("get second commit: %v", err)
-	}
-	if updatedSecond.Status != "committed" {
-		t.Fatalf("expected second commit status committed, got %q", updatedSecond.Status)
-	}
-
-	activeCount, err := db.CountActiveBidCommitsByRFQBidder(ctx, rfq.ID, common.HexToAddress(testWorkerAddr).Hex())
-	if err != nil {
-		t.Fatalf("count active commits: %v", err)
-	}
-	if activeCount != 1 {
-		t.Fatalf("expected 1 active commit after replacement, got %d", activeCount)
 	}
 }
