@@ -1,3 +1,1 @@
-{
-  "skip_comment": "I did not remove `UpdateRFQSealedBiddingStateTx`: the finalization fix now writes the sealed-bid state inside the same transaction, so that helper has an active caller and is no longer dead code."
-}
+{"skip_comment": ""}

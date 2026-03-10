@@ -74,6 +74,8 @@ Server -> DB : INSERT bid_commit (status=committed)
 Server --> WorkerA : commit_id, status=committed
 
 WorkerB -> Server : commit_bid / POST /api/v1/rfqs/{id}/bids/commit\n(commitment=0x..., nonce)
+Server -> DB : Validate: bidder != buyer, RFQ open, before commit_deadline
+Server -> DB : Check sealed-bid cooldown for bidder
 Server -> DB : Supersede any prior unrevealed commit\nfor same bidder+RFQ, then INSERT bid_commit
 Server --> WorkerB : commit_id, status=committed
 
