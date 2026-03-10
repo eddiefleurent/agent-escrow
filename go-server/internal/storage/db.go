@@ -119,10 +119,6 @@ func Open(dsn string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
-	if strings.Contains(dsn, "mode=memory") {
-		sqlDB.SetMaxOpenConns(1)
-		sqlDB.SetMaxIdleConns(1)
-	}
 
 	ctx := context.Background()
 
