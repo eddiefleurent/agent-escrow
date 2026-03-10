@@ -97,7 +97,8 @@ type DB struct {
 	db *sql.DB
 
 	beginImmediateTxHookMu sync.RWMutex
-	beginImmediateTxHook   func()
+	beginImmediateTxHook         func()
+	beginImmediateTxAcquiredHook func()
 }
 
 // ImmediateTx holds a single SQLite connection inside a BEGIN IMMEDIATE
@@ -218,9 +219,18 @@ func (d *DB) SetBeginImmediateTxTestHook(hook func()) {
 	d.beginImmediateTxHook = hook
 }
 
+// SetBeginImmediateTxAcquiredTestHook installs a test-only hook that runs
+// immediately after BeginImmediateTx successfully acquires its BEGIN IMMEDIATE lock.
+func (d *DB) SetBeginImmediateTxAcquiredTestHook(hook func()) {
+	d.beginImmediateTxHookMu.Lock()
+	defer d.beginImmediateTxHookMu.Unlock()
+	d.beginImmediateTxAcquiredHook = hook
+}
+
 func (d *DB) BeginImmediateTx(ctx context.Context) (*ImmediateTx, error) {
 	d.beginImmediateTxHookMu.RLock()
 	hook := d.beginImmediateTxHook
+	acquiredHook := d.beginImmediateTxAcquiredHook
 	d.beginImmediateTxHookMu.RUnlock()
 	if hook != nil {
 		hook()
@@ -233,6 +243,9 @@ func (d *DB) BeginImmediateTx(ctx context.Context) (*ImmediateTx, error) {
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("begin immediate tx: %w", err)
+	}
+	if acquiredHook != nil {
+		acquiredHook()
 	}
 	return &ImmediateTx{conn: conn}, nil
 }

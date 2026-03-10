@@ -1402,42 +1402,32 @@ func TestFinalizeSealedBidding_ImmediateTxBlocksLateReveal(t *testing.T) {
 	}
 
 	finalizeResult := make(chan error, 1)
+	finalizerLocked := make(chan struct{})
+	db.SetBeginImmediateTxAcquiredTestHook(func() {
+		close(finalizerLocked)
+	})
+	t.Cleanup(func() {
+		db.SetBeginImmediateTxAcquiredTestHook(nil)
+	})
+
 	go func() {
 		_, finalizeErr := svc.FinalizeSealedBidding(ctx, rfq.ID)
 		finalizeResult <- finalizeErr
 	}()
 
-	lockObserved := false
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		probeTx, probeErr := db.BeginImmediateTx(ctx)
-		if probeErr != nil {
-			if strings.Contains(probeErr.Error(), "SQLITE_BUSY") {
-				lockObserved = true
-				break
-			}
-			t.Fatalf("probe immediate tx: %v", probeErr)
+	select {
+	case <-finalizerLocked:
+	case finalizeErr := <-finalizeResult:
+		if finalizeErr != nil {
+			t.Fatalf("finalize sealed bidding: %v", finalizeErr)
 		}
-		if err := probeTx.Rollback(ctx); err != nil {
-			t.Fatalf("rollback probe immediate tx: %v", err)
-		}
-		select {
-		case finalizeErr := <-finalizeResult:
-			if finalizeErr != nil {
-				t.Fatalf("finalize sealed bidding: %v", finalizeErr)
-			}
-			t.Fatal("finalizer completed before test observed the immediate transaction lock")
-		default:
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if !lockObserved {
+		t.Fatal("finalizer completed before test observed the immediate transaction lock")
+	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for finalizer to acquire the immediate transaction lock")
 	}
 
 	revealResult := make(chan error, 1)
-	revealReady := make(chan struct{})
-	revealProceed := make(chan struct{})
+	revealReachedBlockedWrite := make(chan struct{})
 	go func() {
 		tx, txErr := db.BeginTx(ctx)
 		if txErr != nil {
@@ -1462,18 +1452,28 @@ func TestFinalizeSealedBidding_ImmediateTxBlocksLateReveal(t *testing.T) {
 			revealResult <- createErr
 			return
 		}
+		close(revealReachedBlockedWrite)
 		if updateErr := db.UpdateBidCommitRevealTx(ctx, tx, lateCommit.ID, bid.ID); updateErr != nil {
 			tx.Rollback()
 			revealResult <- updateErr
 			return
 		}
-		close(revealReady)
-		<-revealProceed
 		revealResult <- tx.Commit()
 	}()
 
-	<-revealReady
-	close(revealProceed)
+	select {
+	case <-revealReachedBlockedWrite:
+	case finalizeErr := <-finalizeResult:
+		if finalizeErr != nil {
+			t.Fatalf("finalize sealed bidding: %v", finalizeErr)
+		}
+		t.Fatal("finalizer completed before reveal goroutine reached the blocking write path")
+	case revealErr := <-revealResult:
+		t.Fatalf("expected reveal to block until finalization decided the commit, got %v", revealErr)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for reveal goroutine to reach the blocking write path")
+	}
+
 	if finalizeErr := <-finalizeResult; finalizeErr != nil {
 		t.Fatalf("finalize sealed bidding: %v", finalizeErr)
 	}
