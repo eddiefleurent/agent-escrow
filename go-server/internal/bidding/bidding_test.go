@@ -1426,14 +1426,14 @@ func TestFinalizeSealedBidding_ImmediateTxBlocksLateReveal(t *testing.T) {
 	}
 
 	revealResult := make(chan error, 1)
-	revealAttemptedWrite := make(chan struct{})
+	revealTxStarted := make(chan struct{})
 	go func() {
 		tx, txErr := db.BeginTx(ctx)
 		if txErr != nil {
 			revealResult <- txErr
 			return
 		}
-		close(revealAttemptedWrite)
+		close(revealTxStarted)
 		bid, createErr := db.CreateBidTx(ctx, tx, &storage.Bid{
 			RFQID:              rfq.ID,
 			Bidder:             lateCommit.Bidder,
@@ -1461,7 +1461,7 @@ func TestFinalizeSealedBidding_ImmediateTxBlocksLateReveal(t *testing.T) {
 	}()
 
 	select {
-	case <-revealAttemptedWrite:
+	case <-revealTxStarted:
 	case finalizeErr := <-finalizeResult:
 		if finalizeErr != nil {
 			t.Fatalf("finalize sealed bidding: %v", finalizeErr)
