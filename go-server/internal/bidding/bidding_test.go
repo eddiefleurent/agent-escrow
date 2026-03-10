@@ -1381,22 +1381,51 @@ func TestFinalizeSealedBidding_ImmediateTxBlocksLateReveal(t *testing.T) {
 		t.Fatalf("create late commit: %v", err)
 	}
 
-	immediateTx, err := db.BeginImmediateTx(ctx)
-	if err != nil {
-		t.Fatalf("begin immediate tx: %v", err)
+	for i := 0; i < 128; i++ {
+		bidder := common.HexToAddress(fmt.Sprintf("0x%040x", i+16)).Hex()
+		if _, err := db.CreateBidCommit(ctx, &storage.BidCommit{
+			RFQID:      rfq.ID,
+			Bidder:     bidder,
+			Commitment: fmt.Sprintf("0x%064x", i+1),
+			Nonce:      fmt.Sprintf("extra-%d", i),
+			Status:     "committed",
+		}); err != nil {
+			t.Fatalf("create extra committed bid %d: %v", i, err)
+		}
 	}
-	defer immediateTx.Rollback(ctx)
 
-	currentRFQ, err := immediateTx.GetRFQ(ctx, rfq.ID)
-	if err != nil {
-		t.Fatalf("get rfq in immediate tx: %v", err)
+	finalizeResult := make(chan error, 1)
+	go func() {
+		_, finalizeErr := svc.FinalizeSealedBidding(ctx, rfq.ID)
+		finalizeResult <- finalizeErr
+	}()
+
+	lockObserved := false
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		probeTx, probeErr := db.BeginImmediateTx(ctx)
+		if probeErr != nil {
+			if strings.Contains(probeErr.Error(), "SQLITE_BUSY") {
+				lockObserved = true
+				break
+			}
+			t.Fatalf("probe immediate tx: %v", probeErr)
+		}
+		if err := probeTx.Rollback(ctx); err != nil {
+			t.Fatalf("rollback probe immediate tx: %v", err)
+		}
+		select {
+		case finalizeErr := <-finalizeResult:
+			if finalizeErr != nil {
+				t.Fatalf("finalize sealed bidding: %v", finalizeErr)
+			}
+			t.Fatal("finalizer completed before test observed the immediate transaction lock")
+		default:
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	candidates, err := svc.eligibleSealedBidCandidatesOn(ctx, immediateTx, currentRFQ, time.Unix(now, 0).UTC())
-	if err != nil {
-		t.Fatalf("eligible candidates in immediate tx: %v", err)
-	}
-	if len(candidates) != 1 || candidates[0].bid.ID != bestBid.ID {
-		t.Fatalf("expected only pre-existing revealed bid %d, got %+v", bestBid.ID, candidates)
+	if !lockObserved {
+		t.Fatal("timed out waiting for finalizer to acquire the immediate transaction lock")
 	}
 
 	revealResult := make(chan error, 1)
@@ -1438,29 +1467,8 @@ func TestFinalizeSealedBidding_ImmediateTxBlocksLateReveal(t *testing.T) {
 	case revealErr = <-revealResult:
 	default:
 	}
-
-	committed, err := immediateTx.ListCommittedBidCommitsByRFQ(ctx, rfq.ID)
-	if err != nil {
-		t.Fatalf("list committed commits in immediate tx: %v", err)
-	}
-	if len(committed) != 1 || committed[0].ID != lateCommit.ID {
-		t.Fatalf("expected only late committed bid in tx, got %+v", committed)
-	}
-	if err := immediateTx.ExpireCommittedBidCommits(ctx, rfq.ID); err != nil {
-		t.Fatalf("expire committed bids in immediate tx: %v", err)
-	}
-	if err := immediateTx.UpdateRFQSealedBiddingState(
-		ctx,
-		rfq.ID,
-		"finalized",
-		sealedBidSelectionRule,
-		&bestBid.ID,
-		now,
-	); err != nil {
-		t.Fatalf("update sealed bidding state in immediate tx: %v", err)
-	}
-	if err := immediateTx.Commit(ctx); err != nil {
-		t.Fatalf("commit immediate tx: %v", err)
+	if finalizeErr := <-finalizeResult; finalizeErr != nil {
+		t.Fatalf("finalize sealed bidding: %v", finalizeErr)
 	}
 
 	if revealErr == nil {
