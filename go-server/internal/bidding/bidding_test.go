@@ -657,6 +657,123 @@ func TestAcceptBid_ForwardsParentEscrowAddressToChain(t *testing.T) {
 	}
 }
 
+func TestAcceptBid_AllowsPersistedBestBidAfterPriorSealedFinalization(t *testing.T) {
+	svc, db, mock := newBiddingService(t, 0)
+	ctx := context.Background()
+	now := time.Now().Unix()
+
+	rfq, err := db.CreateRFQ(ctx, &storage.RFQ{
+		Title:                    "rfq-accept-persisted-best",
+		Description:              "desc",
+		SpecHash:                 "0xabc",
+		Buyer:                    testBuyerAddr,
+		Token:                    "",
+		BudgetMin:                "100",
+		BudgetMax:                "300",
+		Deadline:                 now + 3600,
+		ReviewPeriodSeconds:      60,
+		DisputePeriodSeconds:     60,
+		ArbitratorTimeoutSeconds: 60,
+		Verifier:                 testVerifierAddr,
+		Arbitrator:               testArbitratorAddr,
+		WorkerStake:              "0",
+		MilestonesJSON:           "[]",
+		RequirementsJSON:         "{}",
+		RequiredCredentialsJSON:  "[]",
+		BiddingMode:              "sealed",
+		CommitDeadline:           now - 600,
+		RevealDeadline:           now - 300,
+		ServiceTier:              0,
+		Status:                   "open",
+		ExpiresAt:                now + 7200,
+	})
+	if err != nil {
+		t.Fatalf("create rfq: %v", err)
+	}
+
+	winningBid, err := db.CreateBid(ctx, &storage.Bid{
+		RFQID:              rfq.ID,
+		Bidder:             testWorkerAddr,
+		Amount:             "200",
+		EstimatedDuration:  1800,
+		ReputationBond:     "0",
+		MilestonesJSON:     "[]",
+		Message:            "",
+		Status:             "pending",
+		ExpiresAt:          now + 1200,
+		CredentialsJSON:    "[]",
+		CredentialVerified: false,
+	})
+	if err != nil {
+		t.Fatalf("create winning bid: %v", err)
+	}
+	_, err = db.CreateBidCommit(ctx, &storage.BidCommit{
+		RFQID:         rfq.ID,
+		Bidder:        winningBid.Bidder,
+		Commitment:    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Nonce:         "winner",
+		Status:        "revealed",
+		RevealedBidID: &winningBid.ID,
+	})
+	if err != nil {
+		t.Fatalf("create winning bid commit: %v", err)
+	}
+
+	losingBid, err := db.CreateBid(ctx, &storage.Bid{
+		RFQID:              rfq.ID,
+		Bidder:             testWorkerAltAddr,
+		Amount:             "220",
+		EstimatedDuration:  2400,
+		ReputationBond:     "0",
+		MilestonesJSON:     "[]",
+		Message:            "",
+		Status:             "pending",
+		ExpiresAt:          now + 1200,
+		CredentialsJSON:    "[]",
+		CredentialVerified: false,
+	})
+	if err != nil {
+		t.Fatalf("create losing bid: %v", err)
+	}
+	_, err = db.CreateBidCommit(ctx, &storage.BidCommit{
+		RFQID:         rfq.ID,
+		Bidder:        losingBid.Bidder,
+		Commitment:    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		Nonce:         "loser",
+		Status:        "revealed",
+		RevealedBidID: &losingBid.ID,
+	})
+	if err != nil {
+		t.Fatalf("create losing bid commit: %v", err)
+	}
+
+	firstSummary, err := svc.FinalizeSealedBidding(ctx, rfq.ID)
+	if err != nil {
+		t.Fatalf("finalize sealed bidding: %v", err)
+	}
+	if firstSummary.BestBidID == nil || *firstSummary.BestBidID != winningBid.ID {
+		t.Fatalf("expected persisted best bid %d, got %+v", winningBid.ID, firstSummary.BestBidID)
+	}
+
+	mock.Receipt = chain.MakeEscrowCreatedReceipt(
+		42,
+		common.HexToAddress("0x9000000000000000000000000000000000000009"),
+		common.HexToAddress(testBuyerAddr),
+	)
+
+	result, err := svc.AcceptBid(ctx, AcceptBidParams{
+		RFQID:  rfq.ID,
+		BidID:  winningBid.ID,
+		Caller: testBuyerAddr,
+	})
+	if err != nil {
+		t.Fatalf("accept persisted best bid: %v", err)
+	}
+	if result == nil || result.Escrow == nil {
+		t.Fatal("expected accept bid result with escrow")
+	}
+}
+
 func TestCommitBid_SupersedesPriorCommittedBidForBidder(t *testing.T) {
 	svc, db, _ := newBiddingService(t, 0)
 	ctx := context.Background()
