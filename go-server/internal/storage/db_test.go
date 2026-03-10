@@ -15,7 +15,7 @@ func TestOpenInMemoryDoesNotClampPoolToSingleConnection(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	if got := db.SQLDB().Stats().MaxOpenConnections; got != 0 {
-		t.Fatalf("expected default max open connections for shared in-memory sqlite, got %d", got)
+		t.Fatalf("expected max open connections to be 0 (unlimited) for shared in-memory sqlite, got %d", got)
 	}
 
 	id := inMemoryDBCounter.Load()
