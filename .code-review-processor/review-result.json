@@ -1,3 +1,3 @@
 {
-  "skip_comment": "Accepted the underlying issue and removed the in-memory single-connection clamp in storage.Open. I did not implement the broader tx-only API refactor because the current evidence pointed to the pool restriction itself as the concrete problem, while sealing the entire storage surface behind a transaction-only interface would add broad churn without a demonstrated current need."
+  "skip_comment": "No changes needed here. The referenced `mode=memory` special-casing in `go-server/internal/storage/db.go` was already removed in commit `5525f9d` (`🐛 fix: stop clamping in-memory sqlite pool`), so the current code no longer has the fragile connection-pool clamp this comment targets."
 }
