@@ -950,7 +950,7 @@ func updateRFQSealedBiddingStateOn(
 	if bestBidID != nil {
 		bestBid = *bestBidID
 	}
-	_, err := q.ExecContext(
+	res, err := q.ExecContext(
 		ctx,
 		`UPDATE rfqs
          SET sealed_bid_status = ?, sealed_bid_selection_rule = ?, best_bid_id = ?, sealed_bid_finalized_at = ?, updated_at = datetime('now')
@@ -959,6 +959,13 @@ func updateRFQSealedBiddingStateOn(
 	)
 	if err != nil {
 		return fmt.Errorf("update rfq sealed bidding state: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update rfq sealed bidding state rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("update rfq sealed bidding state id=%d: %w", rfqID, sql.ErrNoRows)
 	}
 	return nil
 }
