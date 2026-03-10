@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,15 +30,43 @@ type milestoneJSON struct {
 }
 
 const (
-	maxActiveCommitsPerBidderPerRFQ = 3
-	maxCommitRequestsPerMinute      = 10
-	commitRateLimitWindowSeconds    = 60
+	maxCommitRequestsPerMinute   = 10
+	commitRateLimitWindowSeconds = 60
+	sealedBidSelectionRule       = "lowest_amount_then_duration_then_commit_time_then_bid_id"
 )
 
 type RebidCooldownError struct {
 	ParentEscrowID int64
 	RetryAt        time.Time
 	RetryAfter     time.Duration
+}
+
+type SealedBidCooldownError struct {
+	Bidder      string
+	RetryAt     time.Time
+	RetryAfter  time.Duration
+	StrikeCount int
+}
+
+func (e *SealedBidCooldownError) RetryAfterSeconds() int64 {
+	seconds := int64(e.RetryAfter / time.Second)
+	if e.RetryAfter%time.Second != 0 {
+		seconds++
+	}
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
+}
+
+func (e *SealedBidCooldownError) Error() string {
+	return fmt.Sprintf(
+		"sealed-bid cooldown active for %s: retry in %d seconds (at %s, strikes=%d)",
+		e.Bidder,
+		e.RetryAfterSeconds(),
+		e.RetryAt.UTC().Format(time.RFC3339),
+		e.StrikeCount,
+	)
 }
 
 func (e *RebidCooldownError) RetryAfterSeconds() int64 {
@@ -58,6 +87,31 @@ func (e *RebidCooldownError) Error() string {
 		e.RetryAfterSeconds(),
 		e.RetryAt.UTC().Format(time.RFC3339),
 	)
+}
+
+func sealedBidCooldownDuration(strikeCount int) time.Duration {
+	switch {
+	case strikeCount <= 1:
+		return 15 * time.Minute
+	case strikeCount == 2:
+		return 6 * time.Hour
+	default:
+		return 24 * time.Hour
+	}
+}
+
+func sealedBidPhase(now time.Time, rfq *storage.RFQ) string {
+	nowUnix := now.Unix()
+	switch {
+	case rfq.BiddingMode != "sealed":
+		return ""
+	case nowUnix < rfq.CommitDeadline:
+		return "commit_open"
+	case nowUnix <= rfq.RevealDeadline:
+		return "reveal_open"
+	default:
+		return rfq.SealedBidStatus
+	}
 }
 
 // parseMilestonesJSON parses the milestones_json string from an RFQ or bid into chain params.
@@ -93,6 +147,231 @@ type Service struct {
 	Chain chain.ChainClient
 	Idx   *indexer.Indexer
 	Cfg   *config.Config
+}
+
+type SealedBidSummary struct {
+	RFQID                  int64   `json:"rfq_id"`
+	Finalized              bool    `json:"finalized"`
+	SealedBidStatus        string  `json:"sealed_bid_status"`
+	SealedBidSelectionRule string  `json:"sealed_bid_selection_rule"`
+	BestBidID              *int64  `json:"best_bid_id,omitempty"`
+	EligibleBidIDs         []int64 `json:"eligible_bid_ids"`
+	UnrevealedCommitCount  int     `json:"unrevealed_commit_count"`
+	FinalizedAt            int64   `json:"sealed_bid_finalized_at"`
+}
+
+type sealedBidCandidate struct {
+	bid        *storage.Bid
+	commit     *storage.BidCommit
+	amount     *big.Int
+	commitTime time.Time
+}
+
+func containsInt64(items []int64, target int64) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
+}
+
+func sortSealedBidCandidates(candidates []sealedBidCandidate) {
+	sort.Slice(candidates, func(i, j int) bool {
+		if cmp := candidates[i].amount.Cmp(candidates[j].amount); cmp != 0 {
+			return cmp < 0
+		}
+		if candidates[i].bid.EstimatedDuration != candidates[j].bid.EstimatedDuration {
+			return candidates[i].bid.EstimatedDuration < candidates[j].bid.EstimatedDuration
+		}
+		if !candidates[i].commitTime.Equal(candidates[j].commitTime) {
+			return candidates[i].commitTime.Before(candidates[j].commitTime)
+		}
+		return candidates[i].bid.ID < candidates[j].bid.ID
+	})
+}
+
+func (s *Service) activeSealedBidCooldown(
+	ctx context.Context,
+	bidder string,
+	now time.Time,
+) (*SealedBidCooldownError, error) {
+	discipline, err := s.DB.GetSealedBidderDiscipline(ctx, bidder)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if discipline.CooldownUntil <= now.Unix() {
+		return nil, nil
+	}
+	retryAt := time.Unix(discipline.CooldownUntil, 0).UTC()
+	return &SealedBidCooldownError{
+		Bidder:      bidder,
+		RetryAt:     retryAt,
+		RetryAfter:  time.Until(retryAt),
+		StrikeCount: discipline.NonRevealCount,
+	}, nil
+}
+
+func buildSealedBidSummary(
+	rfq *storage.RFQ,
+	eligibleBidIDs []int64,
+	unrevealedCommitCount int,
+) *SealedBidSummary {
+	return &SealedBidSummary{
+		RFQID:                  rfq.ID,
+		Finalized:              rfq.SealedBidStatus == "finalized" || rfq.SealedBidStatus == "no_valid_reveals",
+		SealedBidStatus:        rfq.SealedBidStatus,
+		SealedBidSelectionRule: rfq.SealedBidSelectionRule,
+		BestBidID:              rfq.BestBidID,
+		EligibleBidIDs:         eligibleBidIDs,
+		UnrevealedCommitCount:  unrevealedCommitCount,
+		FinalizedAt:            rfq.SealedBidFinalizedAt,
+	}
+}
+
+func (s *Service) eligibleSealedBidCandidates(
+	ctx context.Context,
+	rfq *storage.RFQ,
+	now time.Time,
+) ([]sealedBidCandidate, error) {
+	bids, err := s.DB.ListBidsByRFQ(ctx, rfq.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list bids by rfq: %w", err)
+	}
+
+	requirements, err := ParseCredentialRequirements(rfq.RequiredCredentialsJSON)
+	if err != nil {
+		return nil, fmt.Errorf("parse rfq credential requirements: %w", err)
+	}
+	requireVerifiedCredentials := len(requirements) > 0
+
+	candidates := make([]sealedBidCandidate, 0, len(bids))
+	for _, bid := range bids {
+		if bid.Status != "pending" {
+			continue
+		}
+		if bid.ExpiresAt <= now.Unix() {
+			continue
+		}
+		if requireVerifiedCredentials && !bid.CredentialVerified {
+			continue
+		}
+
+		commit, err := s.DB.GetBidCommitByRevealedBidID(ctx, bid.ID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return nil, fmt.Errorf("get bid commit by revealed bid id: %w", err)
+		}
+		if commit.Status != "revealed" {
+			continue
+		}
+
+		amount, ok := new(big.Int).SetString(bid.Amount, 10)
+		if !ok || amount.Sign() <= 0 {
+			continue
+		}
+		candidates = append(candidates, sealedBidCandidate{
+			bid:        bid,
+			commit:     commit,
+			amount:     amount,
+			commitTime: commit.CreatedAt,
+		})
+	}
+
+	sortSealedBidCandidates(candidates)
+	return candidates, nil
+}
+
+func (s *Service) FinalizeSealedBidding(ctx context.Context, rfqID int64) (*SealedBidSummary, error) {
+	rfq, err := s.DB.GetRFQ(ctx, rfqID)
+	if err != nil {
+		return nil, fmt.Errorf("rfq not found: %w", err)
+	}
+	if rfq.BiddingMode != "sealed" {
+		return buildSealedBidSummary(rfq, nil, 0), nil
+	}
+
+	now := time.Now().UTC()
+	if now.Unix() <= rfq.RevealDeadline {
+		return nil, errors.New("cannot finalize sealed bidding before reveal phase ends")
+	}
+
+	committed, err := s.DB.ListCommittedBidCommitsByRFQ(ctx, rfqID)
+	if err != nil {
+		return nil, err
+	}
+
+	dbTx, err := s.DB.BeginTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin db tx: %w", err)
+	}
+
+	bidderCooldowns := make(map[string]int64)
+	for _, commit := range committed {
+		discipline, disciplineErr := s.DB.GetSealedBidderDisciplineTx(ctx, dbTx, commit.Bidder)
+		strikeCount := 1
+		if disciplineErr == nil {
+			strikeCount = discipline.NonRevealCount + 1
+		} else if !errors.Is(disciplineErr, sql.ErrNoRows) {
+			dbTx.Rollback()
+			return nil, disciplineErr
+		}
+		cooldownUntil := now.Add(sealedBidCooldownDuration(strikeCount)).Unix()
+		if existing, ok := bidderCooldowns[commit.Bidder]; !ok || cooldownUntil > existing {
+			bidderCooldowns[commit.Bidder] = cooldownUntil
+		}
+	}
+	for bidder, cooldownUntil := range bidderCooldowns {
+		if upsertErr := s.DB.UpsertSealedBidderDisciplineTx(ctx, dbTx, bidder, cooldownUntil); upsertErr != nil {
+			dbTx.Rollback()
+			return nil, upsertErr
+		}
+	}
+	if err := s.DB.ExpireCommittedBidCommitsTx(ctx, dbTx, rfqID); err != nil {
+		dbTx.Rollback()
+		return nil, err
+	}
+	if err := dbTx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit db tx: %w", err)
+	}
+
+	candidates, err := s.eligibleSealedBidCandidates(ctx, rfq, now)
+	if err != nil {
+		return nil, err
+	}
+
+	eligibleBidIDs := make([]int64, 0, len(candidates))
+	for _, candidate := range candidates {
+		eligibleBidIDs = append(eligibleBidIDs, candidate.bid.ID)
+	}
+
+	finalizedStatus := "no_valid_reveals"
+	var bestBidID *int64
+	if len(candidates) > 0 {
+		finalizedStatus = "finalized"
+		bestBidID = &candidates[0].bid.ID
+	}
+	if err := s.DB.UpdateRFQSealedBiddingState(
+		ctx,
+		rfqID,
+		finalizedStatus,
+		sealedBidSelectionRule,
+		bestBidID,
+		now.Unix(),
+	); err != nil {
+		return nil, err
+	}
+
+	updatedRFQ, err := s.DB.GetRFQ(ctx, rfqID)
+	if err != nil {
+		return nil, fmt.Errorf("get finalized rfq: %w", err)
+	}
+	return buildSealedBidSummary(updatedRFQ, eligibleBidIDs, len(committed)), nil
 }
 
 type CreateRFQParams struct {
@@ -305,6 +584,16 @@ func (s *Service) prepareRFQRecord(ctx context.Context, p CreateRFQParams) (*sto
 	}
 
 	specHash := crypto.Keccak256Hash([]byte(p.Title + p.Description))
+	sealedStatus := ""
+	sealedSelectionRule := ""
+	if biddingMode == "sealed" {
+		sealedStatus = sealedBidPhase(time.Now(), &storage.RFQ{
+			BiddingMode:    biddingMode,
+			CommitDeadline: p.CommitDeadline,
+			RevealDeadline: p.RevealDeadline,
+		})
+		sealedSelectionRule = sealedBidSelectionRule
+	}
 
 	return &storage.RFQ{
 		Title:                    p.Title,
@@ -327,6 +616,8 @@ func (s *Service) prepareRFQRecord(ctx context.Context, p CreateRFQParams) (*sto
 		BiddingMode:              biddingMode,
 		CommitDeadline:           p.CommitDeadline,
 		RevealDeadline:           p.RevealDeadline,
+		SealedBidStatus:          sealedStatus,
+		SealedBidSelectionRule:   sealedSelectionRule,
 		ServiceTier:              p.ServiceTier,
 		ParentEscrowID:           p.ParentEscrowID,
 		Status:                   "open",
@@ -494,6 +785,15 @@ func (s *Service) CommitBid(ctx context.Context, p CommitBidParams) (*storage.Bi
 	if p.Bidder == common.HexToAddress(rfq.Buyer).Hex() {
 		return nil, errors.New("bidder cannot be the same as the rfq buyer")
 	}
+	if rfq.BiddingMode == "sealed" {
+		cooldownErr, cooldownLookupErr := s.activeSealedBidCooldown(ctx, p.Bidder, time.Unix(now, 0).UTC())
+		if cooldownLookupErr != nil {
+			return nil, cooldownLookupErr
+		}
+		if cooldownErr != nil {
+			return nil, errors.Join(storage.ErrSealedBidCooldownActive, cooldownErr)
+		}
+	}
 	if len(p.Nonce) == 0 {
 		return nil, errors.New("nonce is required")
 	}
@@ -504,14 +804,6 @@ func (s *Service) CommitBid(ctx context.Context, p CommitBidParams) (*storage.Bi
 		return nil, errors.New("invalid commitment: must be valid hex")
 	}
 	p.Commitment = strings.ToLower(p.Commitment)
-
-	activeCommitCount, err := s.DB.CountActiveBidCommitsByRFQBidder(ctx, p.RFQID, p.Bidder)
-	if err != nil {
-		return nil, err
-	}
-	if activeCommitCount >= maxActiveCommitsPerBidderPerRFQ {
-		return nil, fmt.Errorf("commit cap exceeded: max %d active commits per bidder per rfq", maxActiveCommitsPerBidderPerRFQ)
-	}
 
 	recentCommitCount, err := s.DB.CountRecentBidCommitsByRFQBidder(
 		ctx, p.RFQID, p.Bidder, commitRateLimitWindowSeconds, time.Now(),
@@ -534,7 +826,15 @@ func (s *Service) CommitBid(ctx context.Context, p CommitBidParams) (*storage.Bi
 		return nil, err
 	}
 
-	c, err := s.DB.CreateBidCommit(ctx, &storage.BidCommit{
+	dbTx, err := s.DB.BeginTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin db tx: %w", err)
+	}
+	if err := s.DB.SupersedeCommittedBidCommitsTx(ctx, dbTx, p.RFQID, p.Bidder); err != nil {
+		dbTx.Rollback()
+		return nil, err
+	}
+	c, err := s.DB.CreateBidCommitTx(ctx, dbTx, &storage.BidCommit{
 		RFQID:      p.RFQID,
 		Bidder:     p.Bidder,
 		Commitment: p.Commitment,
@@ -542,6 +842,7 @@ func (s *Service) CommitBid(ctx context.Context, p CommitBidParams) (*storage.Bi
 		Status:     "committed",
 	})
 	if err != nil {
+		dbTx.Rollback()
 		if errors.Is(err, storage.ErrDuplicateBidCommitNonce) {
 			existingByNonce, lookupErr := s.DB.GetBidCommitByRFQBidderNonce(ctx, p.RFQID, p.Bidder, p.Nonce)
 			if lookupErr == nil {
@@ -557,6 +858,9 @@ func (s *Service) CommitBid(ctx context.Context, p CommitBidParams) (*storage.Bi
 			return nil, errors.New("duplicate commitment for bidder in rfq")
 		}
 		return nil, fmt.Errorf("create bid_commit: %w", err)
+	}
+	if err := dbTx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit db tx: %w", err)
 	}
 	return c, nil
 }
@@ -727,12 +1031,18 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 		return nil, fmt.Errorf("rfq is not open (status: %s)", rfq.Status)
 	}
 	now := time.Now().Unix()
-	if now > rfq.RevealDeadline {
-		if err := s.DB.ExpireCommittedBidCommits(ctx, p.RFQID); err != nil {
+	var sealedSummary *SealedBidSummary
+	if rfq.BiddingMode == "sealed" && now > rfq.RevealDeadline {
+		sealedSummary, err = s.FinalizeSealedBidding(ctx, p.RFQID)
+		if err != nil {
 			return nil, err
 		}
+		rfq, err = s.DB.GetRFQ(ctx, p.RFQID)
+		if err != nil {
+			return nil, fmt.Errorf("rfq not found after finalization: %w", err)
+		}
 	}
-	if now <= rfq.RevealDeadline {
+	if rfq.BiddingMode == "sealed" && now <= rfq.RevealDeadline {
 		return nil, errors.New("cannot accept before reveal phase ends")
 	}
 	if rfq.Deadline <= now {
@@ -755,6 +1065,14 @@ func (s *Service) AcceptBid(ctx context.Context, p AcceptBidParams) (*AcceptBidR
 
 	if bid.ExpiresAt <= now {
 		return nil, errors.New("bid has expired")
+	}
+	if sealedSummary != nil {
+		if sealedSummary.SealedBidStatus == "no_valid_reveals" {
+			return nil, errors.New("no valid revealed bids are available for acceptance")
+		}
+		if !containsInt64(sealedSummary.EligibleBidIDs, bid.ID) {
+			return nil, errors.New("bid is not in the finalized eligible sealed-bid set")
+		}
 	}
 	// Enforce credential match when the RFQ has required credentials.
 	requirements, credErr := ParseCredentialRequirements(rfq.RequiredCredentialsJSON)

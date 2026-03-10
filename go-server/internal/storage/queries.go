@@ -18,6 +18,7 @@ import (
 // to run inside or outside a transaction.
 type dbExecer interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
@@ -825,7 +826,8 @@ func (d *DB) ListReputations(ctx context.Context, minCompleted int) ([]*Reputati
 const rfqColumns = `id, title, description, spec_hash, buyer, token, budget_min, budget_max,
 	deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds,
 	verifier, arbitrator, worker_stake, milestones_json, requirements_json, required_credentials_json,
-	bidding_mode, commit_deadline, reveal_deadline, service_tier, parent_escrow_id,
+	bidding_mode, commit_deadline, reveal_deadline, sealed_bid_status, sealed_bid_selection_rule,
+	best_bid_id, sealed_bid_finalized_at, service_tier, parent_escrow_id,
 	status, expires_at, created_at, updated_at`
 
 type ParentRFQCooldownError struct {
@@ -845,17 +847,21 @@ func (e *ParentRFQCooldownError) Error() string {
 func scanRFQ(scanner interface{ Scan(...any) error }) (*RFQ, error) {
 	r := &RFQ{}
 	var createdAt, updatedAt string
-	var parentEscrowID sql.NullInt64
+	var parentEscrowID, bestBidID sql.NullInt64
 	err := scanner.Scan(&r.ID, &r.Title, &r.Description, &r.SpecHash, &r.Buyer, &r.Token,
 		&r.BudgetMin, &r.BudgetMax, &r.Deadline, &r.ReviewPeriodSeconds,
 		&r.DisputePeriodSeconds, &r.ArbitratorTimeoutSeconds,
 		&r.Verifier, &r.Arbitrator, &r.WorkerStake, &r.MilestonesJSON, &r.RequirementsJSON,
 		&r.RequiredCredentialsJSON,
-		&r.BiddingMode, &r.CommitDeadline, &r.RevealDeadline,
-		&r.ServiceTier, &parentEscrowID,
+		&r.BiddingMode, &r.CommitDeadline, &r.RevealDeadline, &r.SealedBidStatus, &r.SealedBidSelectionRule,
+		&bestBidID, &r.SealedBidFinalizedAt, &r.ServiceTier, &parentEscrowID,
 		&r.Status, &r.ExpiresAt, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
+	}
+	if bestBidID.Valid {
+		v := bestBidID.Int64
+		r.BestBidID = &v
 	}
 	if parentEscrowID.Valid {
 		v := parentEscrowID.Int64
@@ -873,17 +879,23 @@ func scanRFQ(scanner interface{ Scan(...any) error }) (*RFQ, error) {
 }
 
 func createRFQOn(ctx context.Context, q dbExecer, r *RFQ) (*RFQ, error) {
+	var bestBidID any
+	if r.BestBidID != nil {
+		bestBidID = *r.BestBidID
+	}
 	res, err := q.ExecContext(ctx,
 		`INSERT INTO rfqs (title, description, spec_hash, buyer, token, budget_min, budget_max,
 			deadline, review_period_seconds, dispute_period_seconds, arbitrator_timeout_seconds,
 			verifier, arbitrator, worker_stake, milestones_json, requirements_json, required_credentials_json,
-			bidding_mode, commit_deadline, reveal_deadline, service_tier, parent_escrow_id, status, expires_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			bidding_mode, commit_deadline, reveal_deadline, sealed_bid_status, sealed_bid_selection_rule,
+			best_bid_id, sealed_bid_finalized_at, service_tier, parent_escrow_id, status, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.Title, r.Description, r.SpecHash, r.Buyer, r.Token, r.BudgetMin, r.BudgetMax,
 		r.Deadline, r.ReviewPeriodSeconds, r.DisputePeriodSeconds, r.ArbitratorTimeoutSeconds,
 		r.Verifier, r.Arbitrator, r.WorkerStake, r.MilestonesJSON, r.RequirementsJSON,
 		r.RequiredCredentialsJSON,
-		r.BiddingMode, r.CommitDeadline, r.RevealDeadline, r.ServiceTier, r.ParentEscrowID, r.Status, r.ExpiresAt,
+		r.BiddingMode, r.CommitDeadline, r.RevealDeadline, r.SealedBidStatus, r.SealedBidSelectionRule,
+		bestBidID, r.SealedBidFinalizedAt, r.ServiceTier, r.ParentEscrowID, r.Status, r.ExpiresAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert rfq: %w", err)
@@ -915,6 +927,52 @@ func (d *DB) GetRFQ(ctx context.Context, id int64) (*RFQ, error) {
 		return nil, fmt.Errorf("get rfq: %w", err)
 	}
 	return r, nil
+}
+
+func updateRFQSealedBiddingStateOn(
+	ctx context.Context,
+	q dbExecer,
+	rfqID int64,
+	sealedBidStatus, selectionRule string,
+	bestBidID *int64,
+	finalizedAt int64,
+) error {
+	var bestBid any
+	if bestBidID != nil {
+		bestBid = *bestBidID
+	}
+	_, err := q.ExecContext(
+		ctx,
+		`UPDATE rfqs
+         SET sealed_bid_status = ?, sealed_bid_selection_rule = ?, best_bid_id = ?, sealed_bid_finalized_at = ?, updated_at = datetime('now')
+         WHERE id = ?`,
+		sealedBidStatus, selectionRule, bestBid, finalizedAt, rfqID,
+	)
+	if err != nil {
+		return fmt.Errorf("update rfq sealed bidding state: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) UpdateRFQSealedBiddingState(
+	ctx context.Context,
+	rfqID int64,
+	sealedBidStatus, selectionRule string,
+	bestBidID *int64,
+	finalizedAt int64,
+) error {
+	return updateRFQSealedBiddingStateOn(ctx, d.db, rfqID, sealedBidStatus, selectionRule, bestBidID, finalizedAt)
+}
+
+func (d *DB) UpdateRFQSealedBiddingStateTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	rfqID int64,
+	sealedBidStatus, selectionRule string,
+	bestBidID *int64,
+	finalizedAt int64,
+) error {
+	return updateRFQSealedBiddingStateOn(ctx, tx, rfqID, sealedBidStatus, selectionRule, bestBidID, finalizedAt)
 }
 
 func getLatestRFQByParentEscrowOn(ctx context.Context, q dbExecer, parentEscrowID int64) (*RFQ, error) {
@@ -1682,6 +1740,7 @@ const bidCommitColumns = `id, rfq_id, bidder, commitment, nonce, status, reveale
 var (
 	ErrDuplicateBidCommitNonce      = errors.New("duplicate bid commit nonce")
 	ErrDuplicateBidCommitCommitment = errors.New("duplicate bid commit commitment")
+	ErrSealedBidCooldownActive      = errors.New("sealed bid cooldown active")
 	ErrDuplicateUCPIdempotencyKey   = errors.New("duplicate ucp idempotency key")
 )
 
@@ -1771,6 +1830,15 @@ func (d *DB) CreateBidCommit(ctx context.Context, c *BidCommit) (*BidCommit, err
 
 func (d *DB) CreateBidCommitTx(ctx context.Context, tx *sql.Tx, c *BidCommit) (*BidCommit, error) {
 	return createBidCommitOn(ctx, tx, c)
+}
+
+func (d *DB) GetBidCommit(ctx context.Context, id int64) (*BidCommit, error) {
+	row := d.db.QueryRowContext(ctx, `SELECT `+bidCommitColumns+` FROM bid_commits WHERE id = ?`, id)
+	c, err := scanBidCommit(row)
+	if err != nil {
+		return nil, fmt.Errorf("get bid_commit: %w", err)
+	}
+	return c, nil
 }
 
 func (d *DB) GetBidCommitByRFQBidderNonce(ctx context.Context, rfqID int64, bidder, nonce string) (*BidCommit, error) {
@@ -1863,6 +1931,28 @@ func (d *DB) UpdateBidCommitRevealTx(ctx context.Context, tx *sql.Tx, id, reveal
 	return updateBidCommitRevealOn(ctx, tx, id, revealedBidID)
 }
 
+func supersedeCommittedBidCommitsOn(ctx context.Context, q dbExecer, rfqID int64, bidder string) error {
+	_, err := q.ExecContext(
+		ctx,
+		`UPDATE bid_commits
+         SET status = 'superseded', updated_at = datetime('now')
+         WHERE rfq_id = ? AND bidder = ? AND status = 'committed'`,
+		rfqID, bidder,
+	)
+	if err != nil {
+		return fmt.Errorf("supersede committed bid_commits: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) SupersedeCommittedBidCommits(ctx context.Context, rfqID int64, bidder string) error {
+	return supersedeCommittedBidCommitsOn(ctx, d.db, rfqID, bidder)
+}
+
+func (d *DB) SupersedeCommittedBidCommitsTx(ctx context.Context, tx *sql.Tx, rfqID int64, bidder string) error {
+	return supersedeCommittedBidCommitsOn(ctx, tx, rfqID, bidder)
+}
+
 func updateBidCommitStatusByRevealedBidOn(ctx context.Context, q dbExecer, bidID int64, status string) error {
 	_, err := q.ExecContext(
 		ctx,
@@ -1924,6 +2014,36 @@ func (d *DB) CountActiveBidCommitsByRFQBidder(ctx context.Context, rfqID int64, 
 	return count, nil
 }
 
+func listCommittedBidCommitsByRFQOn(ctx context.Context, q dbExecer, rfqID int64) ([]*BidCommit, error) {
+	rows, err := q.QueryContext(
+		ctx,
+		`SELECT `+bidCommitColumns+` FROM bid_commits WHERE rfq_id = ? AND status = 'committed' ORDER BY id ASC`,
+		rfqID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list committed bid_commits by rfq: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*BidCommit
+	for rows.Next() {
+		c, scanErr := scanBidCommit(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan committed bid_commit: %w", scanErr)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (d *DB) ListCommittedBidCommitsByRFQ(ctx context.Context, rfqID int64) ([]*BidCommit, error) {
+	return listCommittedBidCommitsByRFQOn(ctx, d.db, rfqID)
+}
+
+func (d *DB) ListCommittedBidCommitsByRFQTx(ctx context.Context, tx *sql.Tx, rfqID int64) ([]*BidCommit, error) {
+	return listCommittedBidCommitsByRFQOn(ctx, tx, rfqID)
+}
+
 func (d *DB) CountRecentBidCommitsByRFQBidder(
 	ctx context.Context, rfqID int64, bidder string, windowSeconds int64, now time.Time,
 ) (int, error) {
@@ -1971,6 +2091,80 @@ func (d *DB) ExpireCommittedBidCommits(ctx context.Context, rfqID int64) error {
 // Precondition: the caller must ensure the RFQ's sealed-bid reveal deadline has passed.
 func (d *DB) ExpireCommittedBidCommitsTx(ctx context.Context, tx *sql.Tx, rfqID int64) error {
 	return expireCommittedBidCommitsOn(ctx, tx, rfqID)
+}
+
+func scanSealedBidderDiscipline(scanner interface{ Scan(...any) error }) (*SealedBidderDiscipline, error) {
+	d := &SealedBidderDiscipline{}
+	var createdAt, updatedAt string
+	err := scanner.Scan(&d.Bidder, &d.NonRevealCount, &d.CooldownUntil, &createdAt, &updatedAt)
+	if err != nil {
+		return nil, err
+	}
+	d.CreatedAt, err = parseSQLiteTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse sealed_bidder_discipline created_at: %w", err)
+	}
+	d.UpdatedAt, err = parseSQLiteTime(updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse sealed_bidder_discipline updated_at: %w", err)
+	}
+	return d, nil
+}
+
+func getSealedBidderDisciplineOn(ctx context.Context, q dbExecer, bidder string) (*SealedBidderDiscipline, error) {
+	row := q.QueryRowContext(
+		ctx,
+		`SELECT bidder, non_reveal_count, cooldown_until, created_at, updated_at
+         FROM sealed_bidder_discipline
+         WHERE bidder = ?`,
+		bidder,
+	)
+	out, err := scanSealedBidderDiscipline(row)
+	if err != nil {
+		return nil, fmt.Errorf("get sealed bidder discipline: %w", err)
+	}
+	return out, nil
+}
+
+func (d *DB) GetSealedBidderDiscipline(ctx context.Context, bidder string) (*SealedBidderDiscipline, error) {
+	return getSealedBidderDisciplineOn(ctx, d.db, bidder)
+}
+
+func (d *DB) GetSealedBidderDisciplineTx(ctx context.Context, tx *sql.Tx, bidder string) (*SealedBidderDiscipline, error) {
+	return getSealedBidderDisciplineOn(ctx, tx, bidder)
+}
+
+func upsertSealedBidderDisciplineOn(
+	ctx context.Context,
+	q dbExecer,
+	bidder string,
+	cooldownUntil int64,
+) error {
+	_, err := q.ExecContext(
+		ctx,
+		`INSERT INTO sealed_bidder_discipline (bidder, non_reveal_count, cooldown_until)
+         VALUES (?, 1, ?)
+         ON CONFLICT(bidder) DO UPDATE SET
+             non_reveal_count = sealed_bidder_discipline.non_reveal_count + 1,
+             cooldown_until = CASE
+                 WHEN excluded.cooldown_until > sealed_bidder_discipline.cooldown_until THEN excluded.cooldown_until
+                 ELSE sealed_bidder_discipline.cooldown_until
+             END,
+             updated_at = datetime('now')`,
+		bidder, cooldownUntil,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert sealed bidder discipline: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) UpsertSealedBidderDiscipline(ctx context.Context, bidder string, cooldownUntil int64) error {
+	return upsertSealedBidderDisciplineOn(ctx, d.db, bidder, cooldownUntil)
+}
+
+func (d *DB) UpsertSealedBidderDisciplineTx(ctx context.Context, tx *sql.Tx, bidder string, cooldownUntil int64) error {
+	return upsertSealedBidderDisciplineOn(ctx, tx, bidder, cooldownUntil)
 }
 
 // Chain log queries

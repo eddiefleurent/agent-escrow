@@ -513,22 +513,22 @@ func (s *Server) registerTools(srv *mcp.Server) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "commit_bid",
-		Description: "Submit a sealed-bid commitment during the commit phase.",
+		Description: "Submit a sealed-bid commitment during the commit phase. A later commit from the same bidder on the same RFQ supersedes any prior unrevealed commit. Bidders with recent non-reveal strikes may be rate-limited by cooldown.",
 	}, s.handleCommitBid)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "reveal_bid",
-		Description: "Reveal sealed-bid details during the reveal phase. The reveal must match the prior commitment. Include 'credentials_json' with signed attestation-v1 payloads to satisfy RFQ credential requirements.",
+		Description: "Reveal sealed-bid details during the reveal phase. The reveal must match the prior commitment. Include 'credentials_json' with signed attestation-v1 payloads to satisfy RFQ credential requirements. After reveal ends, only revealed valid bids participate in deterministic finalization.",
 	}, s.handleRevealBid)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_bids",
-		Description: "List revealed bids for an RFQ (buyer view) or by bidder address (worker view). Each bid includes expired and credential_verified fields.",
+		Description: "List revealed bids for an RFQ (buyer view) or by bidder address (worker view). Each bid includes expired and credential_verified fields. For sealed RFQs past reveal_deadline, the server finalizes the eligible set before returning bids.",
 	}, s.handleListBids)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "accept_bid",
-		Description: "Accept a bid on an RFQ. WARNING: This immediately deploys a new escrow contract on-chain (irreversible, costs gas). Returns escrow_id — the next step is to call fund_escrow. When the RFQ has required_credentials, only bids with credential_verified=true can be accepted. Paper §6.1: bid acceptance formalizes into escrow.",
+		Description: "Accept a bid on an RFQ. WARNING: This immediately deploys a new escrow contract on-chain (irreversible, costs gas). Returns escrow_id — the next step is to call fund_escrow. When the RFQ has required_credentials, only bids with credential_verified=true can be accepted. For sealed RFQs, acceptance uses the finalized eligible revealed-bid set after reveal_deadline. Paper §6.1: bid acceptance formalizes into escrow.",
 	}, s.handleAcceptBid)
 
 	mcp.AddTool(srv, &mcp.Tool{
@@ -1777,7 +1777,7 @@ func (s *Server) handleCreateRFQ(ctx context.Context, req *mcp.CallToolRequest, 
 	return jsonResult(map[string]any{
 		"rfq_id":     rfq.ID,
 		"status":     rfq.Status,
-		"next_steps": "Workers should call commit_bid during commit phase, then reveal_bid during reveal phase. Buyer can call accept_bid after reveal phase ends.",
+		"next_steps": "Workers should call commit_bid during commit phase, then reveal_bid during reveal phase. After reveal ends, the server finalizes the eligible revealed-bid set and the buyer can call accept_bid.",
 	})
 }
 
@@ -1795,13 +1795,22 @@ func (s *Server) handleCommitBid(ctx context.Context, req *mcp.CallToolRequest, 
 		Nonce:      args.Nonce,
 	})
 	if err != nil {
+		var cooldownErr *bidding.SealedBidCooldownError
+		if errors.As(err, &cooldownErr) {
+			return jsonResult(map[string]any{
+				"error":               cooldownErr.Error(),
+				"retry_after_seconds": cooldownErr.RetryAfterSeconds(),
+				"retry_at":            cooldownErr.RetryAt.Unix(),
+				"strike_count":        cooldownErr.StrikeCount,
+			})
+		}
 		return textResult(err.Error()), nil, nil
 	}
 
 	return jsonResult(map[string]any{
 		"commit_id":  commit.ID,
 		"status":     commit.Status,
-		"next_steps": "Reveal this bid in reveal phase with reveal_bid using the same bidder and nonce.",
+		"next_steps": "Reveal this bid in reveal phase with reveal_bid using the same bidder and nonce. A later commit from the same bidder on the same RFQ supersedes any prior unrevealed commit.",
 	})
 }
 
@@ -1848,7 +1857,7 @@ func (s *Server) handleRevealBid(ctx context.Context, req *mcp.CallToolRequest, 
 		"bid_id":              bid.ID,
 		"status":              bid.Status,
 		"credential_verified": bid.CredentialVerified,
-		"next_steps":          "Buyer can accept this bid after reveal phase ends using accept_bid.",
+		"next_steps":          "Buyer can accept this bid after reveal phase ends using accept_bid. Only bids in the finalized eligible revealed-bid set remain acceptable for sealed RFQs.",
 	}
 	if summary := bid.CredentialMatchSummary; summary != "" && summary != "{}" {
 		if json.Valid([]byte(summary)) {
@@ -1870,9 +1879,9 @@ func (s *Server) handleListBids(ctx context.Context, req *mcp.CallToolRequest, a
 		}
 		rfq, getErr := s.db.GetRFQ(ctx, rfqID)
 		if getErr == nil {
-			if time.Now().Unix() > rfq.RevealDeadline {
-				if expireErr := s.db.ExpireCommittedBidCommits(ctx, rfqID); expireErr != nil {
-					return textResult(fmt.Sprintf("error: %v", expireErr)), nil, nil
+			if rfq.BiddingMode == "sealed" && time.Now().Unix() > rfq.RevealDeadline {
+				if _, finalizeErr := s.biddingService().FinalizeSealedBidding(ctx, rfqID); finalizeErr != nil {
+					return textResult(fmt.Sprintf("error: %v", finalizeErr)), nil, nil
 				}
 			}
 		} else if !errors.Is(getErr, sql.ErrNoRows) {

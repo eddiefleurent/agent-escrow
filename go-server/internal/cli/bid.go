@@ -25,7 +25,7 @@ func newBidCommitCmd(opts *Options) *cobra.Command {
 	pf := payloadFlags{}
 	cmd := &cobra.Command{
 		Use:   "commit <rfq-id>",
-		Short: "Commit a sealed bid on an RFQ",
+		Short: "Commit a sealed bid on an RFQ (supersedes prior unrevealed commit)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body, err := payloadFromFlags(pf, true)
@@ -75,7 +75,7 @@ func newBidAcceptCmd(opts *Options) *cobra.Command {
 	pf := payloadFlags{}
 	cmd := &cobra.Command{
 		Use:   "accept <rfq-id>",
-		Short: "Accept bid for an RFQ",
+		Short: "Accept bid for an RFQ after sealed-bid finalization",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body, err := payloadFromFlags(pf, true)

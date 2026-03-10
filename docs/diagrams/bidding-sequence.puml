@@ -69,11 +69,12 @@ note over Server : Workers discover RFQs via list_rfqs / GET /api/v1/rfqs?status
 
 WorkerA -> Server : commit_bid / POST /api/v1/rfqs/{id}/bids/commit\n(commitment=0x..., nonce)
 Server -> DB : Validate: bidder != buyer, RFQ open, before commit_deadline
+Server -> DB : Check sealed-bid cooldown for bidder
 Server -> DB : INSERT bid_commit (status=committed)
 Server --> WorkerA : commit_id, status=committed
 
 WorkerB -> Server : commit_bid / POST /api/v1/rfqs/{id}/bids/commit\n(commitment=0x..., nonce)
-Server -> DB : INSERT bid_commit (status=committed)
+Server -> DB : Supersede any prior unrevealed commit\nfor same bidder+RFQ, then INSERT bid_commit
 Server --> WorkerB : commit_id, status=committed
 
 note over Server : Commitment = keccak256(amount|duration|salt|nonce|...)\nAmount/price hidden until reveal (sealed mode)
@@ -96,6 +97,7 @@ Server --> WorkerB : bid_id, status=pending
 == Bid Evaluation ==
 
 Buyer -> Server : list_bids / GET /api/v1/rfqs/{id}/bids
+Server -> DB : After reveal_deadline: expire unrevealed commits,\napply bidder cooldowns, rank revealed eligible bids\nby amount -> duration -> commit time -> bid id
 Server -> DB : SELECT bids WHERE rfq_id=?
 Server --> Buyer : [bid_A(200, credential_verified=true), bid_B(300, credential_verified=false)]
 
@@ -106,6 +108,7 @@ note over Buyer : Evaluate bids:\ncost, reputation, capability, credential_verif
 Buyer -> Server : accept_bid / POST /api/v1/rfqs/{id}/accept\n(bid_id=bid_A)
 
 group Atomic acceptance
+  Server -> DB : Re-run sealed-bid finalization if needed;\nreject bids outside finalized eligible set
   Server -> Server : If required_credentials present:\nreject unless bid.credential_verified
   Server -> Chain : createEscrow(buyer, worker_A,\namount=200, verifier, arbitrator, deadline,\noptional parentEscrow)
   Chain -> Chain : Snapshot fee = base tier fee +\nparent-linked re-delegation surcharge (if any)

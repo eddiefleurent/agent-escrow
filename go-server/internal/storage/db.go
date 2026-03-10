@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	_ "modernc.org/sqlite" // SQLite driver registration
 )
@@ -88,14 +89,27 @@ var migration025SQL string
 //go:embed migrations/026_add_escrow_create_intent.sql
 var migration026SQL string
 
+//go:embed migrations/027_add_sealed_bid_hardening.sql
+var migration027SQL string
+
 type DB struct {
 	db *sql.DB
 }
 
+var inMemoryDBCounter atomic.Uint64
+
 func Open(dsn string) (*DB, error) {
+	if dsn == ":memory:" {
+		id := inMemoryDBCounter.Add(1)
+		dsn = fmt.Sprintf("file:agent_escrow_mem_%d?mode=memory&cache=shared", id)
+	}
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
+	}
+	if strings.Contains(dsn, "mode=memory") {
+		sqlDB.SetMaxOpenConns(1)
+		sqlDB.SetMaxIdleConns(1)
 	}
 
 	ctx := context.Background()
@@ -144,6 +158,7 @@ func Open(dsn string) (*DB, error) {
 		{"024", migration024SQL},
 		{"025", migration025SQL},
 		{"026", migration026SQL},
+		{"027", migration027SQL},
 	}
 
 	for _, m := range migrations {
