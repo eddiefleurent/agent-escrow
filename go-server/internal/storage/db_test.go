@@ -3,11 +3,11 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 )
 
 func TestOpenInMemoryDoesNotClampPoolToSingleConnection(t *testing.T) {
-	before := inMemoryDBCounter.Load()
 	db, err := Open(":memory:")
 	if err != nil {
 		t.Fatalf("open in-memory db: %v", err)
@@ -17,13 +17,17 @@ func TestOpenInMemoryDoesNotClampPoolToSingleConnection(t *testing.T) {
 	if got := db.SQLDB().Stats().MaxOpenConnections; got != 0 {
 		t.Fatalf("expected max open connections to be 0 (unlimited) for shared in-memory sqlite, got %d", got)
 	}
+}
 
-	id := inMemoryDBCounter.Load()
-	if id <= before {
-		t.Fatalf("expected in-memory db counter to advance, before=%d after=%d", before, id)
+func TestOpenSharedMemoryURISharesStateAcrossHandles(t *testing.T) {
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := Open(dsn)
+	if err != nil {
+		t.Fatalf("open shared in-memory db: %v", err)
 	}
+	t.Cleanup(func() { _ = db.Close() })
 
-	second, err := Open(fmt.Sprintf("file:agent_escrow_mem_%d?mode=memory&cache=shared", id))
+	second, err := Open(dsn)
 	if err != nil {
 		t.Fatalf("open second shared-cache handle: %v", err)
 	}
