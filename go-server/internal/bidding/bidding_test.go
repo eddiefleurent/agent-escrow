@@ -1254,7 +1254,7 @@ func TestCommitBid_SealedModeChecksCooldownInsideImmediateTx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin immediate tx: %v", err)
 	}
-	defer func() { _ = lockTx.Rollback(ctx) }()
+	defer func() { _ = lockTx.Rollback(context.Background()) }()
 
 	commitReady := make(chan struct{})
 	commitProceed := make(chan struct{})
