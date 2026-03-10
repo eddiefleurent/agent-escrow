@@ -38,7 +38,6 @@ This file is the repo harness: start here for reading order, invariants, and cha
 - The smart contracts are the source of financial truth.
 - Off-chain storage is a derived read model, not an alternative ledger.
 - Externally usable features require interface parity across MCP, HTTP, and CLI unless a documented roadmap-scoped exception is approved with a linked roadmap ticket and owner.
-- See `docs/ARCHITECTURE.md` for the roadmap-exception policy and approval boundary.
 - Transport layers stay thin. Shared logic belongs in common services, not duplicated handlers.
 - Contract state changes require corresponding ABI refreshes for Go consumers.
 - Changes to settlement states, payout formulas, role semantics, or lifecycle diagrams must update the relevant docs in the same change.
