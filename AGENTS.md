@@ -100,6 +100,7 @@ make test-invariant
 make go-abi
 make go-build
 make go-cli-build
+make go-cli-install
 make go-test
 make go-vet
 make go-lint-fix
@@ -107,6 +108,7 @@ make go-lint
 make fmt
 make fmt-check
 make sizes
+make go-run
 make test-all
 ```
 

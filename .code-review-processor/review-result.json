@@ -1,3 +1,0 @@
-{
-  "skip_comment": "I verified this against the current branch. `docs/intelligent-ai-delegation.md` still exists and is still listed as a source in `docs/paper-feature-map.json`, so the `AGENTS.md` topology entry is consistent with the codebase. I could not find any in-repo \"PR objectives\" text to update, so there was no source change to make for this comment."
-}

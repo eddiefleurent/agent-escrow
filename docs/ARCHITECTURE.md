@@ -121,6 +121,7 @@ For internal wiring, handler-to-service relationships, and event flow detail, se
 - `go-server/internal/bidding/` -- RFQ, bid, credential checks, and negotiation logic.
 - `go-server/internal/attestation/` -- completion-attestation-v1 validation and attestation-chain handling.
 - `go-server/internal/indexer/` -- event polling/webhook ingestion and DB reconciliation.
+- `go-server/internal/events/` -- in-process event fan-out consumed by SSE/WebSocket/MCP subscribers.
 - `go-server/internal/storage/` -- SQLite schema, queries, and read-model persistence.
 - `go-server/internal/api/` -- HTTP handlers and middleware.
 - `go-server/internal/mcpserver/` -- MCP tool handlers.

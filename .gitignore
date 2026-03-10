@@ -23,6 +23,7 @@ deploy/
 .claude/settings.local.json
 .codex-runs/
 .cursor/
+.code-review-processor/
 demo/agents/codex-skill-test-results.json
 demo/runtime/
 demo/agent-demo-results.json
