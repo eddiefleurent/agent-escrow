@@ -32,6 +32,8 @@ Off-chain: Single Go binary serving an MCP server, JSON REST API, and background
 
 The design principle: **settle on-chain, everything else off-chain**. Bidding, matching, reputation, task decomposition, and agent orchestration remain off-chain where they can iterate independently.
 
+Contributor reading order: [`AGENTS.md`](AGENTS.md) for the repo harness, [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for system boundaries and code ownership, and [`docs/SPEC.md`](docs/SPEC.md) for settlement invariants.
+
 For internal component wiring, see the [detailed architecture diagram](docs/diagrams/architecture-detail.png) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Escrow Lifecycle
@@ -94,7 +96,7 @@ Default configuration (`EMERGENCY_ENABLED=true`, `EVENTS_ENABLED=true`, `A2A_ENA
 - AP2/x402 mandate funding, event subscriptions, A2A discovery, and emergency controls
 - UCP checkout operations (`ucp_*`) when `UCP_ENABLED=true`
 
-For the full up-to-date MCP tool list, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+The architectural rationale for MCP lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The authoritative current tool registration lives in [`go-server/internal/mcpserver/tools.go`](go-server/internal/mcpserver/tools.go).
 
 ### HTTP API
 
@@ -131,7 +133,7 @@ GET  /.well-known/agent.json
 GET  /.well-known/ucp
 ```
 
-For the full endpoint catalog (including verifier quorum, ZK verify/approve, checkpoints, attestation chains, emergency, and A2A JSON-RPC), see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+The architectural rationale for the API surface lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The authoritative current route registration lives in [`go-server/internal/api/router.go`](go-server/internal/api/router.go).
 
 ## Implementation Status
 
@@ -157,8 +159,9 @@ Full roadmap sequencing: [`docs/ROADMAP.md`](docs/ROADMAP.md). Canonical machine
 
 | Document | Contents |
 |---|---|
+| [`AGENTS.md`](AGENTS.md) | Repo harness: reading order, invariants, and change-coupling rules |
 | [`docs/SPEC.md`](docs/SPEC.md) | Contract design intent: lifecycle, settlement math, invariants |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System architecture, integrations, and scaling model |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System map: boundaries, ownership, transport model, and evolution path |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Delivery phases, execution order, and actionable checklists |
 | [`docs/paper-feature-map.json`](docs/paper-feature-map.json) | Machine-readable paper feature coverage + per-item design decisions |
 | [`docs/SETUP.md`](docs/SETUP.md) | Local setup and configuration |

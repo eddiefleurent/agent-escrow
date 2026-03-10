@@ -1,878 +1,390 @@
 # Architecture
 
-## Overview
+## Purpose
 
-This project implements the ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) paper ([DOI](https://doi.org/10.48550/arXiv.2602.11865)) (Tomašev, Franklin, Osindero -- Google DeepMind, 2026) as a working escrow-based delegation marketplace.
+This document is the system map for contributors making structural changes. It explains the durable shape of the project: what lives on-chain, what stays off-chain, which modules own which responsibilities, and which invariants should survive refactors.
 
-The paper defines a comprehensive framework for task decomposition, delegation, verification, and settlement in open agentic economies. This document describes the system architecture, its grounding in the paper's framework, and the scalability path from settlement kernel to full marketplace.
+Use it together with the other project docs:
+
+| Document | Owns |
+|---|---|
+| `AGENTS.md` | Repo harness: reading order, working rules, change-coupling expectations |
+| `docs/SPEC.md` | Contract state machine, settlement math, invariants, paper traceability |
+| `docs/ROADMAP.md` | Delivery order, current phase, and future work |
+| `docs/paper-feature-map.json` | Canonical machine-readable paper coverage and status |
+
+Architecture docs are a map, not a substitute for reading the code. They should explain boundaries, ownership, and design pressure, not become a duplicate changelog.
+
+## Reading Path
+
+- Start with `docs/ROADMAP.md` to see the active phase and what work is currently in scope.
+- When changing contract behavior, read `docs/SPEC.md` before touching Solidity.
+- Read this file front to back if you are changing system shape, shared services, or transport exposure.
+- For paper-coverage status or roadmap scope changes, update `docs/ROADMAP.md` and `docs/paper-feature-map.json` with the same change.
+
+## Architectural Thesis
+
+This project implements the ["Intelligent AI Delegation"](https://arxiv.org/abs/2602.11865) paper ([DOI](https://doi.org/10.48550/arXiv.2602.11865)) (Tomašev, Franklin, Osindero -- Google DeepMind, 2026) as an escrow-based delegation marketplace.
+
+The central architectural choice is simple:
+
+- Put money, roles, deadlines, irreversible decisions, and auditability on-chain.
+- Keep execution, reasoning, search, matching, verification logic, and large artifacts off-chain.
+- Expose the same core capabilities through multiple transports, but keep one shared implementation of the business logic.
 
 ```text
 Settlement Kernel (V1)  →  Market Primitives (V2)  →  Delegation Intelligence (V3)  →  Ecosystem Maturity (V4)
      escrow + roles          bidding + reputation        DCTs + ZK + re-delegation       ethics + governance + DIDs
 ```
 
-Blockchain handles settlement guarantees, auditability, and cryptoeconomic enforcement. Execution, intelligence, matching, and orchestration remain off-chain for speed and flexibility.
+This separation is the answer to the paper's core problem: buyers need conditional payment, workers need credible payout, and the system needs transparent accountability. Smart contracts provide the settlement kernel; the rest of the delegation stack is allowed to evolve off-chain.
 
-Paper coverage status, gap tracking, and per-item design decisions are maintained in `docs/paper-feature-map.json`, with sequencing and delivery checklists in `docs/ROADMAP.md`.
+## Architectural Invariants
 
-### Problem Statement
+These rules matter more than specific file names:
 
-The paper identifies a critical gap: as AI agents become more capable, the *delegation problem* becomes primary. Not "can the agent do the task" but "how do we trust it did the task correctly, pay it fairly, and hold it accountable?" Current AI delegation flows are fragile and trust-heavy. No existing agent protocol provides conditional settlement, verifiable task completion, or dispute resolution.
+- The contracts are the source of financial truth. Off-chain systems may cache, index, or enrich state, but they must not invent a competing settlement ledger.
+- `docs/SPEC.md` is the source of truth for settlement states, payout formulas, and role semantics.
+- Transport surfaces are adapters. MCP tools, HTTP handlers, and CLI commands should call shared logic rather than fork behavior.
+- Externally usable features require interface parity across MCP, HTTP, and CLI unless a documented roadmap-scoped exception is approved with a linked roadmap ticket and owner.
+- Large task payloads, prompts, and verification artifacts stay off-chain; the chain stores commitments, checkpoints, and terminal decisions.
+- Event indexing is a reconciliation layer. If the database and chain disagree, the chain wins.
+- The server is on a path from "unified operator process" toward "coordination and indexing layer." Participant signing should move client-side over time rather than centralizing long-term in the server.
+- Documentation updates are coupled to architectural changes. If you change boundaries, state transitions, or system shape, update the docs in the same change.
 
-- Buyers need assurance they only pay for acceptable outcomes.
-- Workers (human or AI) need assurance they will be paid if they deliver.
-- The agentic ecosystem needs a neutral, transparent settlement and coordination layer.
-
-### Foundational Concepts
-
-The paper grounds intelligent delegation in concepts from organizational theory and economics that directly inform this architecture:
-
-**Principal-Agent Problem** (paper §2.3). A delegator assigns work to an agent whose motivations may not align with the delegator's. In AI delegation this manifests as reward misspecification, specification gaming, and misaligned sub-goals across delegation chains. Response: smart-contract escrow links payment to verified outcomes, making misalignment financially costly.
-
-**Authority Gradient** (paper §2.3). Significant capability disparities between delegator and delegatee impede communication and produce under-specified requests. In AI systems, sycophancy and instruction-following bias compound this. Response: explicit task spec hashes, structured role boundaries, and verifier/arbitrator review gates create checkpoints that interrupt blind compliance.
-
-**Zone of Indifference** (paper §2.3). Delegatees develop a range of instructions they execute without critical deliberation. In agentic chains (A -> B -> C), a broad zone of indifference allows subtle intent mismatches to propagate. The paper calls for engineering "dynamic cognitive friction." Response: quorum-based verifier voting (`castVerifierVote` / `castMilestoneVerifierVote`) and `escalateSilence` are on-chain cognitive friction mechanisms -- they force explicit decisions rather than passive acceptance.
-
-**Transaction Cost Economics** (paper §2.3). The overhead of negotiation, monitoring, and uncertainty must be weighed against the value of delegation. Below a certain complexity floor, delegation overhead exceeds task value. Response: protocol fee snapshotting, gas-aware minimum escrow thresholds (V2), and tiered service levels (V3) that match assurance cost to task criticality.
-
-**Contingency Theory** (paper §2.3). There is no universally optimal delegation structure; the right approach depends on task characteristics (complexity, criticality, uncertainty, duration, verifiability, reversibility). Response: the architecture supports progressive reconfiguration -- fixed roles in V1, adaptive coordination in V2, autonomous re-delegation in V3.
-
-### Paper Framework: Five Pillars
-
-The paper defines intelligent delegation across five pillars (Section 4), nine technical protocols, ethical considerations (Section 5), and protocol integration paths (Section 6). This project implements them across versions:
-
-| Pillar | Paper Sections | Core Requirement | Implementation Layer |
-|---|---|---|---|
-| **Dynamic Assessment** | 4.1, 4.2 | Task decomposition, capability matching, smart-contract formalization | Settlement kernel (V1) → Bidding marketplace (V2) → Decomposition tooling + advisory human/AI allocation intent (V3) |
-| **Adaptive Execution** | 4.4 | Runtime re-delegation, failure recovery, checkpoint-based re-allocation | Timeout/escalation (V1) → Milestones + backup agents (V2) → Checkpoint/resume (V3) |
-| **Structural Transparency** | 4.5, 4.8 | Monitoring (outcome + process), verifiable task completion, attestation chains | Events + hash commitments (V1) → Milestones + L0/L1 subscriptions (V2, with L2/L3 staged) → Attestation chains + ZK verification (V3) |
-| **Scalable Market Coordination** | 4.3, 4.6 | Multi-objective optimization, reputation, trust calibration, Web of Trust | Designated trust (V1) → Reputation + complexity floor + RFQ bidding (V2) → Verifiable credentials (attestation-v1) + market stability (V3) |
-| **Systemic Resilience** | 4.7, 4.9 | Permission handling, privilege attenuation, security defense-in-depth | Role gates + reentrancy guard (V1) → Emergency response + stake-based Sybil resistance (V2) → DCT attenuation + principal authorization layer + tiered assurance (V3) |
-
-The paper also defines ethical dimensions (Section 5):
-
-| Ethical Concern | Paper Section | Architectural Response |
-|---|---|---|
-| Meaningful human control | 5.1 | Buyer/verifier approval gates; cognitive friction via reject + escalation paths |
-| Accountability in long chains | 5.2 | Immutable provenance via on-chain event logs; liability firebreaks per escrow |
-| Reliability vs efficiency | 5.3 | Tiered service levels (V3): low-assurance (optimistic) vs high-assurance (verified) |
-| Social intelligence | 5.4 | V4 planned: explicit social-intelligence safeguards for human/AI teamwork (anti-micromanagement, authority-gradient handling) |
-| User training | 5.5 | V4 planned: operator training/certification tracks for delegators, delegatees, and overseers |
-| Risk of de-skilling | 5.6 | Advisory per-leaf human/AI allocation intent in decomposition (V3); curriculum-aware task routing (V4) |
-
-### V1 Paper Coverage
-
-V1 implements the financial settlement kernel -- the paper's foundational layer on which subsequent phases build:
-
-| Paper Concept | V1 Implementation |
-|---|---|
-| Transfer of authority/responsibility/accountability | Immutable buyer/worker/verifierPanel/arbitrator roles with signed on-chain transitions |
-| Task constraints and boundaries | Task spec hash, deadlines, review/dispute windows, role-gated actions |
-| Verifiability + reversibility axes (§2.2) | Hash commitments, quorum verifier votes/checks, dispute-mediated payout/refund paths |
-| Criticality/risk calibration | High-control fixed-role assignments before open market matching |
-| Monitoring requirements (§4.5) | Canonical events for every transition, off-chain indexer |
-| Trust calibration (§4.6) | Designated verifier panel + quorum/arbitrator identities; financial outcomes auditable |
-| Adaptive coordination (§4.4) | Arbitrator timeout prevents permanent fund lock |
-| Dynamic cognitive friction (§2.3) | Quorum vote + `escalateSilence` force explicit decisions |
-| Smart contract as settlement (§4.2) | Escrow holds funds; verification clause gates release |
-| Dispute resolution (§4.8) | Arbitrator resolves disputes; split payout via basis points |
-
-### V2 Paper Coverage (Milestone-Based Escrow)
-
-Milestone-based escrow extends V1's coverage of the paper's framework:
-
-| Paper Concept | V2 Milestone Implementation |
-|---|---|
-| Adaptive coordination (§4.4) | Pre-agreed executable clauses: milestones are on-chain checkpoints that enable staged verification and adaptive re-delegation |
-| Monitoring via smart contracts (§4.5) | "Smart contracts on blockchain can be used to make the delegatee agent commit to publishing key progress milestones" -- each milestone submission is a committed checkpoint |
-| Partial compensation (§6.1) | "Explicit clauses within the smart contract that enable partial compensation, and verification of the task completion percentage" -- per-milestone payouts |
-| Verifiable task completion (§4.8) | Each milestone is independently verified before payout, enabling fine-grained verification aligned with task decomposition |
-| Contract-first decomposition (§4.1) | Milestones enforce that task decomposition is reflected in the settlement structure -- each sub-task maps to a verifiable, payable milestone |
-| Abort and re-delegation (§4.4) | `abortRemainingMilestones()` enables the buyer to exit after a failed milestone, recovering funds for uncompleted work and enabling re-delegation to another agent |
-| Backup agent re-allocation (§4.4) | `activateBackup()` replaces the primary worker with a pre-designated backup, extending the deadline and forfeiting the original worker's stake |
-
-### Protocol Integration Strategy
-
-The paper's insight (Section 6): extend existing agent protocols rather than compete with them.
-
-| Protocol | Gap Identified by Paper | Settlement Layer Integration | Phase |
-|---|---|---|---|
-| **MCP** (Anthropic) | Liability, reputation, trust, conditional settlement | MCP server with escrow lifecycle, bidding/decomposition, DCT authorization tooling, and event subscription surfaces | V1-V3 |
-| **[x402](https://docs.cdp.coinbase.com/x402/welcome)** (Coinbase) | Stateless payment; no conditionality, dispute resolution, or verification | Gasless escrow funding rail (EIP-3009 via facilitator); AP2 mandate funding mechanism; complexity floor calibration | V2 |
-| **[x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar)** (Coinbase) | Discovery only; no bidding, negotiation, or capability matching | Service discovery substrate for Task_RFQ; credential metadata via `GET /api/v1/bazaar/discovery` (attestation-v1 profile, endpoint docs) | V2-V3 |
-| **A2A** (Google) | Verification, escrow, conditional settlement | Settlement adapter agent card with `verification_policy` + `escrow_trigger`; Bazaar-discoverable | V2 |
-| **AP2** (Google) | Conditional settlement, milestone releases, clawback | Mandate-to-escrow funding bridge via x402 payment rail; stake-on-bid Sybil resistance | V2 |
-| **UCP** | Delegation-specific settlement for computational tasks | UCP fulfillment provider exposing escrow lifecycle | V3 |
-| **[AgentKit](https://docs.cdp.coinbase.com/agent-kit/welcome)** (Coinbase) | Wallet management and on-chain actions for agents; no delegation lifecycle | Agent wallet provider for multi-tenant signing; escrow actions as custom action provider | V2-V3 |
-
-x402 is an open payment protocol that enables instant stablecoin payments over HTTP by reviving the HTTP 402 status code. Its Bazaar layer provides machine-readable service discovery for payable API endpoints. Both operate on Base in the same ecosystem as this project. x402 provides a stateless, single-interaction payment flow; this project provides a stateful, multi-party delegation lifecycle with conditional settlement. The two are complementary: x402 serves as a payment rail and discovery layer, while the escrow contract governs conditional custody, verification, dispute resolution, and settlement. See the [Roadmap](ROADMAP.md#protocol-integration-principles) for integration principles and sequencing.
-
-[AgentKit](https://docs.cdp.coinbase.com/agent-kit/welcome) is a toolkit that gives AI agents secure wallet management and on-chain capabilities (transfers, swaps, contract interactions) across any AI framework (LangChain, Vercel AI SDK, MCP). It addresses the paper's permission handling requirements (§4.7): agents need their own cryptographic identity to sign transactions, and permissions must be scoped to the immediate task rather than shared via a single server-held key. In V1, the Go server holds one private key and signs all transactions on behalf of every participant. AgentKit provides the migration path: each agent manages its own wallet, signs its own escrow transactions (fund, submit, approve, dispute), and the server shifts to an indexing-only role. The escrow lifecycle could also be packaged as a custom AgentKit action provider, making delegation tools available alongside an agent's existing on-chain capabilities. [Payments MCP](https://docs.cdp.coinbase.com/payments-mcp/welcome) -- Coinbase's MCP server combining AgentKit wallets with x402 payments -- represents the natural client-side complement: agents already running Payments MCP have a wallet and USDC balance ready to fund escrows.
-
-The paper proposes specific protocol extensions (§6.1) that map to the roadmap: `verification_policy` fields on A2A Task objects, monitoring stream extensions for MCP (L0-L3 granularity), Task_RFQ + Bid_Object schemas, Delegation Capability Tokens (DCTs) based on Macaroons/Biscuits, and checkpoint artifact schemas for adaptive re-delegation.
-
-### Integration Paths
-
-Five integration paths, in priority order:
-
-**Path A: Skills + CLI for shell agents (V2).** Shell-capable agents discover `skills/escrow-cli/SKILL.md` and execute `escrow-cli`, a thin HTTP client over the existing API. This keeps business logic centralized in the Go server while enabling low-friction agent workflows.
-
-**Path B: MCP settlement server (V1, complete).** Any MCP-compatible agent can use escrow by connecting to the server. The agent does not need Solidity or wallet libraries -- the MCP server handles chain interaction.
-
-**Path C: x402 funding and discovery (V2).** Agents with existing x402 wallets (including [Payments MCP](https://docs.cdp.coinbase.com/payments-mcp/welcome) users) can fund escrows via EIP-3009 gasless transfers through the x402 facilitator. Escrow-backed delegation services are discoverable via Bazaar alongside simple paid APIs, providing a natural on-ramp for agents already in the x402 ecosystem.
-
-**Path D: A2A settlement adapter (V2).** An A2A-compatible agent whose capability is on-chain settlement of delegated work. Other agents discover it via agent cards and Bazaar; it holds funds in escrow and releases them when work is verified.
-
-**Path E: Reference implementation (ongoing).** The paper proposes protocol extensions as "illustrative examples of the kinds of functionalities that would be possible to include in agentic protocols" (§6.1). A working implementation that demonstrates these ideas in practice can serve as a reference for the ecosystem.
-
----
-
-## System Architecture
+## System At A Glance
 
 ![System Architecture](diagrams/architecture.png)
 
-For internal component wiring (which handler talks to which shared component, event bus publish/subscribe flows, indexer polling paths), see the detail view:
+For internal wiring, handler-to-service relationships, and event flow detail, see the detailed diagram:
 
 ![Go Server — Internal Detail](diagrams/architecture-detail.png)
 
+### Diagram Index
+
+| Diagram | File | Purpose |
+|---|---|---|
+| Happy path | `docs/diagrams/happy-path.png` | End-to-end happy-path overview |
+| System architecture | `docs/diagrams/architecture.png` | Top-level system boundary: contracts, server, storage, and clients |
+| Go server detail | `docs/diagrams/architecture-detail.png` | Internal server wiring and shared-component relationships |
+| Single-shot state machine | `docs/diagrams/state-machine.png` | Escrow lifecycle for non-milestone settlement |
+| Lifecycle sequence | `docs/diagrams/lifecycle-sequence.png` | End-to-end happy path and failure-path sequence |
+| Milestone state machine | `docs/diagrams/milestone-state-machine.png` | Staged verification and partial-payout lifecycle |
+| Milestone lifecycle | `docs/diagrams/milestone-lifecycle-sequence.png` | Milestone-oriented sequence flow |
+| Milestone system sequence | `docs/diagrams/milestone-system-sequence.png` | System interaction view for milestone mode |
+| Bidding sequence | `docs/diagrams/bidding-sequence.png` | RFQ, bid, and acceptance flow before escrow formalization |
+| Reputation seed sequence | `docs/diagrams/reputation-seed-sequence.png` | On-chain outcome indexing into reputation projections |
+| Attestation chain sequence | `docs/diagrams/attestation-chain-sequence.png` | Recursive delegation evidence and custody chain |
+| Checkpoint/resume sequence | `docs/diagrams/checkpoint-resume-sequence.png` | Worker handoff and restartable execution flow |
+| Quorum sequence | `docs/diagrams/quorum-sequence.png` | Verifier quorum and vote-resolution behavior |
+
+### Current Runtime Shape
+
+| Layer | Owns | Must Not Own |
+|---|---|---|
+| On-chain (`TaskEscrowFactory`, `EscrowDeployer`, `TaskEscrow`) | Custody, role assignment, deadlines, settlement, fees, immutable event log | Large artifacts, search, orchestration, complex verification logic |
+| Go shared services | Lifecycle orchestration, bidding, attestation checks, protocol adapters, indexing | Shadow settlement rules that diverge from the contracts |
+| SQLite read model | Query-friendly projections, marketplace metadata, event reconciliation state | Canonical source of escrow truth |
+| Transports (MCP, HTTP, CLI, adapters) | Access paths and protocol-specific shapes | Duplicated domain logic |
+
 ### Scope Boundary
 
-**On-chain** (source of financial truth):
-- Escrow creation, funding, role assignment
-- Deadlines, review/dispute windows
-- Submission hash + proof-hash recording
-- Approval/rejection/dispute actions
-- Final payout/refund decisions
+**On-chain** handles:
+
+- Escrow creation, funding, and role assignment
+- Deadlines, review windows, and dispute windows
+- Submission commitments and proof-hash recording
+- Approval, rejection, dispute, timeout, and final settlement
 - Protocol fee collection
-- Immutable event log
+- Immutable event emission
 
-**Off-chain** (execution and intelligence):
-- Task content, prompts, large outputs
+**Off-chain** handles:
+
+- Task content, prompts, and large deliverables
 - Verification logic and rubric execution
-- Agent runtime/orchestration
-- Matching, search, bidding
-- Reputation/risk scoring
-- Notifications and dashboards
+- Matching, search, and bidding UX
+- Agent runtime and orchestration
+- Reputation/risk scoring views
+- Notifications, dashboards, and integration adapters
 
-### Chain Selection: Base (Ethereum L2)
+## Codebase Map
 
-Ethereum mainnet settlement costs $5-$50+ per transaction at typical gas prices. A full happy-path escrow lifecycle requires four transactions (create, fund, submit, approve). On mainnet that is $20-$200 in gas alone before the task has economic value -- making delegation unviable for tasks under hundreds of dollars.
+### On-Chain
 
-Base is an Optimism OP Stack rollup that inherits Ethereum's security guarantees while reducing transaction costs by approximately 100-1000x. The same four-transaction lifecycle costs roughly $0.01-$0.05 on Base, making escrow viable for tasks worth $1+. The contracts, tooling, and security model are identical -- same Solidity, same EVM, same go-ethereum client library. The difference is cost and finality latency (~2s block time on Base vs ~12s on L1, with L1 finality inherited via the rollup's fraud proof window).
+- `src/TaskEscrowFactory.sol` -- protocol-level configuration, escrow creation, parent/sub-escrow validity, reputation seed, and market-stability controls.
+- `src/EscrowDeployer.sol` -- dedicated deployer used to keep factory size under the EIP-170 limit.
+- `src/TaskEscrow.sol` -- escrow lifecycle, funding, submission, milestone logic, dispute resolution, and settlement.
+- `test/` -- unit, ERC20, fuzz, and invariant coverage for the contracts.
 
-The properties required for settlement -- trustless custody, immutable audit trail, permissionless access, no counterparty risk -- are fully preserved on L2. What L2 sacrifices (longer path to L1-equivalent finality, dependence on the sequencer for liveness) is acceptable for a delegation marketplace where tasks already have multi-hour review windows.
+### Off-Chain
 
-Estimated gas costs per operation on Base (as of early 2026):
+- `go-server/internal/escrow/` -- shared escrow orchestration used by multiple transports.
+- `go-server/internal/bidding/` -- RFQ, bid, credential checks, and negotiation logic.
+- `go-server/internal/attestation/` -- completion-attestation-v1 validation and attestation-chain handling.
+- `go-server/internal/indexer/` -- event polling/webhook ingestion and DB reconciliation.
+- `go-server/internal/events/` -- in-process event fan-out consumed by SSE/WebSocket/MCP subscribers.
+- `go-server/internal/storage/` -- SQLite schema, queries, and read-model persistence.
+- `go-server/internal/api/` -- HTTP handlers and middleware.
+- `go-server/internal/mcpserver/` -- MCP tool handlers.
+- `go-server/cmd/cli/` -- `escrow-cli`, the shell-agent interface.
 
-| Operation | Estimated Gas | Cost at 0.01 gwei L2 gas |
-|---|---|---|
-| `createEscrow` (factory) | ~350,000 | < $0.01 |
-| `fund` | ~65,000 | < $0.01 |
-| `submit` | ~85,000 | < $0.01 |
-| `approve` + settle | ~120,000 | < $0.01 |
-| **Happy-path total** | **~620,000** | **< $0.02** |
-| Dispute + resolve path | ~800,000 | < $0.03 |
+### Change Guide
 
-> **Note**: Gas costs are estimates and will vary with network congestion and L1 gas prices. Use `cast estimate` or the [Foundry gas estimation tools](https://book.getfoundry.sh/reference/cast/cast-estimate) to check current costs for your transactions.
+| If you change... | You usually also need to change... |
+|---|---|
+| Contract states, payouts, or roles | `docs/SPEC.md`, Foundry tests, Go ABI copies, diagrams that show lifecycle changes |
+| Shared escrow or bidding behavior | MCP handlers, HTTP handlers, CLI commands, transport tests |
+| API or tool exposure | All three interfaces, plus `README.md` or setup docs when user-visible behavior changes |
+| Major component boundaries or integration strategy | `docs/ARCHITECTURE.md`, sometimes `docs/ROADMAP.md` and `docs/paper-feature-map.json` |
+| Roadmap scope or status | `docs/ROADMAP.md` and `docs/paper-feature-map.json` together |
 
-The **complexity floor** implemented in V2 (roadmap item 6) formalizes this: a minimum escrow amount that ensures the task value justifies the gas + protocol fee overhead. On Base, that floor can be low enough ($1-$5) to support micro-delegation between AI agents.
+## Paper Grounding
 
-**Chain portability.** The contracts are standard EVM Solidity with no Base-specific dependencies. Deploying to other L2s (Arbitrum, Optimism mainnet, zkSync) or L1 requires only a new RPC URL and chain ID. The Go server's `CHAIN_ID` and `RPC_URL` configuration makes this a deployment decision, not a code change.
+The paper identifies delegation as the primary systems problem once raw capability is no longer the bottleneck. This architecture answers that with a settlement kernel plus progressively richer coordination layers.
 
-### Scalability Assessment
+| Paper Pillar | Architectural Response |
+|---|---|
+| Dynamic assessment | RFQ/bid flows, contract-first decomposition, capability and preference metadata |
+| Adaptive execution | Timeouts, milestones, backup worker, checkpoint/resume, market-stability controls |
+| Structural transparency | Event log, hash commitments, milestone checkpoints, attestation chains, verifier quorum, optional ZK path |
+| Scalable market coordination | Reputation seed, complexity floor, credentials, sealed bidding, protocol adapters |
+| Systemic resilience | Role gates, reentrancy protection, emergency controls, stake mechanisms, DCT attenuation, principal authz |
 
-The current architecture -- single Go binary, SQLite, one factory contract -- is deliberately simple for V1. This section assesses which components scale as-is, which require evolution, and what the migration paths look like.
+The exact implementation status of each paper feature lives in `docs/paper-feature-map.json`. The roadmap owns sequencing and future items; this document focuses on how the implemented pieces fit together.
 
-**Components that scale without changes:**
+## Protocol Strategy
 
-- **On-chain contracts.** Each escrow is an independent contract instance with no shared state bottleneck. The factory is a thin deployer. ETH/ERC20 support and worker-stake anti-Sybil bonding were originally planned for V2 and are now implemented in the current contract baseline. Milestone escrow (V2) extends the escrow contract with per-milestone state tracking and partial payouts; ZK verification slots (V3) add optional proof hashes per submission plus optional `verifyAndApprove` calls against a configured verifier contract. Neither changes the factory pattern.
-- **On-chain/off-chain boundary.** The design principle -- settle on-chain, everything else off-chain -- is the correct long-term split. Bidding, matching, reputation scoring, task decomposition, and agent orchestration all remain off-chain where they can iterate independently.
-- **Go as the server language.** Go's concurrency model, low memory footprint, and single-binary deployment are well-suited through V4+. The go-ethereum client, the MCP SDK, and the HTTP server all scale to high concurrency without architectural changes.
-- **Skills + CLI + MCP + HTTP interfaces.** Skills + CLI is the default for shell-capable agents, MCP remains first-class for MCP-native integrations, and HTTP serves dashboards/external tooling. This multi-surface pattern holds through V4 and beyond.
+The project extends existing agent protocols instead of trying to replace them.
 
-**Components requiring evolution:**
+- **MCP** is the native tool surface for MCP-capable agents.
+- **CLI + skills** are the default path for shell agents.
+- **HTTP** is the coordination and integration surface for dashboards, scripts, and external systems.
+- **A2A**, **AP2**, **x402**, **x402 Bazaar**, **UCP**, and **AgentKit** are adapter targets, not alternate settlement kernels.
 
-| Component | Current State | Pressure Point | Migration Path | Phase |
-|---|---|---|---|---|
-| **SQLite** | Single-file embedded DB | Write contention under concurrent marketplace load (bidding, reputation, event indexing) | PostgreSQL. The storage layer uses `database/sql` with hand-written queries -- no ORM lock-in. Swap the driver and adjust SQL dialect differences. | V2 |
-| **Event indexer** | Polling every 15s + CDP Webhooks for factory events | Hundreds of active escrows with overlapping lifecycle events; polling lag becomes visible for escrow-level events | CDP Webhooks already deliver factory events in real-time (V2, done). Next: WebSocket subscription (`eth_subscribe`) for escrow events; parallel per-escrow indexing; event bus for internal pub/sub | V2-V3 |
-| **Single process** | MCP + API + indexer in one binary | Indexer CPU/memory spikes affecting API latency; MCP stdio transport limits to one connected agent per process | Separate the indexer into its own process. Run multiple MCP server instances behind streamable-HTTP transport. API remains stateless and horizontally scalable. | V2-V3 |
-| **Contract deployment** | One `TaskEscrow` per escrow via `CREATE` | Contract deployment gas overhead at high volume; bytecode duplication | Minimal proxy pattern (EIP-1167 clones). The factory deploys proxy contracts pointing to a single `TaskEscrow` implementation. Reduces per-escrow deploy cost by ~90%. | V2 |
-| **Nonce management** | Sequential nonce tracking | Concurrent transaction submission causes nonce collisions | Nonce manager with mutex or pending-pool awareness; or separate signing service | V2 |
-| **Authentication** | None (server holds a single private key) | Multi-tenant marketplace where different participants sign their own transactions | Agents manage their own wallets via [AgentKit](https://docs.cdp.coinbase.com/agent-kit/welcome) or equivalent and sign escrow transactions directly; server shifts to indexing-only. Alternatively: relayer/meta-transaction model, or ERC-4337 account abstraction. The paper's §4.7 requires each agent to hold scoped credentials and sign its own messages (§4.9). | V2-V3 |
-| **Reputation storage** | On-chain seed implemented; off-chain SQLite table | On-chain reputation seed (V2) generates read-heavy query load; behavioral metrics (V3) produce high-write analytical workload | Reputation reads from a materialized view or dedicated read replica. Behavioral metrics use a time-series store or append-only analytics table. | V2-V3 |
-| **ZK verification** | Implemented as verification slots (`proofHash` commitments + optional `verifyAndApprove` on-chain checks) | ZK proof verification on-chain is expensive even on L2 (~300k-500k gas for groth16) | Keep off-chain verification as default (proof hash commitment only). Use on-chain verifier path selectively for high-assurance escrows via dedicated verifier contracts. Consider recursive proofs to amortize cost. | V3 |
-| **Cross-chain** | Single-chain (Base) | Agents and liquidity on different L2s | Bridge adapter contracts or cross-chain messaging (LayerZero, Hyperlane). The Go server already parameterizes `CHAIN_ID` and `RPC_URL`, so multi-chain indexing is configuration, not architecture. Settlement contracts deploy per-chain. | V4+ |
+The core rule is stable: transports may vary, but escrow settlement semantics remain anchored in the contracts.
 
-**Projected architecture at V4 scale:**
+## Chain Selection: Base (Ethereum L2)
 
+Ethereum mainnet makes four-step delegation flows too expensive for low-value work. Base preserves the EVM, Ethereum security model, and standard tooling while making escrow economically viable for much smaller tasks.
+
+- Same Solidity/EVM/go-ethereum stack as mainnet
+- Roughly cent-level happy-path escrow costs on Base rather than dollar-to-tens-of-dollars costs on L1
+- Shorter block times suitable for multi-step delegation flows
+
+The complexity floor introduced in V2 formalizes this economics: tasks below a minimum value should not incur escrow overhead.
+
+The contracts are standard EVM Solidity with no Base-specific dependencies. Multi-chain support is a deployment concern plus indexer/storage evolution, not a redesign of the settlement model.
+
+## Scalability And Evolution
+
+The current shape is intentionally simple: single Go binary, SQLite, one factory contract, one chain. That is acceptable for the current phase because the boundaries are already drawn in a way that supports incremental evolution.
+
+Components that already scale with the current architecture:
+
+- Independent escrow contracts with no shared settlement bottleneck
+- The on-chain/off-chain split itself
+- Go as the server/runtime language
+- Multiple interface surfaces over shared logic
+
+Components expected to evolve:
+
+| Component | Current State | Expected Pressure | Likely Migration |
+|---|---|---|---|
+| Storage | SQLite | Write contention and analytics load | PostgreSQL/read replicas/time-series support |
+| Indexing | Polling + webhooks | Higher event volume and lower-latency expectations | WebSocket subscriptions, parallel indexers, event bus |
+| Process model | API + MCP + indexer in one binary | Noisy neighbors and transport scaling | Separate indexer process, horizontally scaled API/MCP |
+| Contract deployment | One contract per escrow via `CREATE` | Deploy gas overhead | Minimal proxies/clones |
+| Signing model | Server-held signer for participant actions | Multi-tenant trust and principal separation | Client-side signing / agent-owned wallets |
+| Cross-chain | Base only | Liquidity and agent fragmentation | Per-chain deployments with off-chain coordination |
+
+Projected V4+ runtime shape:
+
+```text
+load balancer
+  -> stateless API servers
+  -> stateless MCP servers
+  -> protocol adapters
+  -> shared transactional store + replicas
+  -> per-chain indexers
+  -> per-chain contract deployments
 ```
-                    ┌──────────────────────────────────┐
-                    │        Load Balancer              │
-                    └──────────┬───────────────────────┘
-                               │
-              ┌────────────────┼────────────────┐
-              │                │                │
-    ┌─────────┴──────┐ ┌──────┴───────┐ ┌──────┴───────┐
-    │  API Server(s) │ │ MCP Server(s)│ │  A2A Adapter │
-    │  (stateless)   │ │ (streamable) │ │  (stateless) │
-    └────────┬───────┘ └──────┬───────┘ └──────┬───────┘
-             │                │                │
-             └────────────────┼────────────────┘
-                              │
-              ┌───────────────┼───────────────┐
-              │               │               │
-    ┌─────────┴──────┐ ┌─────┴──────┐ ┌──────┴──────┐
-    │   PostgreSQL   │ │  Indexer(s) │ │  Analytics  │
-    │  (transactional│ │ (per-chain) │ │ (reputation,│
-    │    + replica)  │ │             │ │  metrics)   │
-    └────────────────┘ └──────┬──────┘ └─────────────┘
-                              │
-                    ┌─────────┼─────────┐
-                    │         │         │
-              ┌─────┴───┐ ┌──┴────┐ ┌──┴────┐
-              │  Base   │ │ Arb   │ │  OP   │
-              │Contracts│ │Clones │ │Clones │
-              └─────────┘ └───────┘ └───────┘
-```
 
-None of these migrations require a full rewrite. Each is an incremental change to a specific component behind a stable interface. The storage layer uses `database/sql` -- swap the driver. The chain client is behind an interface -- add chains. The API handlers are stateless -- scale horizontally. The contracts are standard EVM -- deploy anywhere.
-
-The riskiest V4+ item is **cross-chain settlement**, which introduces bridge trust assumptions that partially undermine the trustless escrow guarantee. The mitigation is to keep settlement per-chain (no cross-chain escrow transfers) and handle cross-chain coordination at the off-chain layer.
-
----
+None of those changes require replacing the core model. The important architectural decision is already in place: stable domain boundaries with room to change implementation behind them.
 
 ## On-Chain Architecture
 
-### Contracts
+### Contract Responsibilities
 
-- **`TaskEscrowFactory`** (`src/TaskEscrowFactory.sol`) -- creates escrow instances, stores protocol-level configuration (fee basis points, treasury, pause state), enforces parent-escrow validity for sub-delegation, applies on-chain market-stability re-delegation surcharges (step/cap/window), and records per-address reputation outcomes (completed/disputed/failed counters for workers and buyers). Delegates `TaskEscrow` deployment to `EscrowDeployer` to stay under the EIP-170 size limit.
-- **`EscrowDeployer`** (`src/EscrowDeployer.sol`) -- minimal deployer contract that creates `TaskEscrow` instances on behalf of the factory.
-- **`TaskEscrow`** (`src/TaskEscrow.sol`) -- holds escrowed ETH or ERC20, enforces the lifecycle state machine with role-gated transitions.
+- [`src/TaskEscrowFactory.sol`](../src/TaskEscrowFactory.sol) owns protocol-level configuration, escrow creation, parent/sub-escrow validation, reputation seeding, and market-stability controls.
+- [`src/EscrowDeployer.sol`](../src/EscrowDeployer.sol) exists to keep deployment mechanics out of the factory's size budget.
+- [`src/TaskEscrow.sol`](../src/TaskEscrow.sol) owns the escrow lifecycle itself: custody, submission, approval, dispute, timeout, milestone progression, stake handling, and terminal settlement.
 
-### State Machine (Single-Shot Escrow)
+This split matters because it keeps the per-escrow lifecycle isolated while letting protocol-wide policy evolve at the factory layer.
 
-```text
-Created ──fund()──> Funded ──submit()──> Submitted
-  │                   │  │  │              │  │  │
-  │cancelBeforeFunding│  │  └depositStake()│  │  │
-  │                   │  └activateBackup() │  │  │
-  v                   │                    │  │  │
-Cancelled            claimTimeoutRefund    │  │  │
-                      │                    │  │  │
-                      v                    │  │  │
-                   Refunded <──────────────┘  │  │
-                      ^                       │  │
-                      │claimArbitratorTimeout │  │
-                      │                       │  │
-                   Disputed <─────────────────┘  │
-                      │    (dispute/reject/      │
-                      │     escalateSilence)     │
-                      │                          │
-                   resolveDispute()              │approve()
-                      │                          │
-                      v                          v
-                   Resolved                   Approved
-                      │                          │
-                      └───────────┬──────────────┘
-                                  │
-                                  v
-                               Settled
-```
+### Lifecycle Model
 
-When `workerStake > 0`, worker must call `depositStake()` before `submit()`.
+The system supports two settlement shapes:
 
-Nine states: Created, Funded, Submitted, Approved, Disputed, Resolved, Settled, Refunded, Cancelled.
+- **Single-shot escrow** for one deliverable and one settlement decision.
+- **Milestone escrow** for staged verification and partial payouts.
 
-### Milestone-Based Escrow (V2)
+The detailed state machine and settlement formulas live in [`SPEC.md`](SPEC.md). From an architectural perspective, the important invariants are:
 
-For tasks requiring intermediate verification checkpoints, the escrow supports multiple milestones within a single contract. This implements the paper's adaptive coordination (§4.4) and monitoring (§4.5) requirements: "Smart contracts on blockchain can be used to make the delegatee agent commit to publishing key progress milestones or checkpoints to the blockchain."
+- funds only move through explicit state transitions;
+- roles are fixed per escrow;
+- milestone mode extends the same settlement model rather than introducing a second contract family;
+- high-assurance service tiers remove the optimistic buyer-approval shortcut;
+- stake and verifier-bond logic are tied to escrow or verification-cycle boundaries, not free-floating balances.
 
-**Design rationale.** The paper identifies that static execution plans are insufficient for high-uncertainty or long-duration tasks (§4.4). Milestones provide the on-chain primitive for staged verification: each milestone is a checkpoint where the delegator can verify progress, release partial payment, or trigger adaptive re-delegation. This transforms the escrow from a single-shot settlement into a staged contract with intermediate verification and partial payouts.
+Relevant diagrams:
 
-**Escrow-level state machine (milestone mode):**
+- `docs/diagrams/state-machine.png`
+- `docs/diagrams/milestone-state-machine.png`
+- `docs/diagrams/lifecycle-sequence.png`
 
-```text
-Created ──fund()──> Funded ──[milestone cycling]──> Settled
-  │                   │                                │
-  │cancelBeforeFunding│                                │
-  v                   │                                │
-Cancelled            claimTimeoutRefund               Refunded
-                      │                                ^
-                      v                                │
-                   Refunded <── abortRemainingMilestones()
-```
+### Roles, Trust, And Economics
 
-**Per-milestone state machine:**
+The trust model is intentionally narrow:
 
-```text
-Pending ──submit()──> Submitted
-                        │  │  │
-                        │  │  └─ approve() ──> Approved (partial payout)
-                        │  │
-                        │  └─ dispute/reject/escalate ──> Disputed
-                        │                                    │
-                        │                              resolveDispute()
-                        │                                    │
-                        │                                    v
-                        │                                 Resolved
-                        │
-                        └─ timeout ──> Cancelled
-```
+- the contract is the custodian, not the marketplace operator;
+- verifier and arbitrator identities provide the human or agent trust substrate;
+- every financially relevant transition is evented and replayable.
 
-![Milestone State Machine](diagrams/milestone-state-machine.png)
-
-Key properties:
-- Milestones are defined at creation and processed in order.
-- Each milestone has its own amount, deadline, and review cycle.
-- Approved milestones pay out immediately (no waiting for later milestones).
-- Worker stake is held for the full escrow duration, settled once when all milestones reach terminal states.
-- The buyer can abort remaining milestones after a dispute resolution or timeout, receiving a refund for uncompleted work.
-- Single-milestone escrows behave identically to V1 (backward compatibility).
-
-![Milestone Lifecycle Sequence](diagrams/milestone-lifecycle-sequence.png)
-
-![Milestone System Sequence](diagrams/milestone-system-sequence.png)
-
-See [`SPEC.md`](SPEC.md) for the state machine, settlement math, and invariants.
-
-### Roles
-
-| Role | Responsibility |
-|---|---|
-| `buyer` | Funds escrow, approves or disputes, receives refund on failure |
-| `worker` | Submits delivery, receives payout on approval |
-| `verifierPanel[]` | Quorum verifiers check submissions and cast approve/reject votes |
-| `arbitrator` | Final authority in disputed cases |
-| `treasury` | Receives protocol fee from successful payouts |
-| `backupWorker` | Optional pre-designated fallback worker; activated by buyer if primary defaults |
-
-Roles are immutable per escrow in V1 (including `backupWorker`).
-
-### Economics
-
-- **Tiered protocol fees** (paper §5.3): two fee tiers ensure safety does not become a luxury good. `protocolFeeBps` applies to low-assurance (tier 0) escrows; `highAssuranceFeeBps` applies to high-assurance (tier 1) escrows. Both are set at the factory level and snapshotted into each escrow at creation to prevent governance races. In milestone mode, the fee is applied per-milestone payout.
-- **Service tier** (`serviceTier`): `0` = low-assurance (optimistic), `1` = high-assurance (verified). Immutable per escrow. High-assurance escrows require verifier quorum approval -- `approveByBuyer` and `approveMilestoneByBuyer` revert. Low-assurance escrows retain the optimistic path where buyer or verifier quorum can approve.
-- ETH and ERC20 (originally planned for V2, now part of the current baseline).
-- `workerStake`: optional anti-Sybil bond the worker deposits before submission (paper §4.8). Set at escrow creation; 0 means no stake required. If approved, the stake is returned to the worker in full; disputed stakes follow the same proportional split as payment; on timeout, arbitrator timeout, or backup activation, the stake is forfeited to the buyer. In milestone mode, stake is held for the full escrow duration and settled once at the end.
-- `verifierStakePerVerifier`: optional Schelling-game verifier bond (paper §4.8). A deposited verifier stake is cycle-scoped and cannot remain trapped: quorum finalization applies majority/minority settlement, while non-quorum exits (buyer approval, timeout/dispute/emergency paths, and explicit no-quorum expiry via `expireNoQuorum` / `expireMilestoneNoQuorum`) refund deposited verifier stakes before cycle advance or terminal settlement.
-- `backupWorker`: optional pre-designated fallback worker (paper §4.4). If the primary worker defaults, the buyer calls `activateBackup()` to replace the active worker, extend the deadline by `backupDeadlineExtension` seconds, and forfeit any deposited stake.
-- Milestone payouts: each milestone pays out independently on approval. The buyer funds the full `totalAmount` upfront; partial payouts are released as milestones complete. This reduces capital lock-up risk for the worker while maintaining buyer protection for uncompleted work.
-- Complexity floor: factory-level minimum escrow amount (`complexityFloor`), owner-settable via `setComplexityFloor`. Enforced on-chain at `createEscrow` time and off-chain for early rejection. Ensures delegation overhead (gas + protocol fee) doesn't exceed task value (paper §4.3).
-
-### Trust Model
-
-- Smart contract is custodian (not a marketplace operator).
-- Verifier/arbitrator identities are the trust substrate in V1.
-- All critical state transitions are auditable and replayable via events.
-
-Contract design intent (state machine, settlement math, invariants, paper traceability): [`SPEC.md`](SPEC.md)
-
----
+Economically, the architecture uses tiered fees, optional worker stake, optional verifier stake, backup workers, milestone payouts, and a complexity floor. Those mechanisms are not independent features; together they enforce the paper's claim that delegation assurance should be configurable without undermining settlement determinism.
 
 ## Off-Chain Architecture (Go Server)
 
-Single Go binary serving three concerns in one process.
+### Runtime Model
 
-### Package Structure
+Today the server is a single Go process combining:
 
-```
-go-server/
-  cmd/server/main.go              Entrypoint: wires components, manages lifecycle
-  internal/
-    config/config.go               Environment variable loading
-    chain/
-      abi.go                       ABI parsing from embedded Foundry artifacts
-      client.go                    go-ethereum ethclient wrapper
-      factory.go                   Factory contract binding
-      escrow.go                    Escrow contract bindings
-    storage/
-      db.go                        SQLite open + embedded migration
-      models.go                    Go structs
-      queries.go                   CRUD operations (database/sql, no ORM)
-      migrations/
-        001_create_tables.sql      Schema
-    indexer/indexer.go             Event polling -> DB reconciliation
-    bidding/
-      bidding.go                   Shared bidding protocol logic (RFQ + Bid lifecycle)
-      credentials.go               Attestation-v1 verification, credential requirements matching (paper §4.6 Table 3)
-    escrow/
-      service.go                   Shared escrow lifecycle orchestration used by HTTP/MCP/UCP
-    a2a/
-      types.go                     A2A protocol types (AgentCard, Task, verification_policy)
-      service.go                   A2A-to-escrow lifecycle mapping
-      handler.go                   HTTP handlers (agent card + JSON-RPC endpoint)
-    x402/
-      client.go                    HTTP client for CDP x402 facilitator API (verify + settle)
-    ap2/
-      types.go                     AP2 mandate types
-      service.go                   Mandate validation, binding, fund orchestration
-      handler.go                   HTTP handlers (validate, fund, get mandate)
-    ucp/
-      types.go                     UCP checkout/request/response types + well-known profile
-      service.go                   UCP-to-escrow lifecycle projection and idempotency logic
-      handler.go                   HTTP handlers for /.well-known/ucp + /api/v1/ucp/*
-    authz/
-      authz.go                     Principal authorization engine: default-deny policy, role resolution, context keys (paper §4.7)
-      audit.go                     Authorization audit store: SQLite-backed decision logging for security auditing (paper §4.9)
-    events/
-      types.go                     Event types, GranularityLevel enum, on-chain event name mapping
-      bus.go                       In-process pub/sub EventBus (publish, subscribe, heartbeat, recent events ring buffer)
-    mcpserver/
-      server.go                    MCP server setup
-      tools.go                     MCP tool handlers (core + bidding + AP2 + UCP + emergency + events + A2A + DCT + authz; feature-flag gated)
-    api/
-      router.go                    HTTP mux with middleware
-      handlers.go                  JSON request/response handlers
-      stream.go                    SSE + WebSocket event stream handlers
-      webhook.go                   CDP webhook receiver (factory events)
-      middleware.go                Logging, recovery, CORS, streaming bypass
-  abi/
-    embed.go                       //go:embed for ABI JSON files
-    TaskEscrowFactory.json         Copied from Foundry out/ at build time
-    TaskEscrow.json
+- transport surfaces (`MCP`, `HTTP`, CLI-facing API),
+- shared domain services,
+- event indexing and reconciliation,
+- a query-friendly SQLite read model.
+
+That single-process shape is a deployment convenience, not a domain assumption. The architecture is deliberately drawn so the process can be split later without rewriting the core services.
+
+### Module Structure
+
+The code is organized around responsibility boundaries rather than transport boundaries:
+
+- `go-server/internal/chain/` talks to Ethereum and handles ABI-backed contract interaction.
+- `go-server/internal/storage/` manages the SQLite schema and read/write queries.
+- `go-server/internal/escrow/` is responsible for shared escrow orchestration.
+- `go-server/internal/bidding/` covers RFQ, bid, credential, and negotiation logic.
+- `go-server/internal/attestation/` performs completion-attestation validation and chain checks.
+- `go-server/internal/dct/` handles Delegation Capability Token issuance, attenuation, validation, and lifecycle.
+- `go-server/internal/authz/` enforces principal authorization for DCT operations with audited decisions.
+- `go-server/internal/indexer/` reconciles on-chain events.
+- `go-server/internal/events/` provides in-process event fan-out.
+- `go-server/internal/api/` and `go-server/internal/mcpserver/` are transport adapters over shared logic.
+- `go-server/internal/a2a/`, `go-server/internal/ap2/`, `go-server/internal/ucp/`, and `go-server/internal/x402/` are protocol adapters, not separate business silos.
+
+The intended dependency direction is:
+
+```text
+transports/adapters
+  -> shared domain services
+    -> storage + chain + events
 ```
 
-### Chain Client
+Not the reverse.
 
-Wraps `go-ethereum/ethclient` with:
-- Private key management and EIP-155 transaction signing
-- Nonce tracking with lazy initialization
-- Gas estimation per transaction
-- ABI-encoded method calls for all factory and escrow functions
-- Read-only contract calls for status queries
+### Persistence Model
 
-ABIs are embedded at compile time from Foundry artifacts via `//go:embed`.
+SQLite is a derived operational store, not a second source of truth. The DB exists to support:
 
-### Storage
+- escrow and marketplace queries;
+- event cursoring and idempotent reconciliation;
+- projections for milestones, bids, reputation, DCTs, attestation chains, checkpoints, and adapters.
 
-SQLite via `modernc.org/sqlite` (pure Go, no CGO).
+The high-level table families are:
 
-| Table | Purpose |
-|---|---|
-| `tasks` | Task metadata (title, description, spec hash) |
-| `escrows` | Escrow records mirroring on-chain state (includes `milestone_count`, `current_milestone`, `zk_verifier`, `circuit_id`, `verifier_panel_json`, quorum fields) |
-| `milestones` | Per-milestone records: amount, deadline, status, submission/dispute data (V2) |
-| `submissions` | Worker submission records (`submission_hash`, `proof_hash`) |
-| `disputes` | Dispute and resolution records |
-| `reputation` | Per-address, per-role outcome counters (completed, disputed, failed) indexed from on-chain events |
-| `reputation_events` | Append-only outcome event log (`tx_hash` + `log_index` keyed) used to compute damped reputation overlays while preserving immutable raw counters |
-| `rfqs` | Task Request for Quote broadcasts (paper §6.1: Task_RFQ); optional `required_credentials_json` for credential-gated bidding |
-| `bids` | Signed Bid_Objects from worker agents (paper §6.1: Bid_Object); optional `stake_mandate_id` for Sybil resistance; `credentials_json` (attestation-v1 payloads), `credential_verified` when RFQ has requirements |
-| `decompositions` | Contract-first decomposition proposals (paper §4.1): buyer, task spec metadata, lifecycle status (`draft`/`valid`/`finalized`), structural validation errors JSON, linked RFQ IDs JSON |
-| `decomposition_nodes` | Tree nodes for each decomposition: parent linkage, depth, verification type/details, decomposition-required flag, and optional linked RFQ |
-| `ap2_mandates` | AP2 mandate records for gasless escrow funding via x402 facilitator |
-| `a2a_tasks` | A2A protocol tasks linked to escrows (paper §6: A2A Task object extension) |
-| `ucp_sessions` | UCP checkout/session projection state: checkout↔escrow linkage, projected status, last operation, tx hash |
-| `ucp_idempotency` | Deterministic UCP responses keyed by idempotency key (operation + request hash + response snapshot) |
-| `chain_logs` | Raw chain event log (idempotent by tx_hash + log_index) |
-| `chain_cursors` | Indexer block cursor per chain |
-| `frozen_addresses` | Addresses frozen via emergency protocol (paper §4.9) |
-| `emergency_actions` | Audit log of emergency actions (freeze, unfreeze, emergency resolve) |
-| `dct_tokens` | Delegation Capability Tokens (off-chain authorization layer): strict canonical profile (`dct-profile-v1`), deterministic caveats (`caveats_json`), lineage depth, scope (operations/resources), expiry, and revocation state |
-| `dct_authorization_audit` | Authorization decision audit log for DCT operations: every permit/deny is recorded with caller, escrow, token, reason, and request correlation ID (paper §4.7, §4.9) |
-| `attestation_chains` | Submission-scoped metadata for signed completion attestation chains: root hash, verification status, verification summary JSON (paper §4.8: transitive liability) |
-| `attestation_links` | Individual signed links in an attestation chain: from/to addresses, child escrow reference, task spec/outcome hashes, signature, time bounds (paper §4.8: chain of custody) |
-| `checkpoints` | Checkpoint artifacts for mid-task agent swaps: state snapshot URI, content hash, schema version, committed-by worker, optional milestone scoping, completion percentage, metadata JSON (paper §6.1: checkpoint artifacts + partial compensation clauses) |
+- settlement projections: `escrows`, `milestones`, `submissions`, `disputes`;
+- market projections: `rfqs`, `bids`, `decompositions`, `decomposition_nodes`;
+- trust and authz: `reputation`, `reputation_events`, `dct_tokens`, `dct_authorization_audit`;
+- integration state: `a2a_tasks`, `ap2_mandates`, `ucp_sessions`, `ucp_idempotency`;
+- chain reconciliation and ops: `chain_logs`, `chain_cursors`, `frozen_addresses`, `emergency_actions`;
+- delegation evidence: `attestation_chains`, `attestation_links`, `checkpoints`.
+
+That categorization matters more than the exact schema. If the DB and chain disagree, the chain wins.
 
 ![Reputation Seed Sequence](diagrams/reputation-seed-sequence.png)
 
-### Event Indexer (Dual-Mode: Polling + CDP Webhooks)
+### Event Flow
 
-The indexer reconciles on-chain events into the SQLite database. Two complementary mechanisms handle different event categories:
+The off-chain system is event-driven around on-chain truth:
 
-**Polling indexer** (always active) — background goroutine polling every 15 seconds:
+```text
+client action
+  -> chain transaction
+  -> indexer/webhook ingestion
+  -> SQLite reconciliation
+  -> in-process event bus
+  -> SSE/WebSocket/MCP consumers
+```
 
-1. Get current block number from RPC
-2. Load cursor from DB (or default: current - 250 blocks)
-3. Fetch `EscrowCreated` events from factory address
-4. For each known escrow, fetch all lifecycle events (~15 event types)
-5. Map events to status updates
-6. Create submission/dispute records from relevant events
-7. Idempotent: skip events already in `chain_logs`
-8. Update cursor
+Two ingestion mechanisms coexist for structural reasons:
 
-After any write transaction (via MCP or API), `RunOnce()` is called synchronously for immediate event pickup.
+- **Polling** handles escrow contracts, because new escrow addresses are created dynamically.
+- **CDP webhooks** accelerate factory-level events, because the factory address is static.
 
-**CDP Webhooks** (optional, enabled by `CDP_WEBHOOK_SECRET`) — real-time push for factory events:
+Both paths deduplicate through persisted chain-log identity, so overlap is safe.
 
-1. CDP pushes `EscrowCreated` and `OutcomeRecorded` events to `POST /webhooks/cdp` as they occur on-chain
-2. The handler verifies the HMAC-SHA256 signature (replay protection via timestamp window)
-3. Events are deduplicated via the same `chain_logs` mechanism as the polling indexer
-4. Decoded event parameters are written directly to the database
+### Interface Surfaces
 
-**Why both?** The factory contract (`TaskEscrowFactory`) is a single static address — ideal for a webhook subscription. But each `TaskEscrow` is a dynamically deployed contract at a new address that can't be pre-subscribed. The polling indexer handles all escrow-level events (funded, submitted, approved, disputed, etc.) while webhooks provide near-instant delivery of factory events. The polling indexer also serves as a fallback for factory events if CDP has an outage — deduplication ensures no double-processing.
+The project exposes one domain model through multiple transports:
 
-| Event Category | Source | Delivery | Mechanism |
-|---|---|---|---|
-| Factory events (`EscrowCreated`, `OutcomeRecorded`) | `TaskEscrowFactory` | Real-time push (webhook) + 15s poll (fallback) | CDP Webhooks + polling indexer |
-| Escrow events (~15 types) | Individual `TaskEscrow` contracts | 15s poll | Polling indexer only |
-| Client subscriptions (L0-L1) | EventBus (fed by indexer + webhooks) | Real-time push (SSE/WebSocket) or polling (MCP tool) | In-process event bus |
+- **MCP** for MCP-native agent clients.
+- **HTTP** for dashboards, scripts, and external services.
+- **CLI** for shell agents through `escrow-cli`.
+- **A2A** and **UCP** as adapter surfaces over the same shared orchestration.
 
-### Real-Time Event Subscriptions (Paper §4.5)
+Architecturally, the important point is not the exact endpoint list; it is that the transports should remain thin and behaviorally aligned. Exact tool names, routes, and flags are implementation details and should be read from:
 
-The event bus provides client-facing real-time streaming of escrow lifecycle events with the paper's configurable granularity levels (Section 4.5, Section 6.1):
+- [`go-server/internal/mcpserver/tools.go`](../go-server/internal/mcpserver/tools.go)
+- [`go-server/internal/api/router.go`](../go-server/internal/api/router.go)
+- [`go-server/cmd/cli/main.go`](../go-server/cmd/cli/main.go)
 
-- **L0** (`IS_OPERATIONAL`): heartbeat/liveness signals at configurable intervals
-- **L1** (`HIGH_LEVEL_PLAN_UPDATES`): on-chain state transitions (funded, submitted, approved, disputed, etc.)
-- **L2** (`COT_TRACE`): chain-of-thought reasoning traces (future, staged)
-- **L3** (`FULL_STATE`): complete state snapshots (future, staged)
+### Core Domain Services
 
-**Architecture:** An in-process `EventBus` (`internal/events/`) receives events from three sources:
+Several off-chain subsystems are central to the architecture because they add delegation-specific behavior without replacing the settlement kernel:
 
-1. **Polling indexer** -- publishes L1 events after processing each on-chain event
-2. **CDP webhook handler** -- publishes L1 events after processing webhook-delivered factory events
-3. **Heartbeat goroutine** -- publishes L0 heartbeat events at `EVENTS_HEARTBEAT_INTERVAL`
+- **Bidding** keeps price discovery, capability matching, and credential verification off-chain until a winning bid is formalized as an escrow.
+- **Contract-first decomposition** validates that task breakdowns remain settlement-compatible before leaf tasks become RFQs.
+- **Attestation chains** add transitive accountability for sub-delegation while remaining off-chain evidence rather than on-chain consensus.
+- **Checkpoint/resume** adds restartable work handoff for adaptive delegation without changing escrow custody rules.
+- **DCT authorization** enforces delegated capability scope off-chain with auditability and strict attenuation.
 
-Subscribers connect via SSE or WebSocket and declare a maximum granularity level and optional escrow address filter. The bus delivers matching events in real-time via buffered channels with non-blocking sends (slow consumers drop events rather than blocking publishers).
+These systems are intentionally layered beside the escrow contract, not inside it.
 
-**Client transports:**
+### Protocol Adapters
 
-| Transport | Endpoint | Use Case |
-|---|---|---|
-| SSE | `GET /api/v1/events` | All escrows, browser-friendly |
-| SSE | `GET /api/v1/escrows/{id}/events` | Single escrow, scoped |
-| WebSocket | `GET /api/v1/events/ws` | Bidirectional (future L2/L3) |
-| MCP polling | `subscribe_events` tool | Cursor-based for MCP stdio |
+Adapter modules translate external protocols into shared escrow semantics:
 
-**MCP tool:** Since MCP stdio transport doesn't support persistent push streams, the `subscribe_events` tool uses a polling model -- it returns recent events since a given cursor (event ID), similar to how `get_escrow` works but returning a time-ordered event log.
+- **A2A** exposes settlement capability to A2A agents with escrow-specific metadata.
+- **AP2/x402** provides gasless or payment-rail-assisted funding flows into escrow.
+- **UCP** projects commerce-oriented checkout flows onto escrow lifecycle semantics.
 
-**Design:** The bus maintains a ring buffer of recent events (up to 1000) for the MCP polling tool. SSE and WebSocket clients receive events in real-time via channel subscriptions. The bus is a lightweight in-process struct with mutex-protected subscriber maps -- no external message broker needed at V2 scale.
+The architectural rule is that adapters may reshape transport semantics, but they may not bypass verification, dispute, refund, or settlement invariants.
 
-### Bidding Protocol (Task_RFQ + Bid_Object)
+### Operational Controls
 
-The bidding protocol implements the paper's decentralized market mechanism (§4.2, §6.1) where delegators broadcast task requests and agents respond with competitive bids. This is entirely off-chain -- the on-chain escrow creation is the formalization step triggered when a bid is accepted.
+A few operational mechanisms deserve mention because they affect system shape:
 
-![Bidding Sequence](diagrams/bidding-sequence.png)
+- emergency controls span on-chain owner actions plus off-chain auditability;
+- event streaming supports L0/L1 today, with deeper monitoring levels staged;
+- configuration gates optional surfaces such as A2A, UCP, x402, and emergency endpoints.
 
-**Flow:**
-1. Buyer broadcasts a **Task_RFQ** with task spec, budget range, deadline, and requirements
-2. Workers discover RFQs via `list_rfqs` / `GET /api/v1/rfqs`
-3. Workers submit **Bid_Objects** with proposed price, duration, and reputation bond
-4. Buyer evaluates bids (cost, reputation, capability) and accepts one
-5. Acceptance atomically creates an on-chain escrow, closes the RFQ, and rejects remaining bids
+For exact environment variables and runtime setup, use [`docs/SETUP.md`](SETUP.md) and [`go-server/internal/config/config.go`](../go-server/internal/config/config.go) rather than this document.
 
-**Data model:** Two new tables (`rfqs`, `bids`) with status-based lifecycle management. RFQs have budget ranges enabling competitive bidding within buyer constraints and carry a `bidding_mode` (`sealed` default; decomposition finalization can assign `open` for low-assurance leaves). Both RFQs and bids have expiry timestamps checked at read time (no background cleanup needed).
+## Enduring Decisions
 
-**Verifiable bid credentials (attestation-v1).** RFQ buyers can specify `required_credentials_json` with domain/capability/trusted-issuer selectors (paper §4.6 Table 3: Web of Trust; §6.1: Bid_Object). Workers present signed attestation-v1 payloads during bid reveal. The server verifies secp256k1 signatures, subject binding (bidder must match attestation subject_address), expiry, and matches attestations against requirements. Accept is gated on `credential_verified` when requirements are present — bids that fail credential verification cannot be accepted. Bazaar-compatible discovery metadata at `GET /api/v1/bazaar/discovery` exposes credential schemas and endpoint documentation. The attestation format includes an optional `issuer_did` field, forward-compatible with DID methods for V4.
+These are the design choices worth preserving through refactors:
 
-### Contract-First Decomposition Tooling (Paper §4.1)
-
-Contract-first decomposition operationalizes the paper's requirement that delegation be contingent on precise verifiability. The decomposition service is an off-chain planning and validation layer exposed through MCP, HTTP, and CLI.
-
-**Flow:**
-1. Caller submits a decomposition proposal (tree of sub-tasks with `temp_id` / `parent_temp_id` linkage)
-2. Service persists decomposition + nodes and identifies leaf nodes
-3. Structural validation enforces leaf verifiability constraints:
-   - `verification_type` required for leaves
-   - `requires_further_decomposition` must be false for leaves
-   - `zk_proof` leaves require `circuit_id` in `verification_details`
-4. Service computes per-leaf market context (market depth, verifier count, `proven`/`emerging`/`untested` signal) from historical DB data
-5. `finalize_decomposition` converts valid leaves into RFQs with verification-type-aware service tiers and bidding modes
-
-**Hybrid human/AI intent (advisory in V3).** Leaf nodes can include optional `delegate_preference` metadata (`human`, `ai`, `any`). This captures decomposition-time intent for hybrid markets (for example, explicitly marking nodes that require human judgment) but does not hard-gate validation, bidding, or acceptance in V3.
-
-**Staged rollout.** V3 stores and surfaces this preference for planning transparency across MCP/HTTP/CLI. Full optimization and policy enforcement (speed/cost routing, stronger human-in-the-loop controls, and governance-linked constraints) remain V4 scope.
-
-**Design choice: market context is advisory, not gating.** Decomposition validity is based on structural verifiability, not incumbent market depth. This avoids blocking first-mover capability markets (for example, the first `zk_proof` RFQ in a new deployment).
-
-**Verification type mapping at finalize-time:**
-- `optimistic` -> tier 0, open bidding
-- `unit_test` -> tier 0, open bidding (requirements include unit-test artifact expectations)
-- `quorum` -> tier 1, sealed bidding (uses finalize-time verifier panel/quorum params)
-- `zk_proof` -> tier 1, sealed bidding (uses node-level circuit metadata plus finalize-time verifier config)
-
-### A2A Settlement Adapter (Paper §6)
-
-The A2A adapter makes the escrow settlement layer accessible as an A2A-compatible agent (paper §6, pages 25-27). The paper identifies that A2A "lacks the cryptographic slots to enforce verifiable task completion" and "assumes a predefined service interface" with "no native support for structured pre-commitment negotiation of scope, cost, and liability." The adapter fills this gap.
-
-**Agent card** (`GET /.well-known/agent.json`): Serves a standard A2A v0.2+ agent card with eight skills mapping to escrow lifecycle actions (create, fund, submit, approve, dispute, resolve, query, settle_task). External agents discover the settlement capability via this endpoint.
-
-**JSON-RPC endpoint** (`POST /a2a`): Implements A2A JSON-RPC 2.0 methods:
-- `tasks/send` -- Receive a task from a delegator agent. If `escrow_trigger: true` in the `verification_policy` metadata, the task is linked to an on-chain escrow.
-- `tasks/get` -- Query task/escrow status.
-- `tasks/cancel` -- Cancel a task (maps to escrow cancellation if unfunded).
-
-**Paper-defined extensions** on A2A Task metadata (paper §6.1):
-- `verification_policy`: Specifies verification mode (`strict`, `optimistic`, `manual`), required artifacts (`unit_test_log`, `zk_snark_trace`, `manual_review`), and whether to trigger escrow creation.
-- `escrow_trigger`: When true, task acceptance automatically creates an on-chain escrow.
-
-**Architecture**: The adapter is a new integration surface alongside MCP and HTTP, following the same shared-logic pattern. The `a2a.Service` struct holds the same dependencies (`storage.DB`, `chain.ChainClient`, `indexer.Indexer`, `config.Config`) and is wired into the router when `A2A_ENABLED` is true (default).
-
-**Data model:** The `a2a_tasks` table links A2A task IDs and sessions to escrow records, storing verification policy and escrow trigger state.
-
-### AP2 Mandate-to-Escrow Bridge (Paper §6)
-
-The AP2 mandate bridge enables gasless ERC20 escrow funding via the [x402](https://docs.cdp.coinbase.com/x402/welcome) payment rail. A buyer authorizes a mandate off-chain; the server validates it against the x402 facilitator API, binds it to an escrow, and submits `fundWithAuthorization()` on-chain. The facilitator sponsors gas; the buyer pays only in tokens. This implements the paper's AP2 conditional settlement integration (§6): mandate authorization triggers escrow funding, which then governs conditional custody and release.
-
-**x402 facilitator integration:** The `x402` package provides an HTTP client for the CDP x402 facilitator API (verify and settle endpoints). When `X402_ENABLED` is true, the AP2 service uses it to validate mandate authorizations before binding and to coordinate EIP-3009 settlement. The escrow contract's `fundWithAuthorization()` accepts the signed authorization; any caller (the server, acting as relayer) submits the transaction.
-
-**Flow:** Validate mandate → Bind mandate to escrow → Fund escrow via `fundWithAuthorization` (EIP-3009). Bids may include an optional `stake_mandate_id` for worker stake funding, providing Sybil resistance via the same gasless rail.
-
-### UCP Fulfillment Adapter (Paper §6)
-
-The UCP provider is implemented as an interoperability envelope over existing escrow semantics. It does not redesign settlement logic and cannot bypass escrow invariants. The adapter is exposed through:
-
-- `GET /.well-known/ucp` (provider profile + capability declaration)
-- `POST /api/v1/ucp/checkouts` (`create_checkout`)
-- `GET /api/v1/ucp/checkouts/{checkout_id}` (`get_checkout`)
-- `PATCH /api/v1/ucp/checkouts/{checkout_id}` (`update_checkout`)
-- `POST /api/v1/ucp/checkouts/{checkout_id}/complete` (`complete_checkout`)
-- `POST /api/v1/ucp/checkouts/{checkout_id}/cancel` (`cancel_checkout`)
-
-The same semantics are also exposed as MCP tools (`ucp_*`) and CLI commands (`escrow-cli ucp ...`) for transport parity in this phase.
-
-#### Mapping Contract: UCP Status ↔ Escrow State
-
-| UCP status | Escrow status projection | Semantics |
-|---|---|---|
-| `incomplete` | `created`, `funded` (and other non-terminal pre-submission states) | Checkout exists but completion conditions are not met. |
-| `ready_for_complete` | `submitted` | Submission exists and is waiting for approval/verification. |
-| `complete_in_progress` | `approved`, `resolved` | Completion path is in-flight; final settlement not yet indexed as terminal. |
-| `requires_escalation` | `disputed` | Dispute/escalation path is active and requires explicit resolution. |
-| `completed` | `settled` | Terminal success path; payout/fee outcomes finalized. |
-| `canceled` | `cancelled`, `refunded` | Terminal cancellation/refund path. |
-
-**Semantic anchor:** UCP `completed` maps only to escrow `settled`. This preserves verification, dispute, and refund guarantees from the escrow contract/state machine.
-
-#### Mapping Contract: UCP Operations ↔ Escrow Actions
-
-| UCP operation | Shared service entrypoint | Escrow behavior |
-|---|---|---|
-| `create_checkout` | `ucp.Service.CreateCheckout` | Links an existing escrow or creates a new escrow through shared orchestration; persists checkout/session projection. |
-| `get_checkout` | `ucp.Service.GetCheckout` | Reads escrow + projection state from DB with status refresh. |
-| `update_checkout` | `ucp.Service.UpdateCheckout` | Executes mapped lifecycle operations (`fund`, `submit`, `approve`, `dispute`, `resolve`, timeout claims, stake ops, backup/milestone controls) via `escrow.Service`. |
-| `complete_checkout` | `ucp.Service.CompleteCheckout` | Attempts approve/verify transitions but never short-circuits terminal settlement rules. |
-| `cancel_checkout` | `ucp.Service.CancelCheckout` | Uses escrow-native cancel/refund paths (`cancelBeforeFunding` or timeout-based claims) according to state. |
-
-Unsupported or out-of-scope UCP commerce fields are rejected explicitly (error path), not silently ignored.
-
-#### Shared-Orchestration Invariant
-
-`internal/escrow/service.go` centralizes lifecycle orchestration (create/fund/submit/approve/dispute/resolve/refund/cancel/stake/backup + indexer sync) and is used by HTTP handlers, MCP tools, and UCP service. This removes transport-level drift and keeps settlement semantics consistent across interfaces.
-
-### Emergency Response Protocol (Paper §4.9)
-
-The emergency protocol spans on-chain (factory + escrow contracts) and off-chain (Go server) components, implementing the paper's rapid incident response (§4.9).
-
-**On-chain:** Address freezing, escrow freezing, and emergency resolution are owner-only operations on the factory. Frozen addresses cannot participate in new escrows; frozen escrows block all participant actions until emergency resolve or unfreeze. `emergencyResolve()` force-settles a frozen escrow with a specified worker award (basis points), enabling fund recovery without normal approval/dispute flows.
-
-**Off-chain:** Seven MCP tools (`freeze_address`, `unfreeze_address`, `freeze_escrow`, `unfreeze_escrow`, `emergency_resolve`, `list_frozen_addresses`, `list_emergency_actions`) and seven HTTP API endpoints (`POST /api/v1/emergency/freeze-address`, `unfreeze-address`, `freeze-escrow`, `unfreeze-escrow`, `resolve`; `GET /api/v1/emergency/frozen-addresses`, `actions`). The event indexer ingests emergency events (`AddressFrozen`, `AddressUnfrozen`, `EscrowFrozen`, `EscrowUnfrozen`, `EmergencyResolved`) and reconciles them into SQLite. Storage includes `frozen_addresses` and `emergency_actions` tables for audit and monitoring.
-
-**Config:** `EMERGENCY_ENABLED` env var controls whether emergency endpoints are registered (default: true).
-
-### Attestation Chains (Paper §4.8)
-
-Attestation chains implement recursive delegation verification. When an agent sub-delegates work (A delegates to B, B delegates to C), each link in the chain produces a signed `completion-attestation-v1` attestation of sub-task completion. The full chain provides transitive liability tracking and chain-of-custody evidence.
-
-![Attestation Chain Sequence](diagrams/attestation-chain-sequence.png)
-
-**Parent-child escrow linkage.** RFQs and escrows carry an optional `parent_escrow_id` linking sub-delegated tasks to their parent. When creating a sub-delegation RFQ (or direct escrow with parent linkage), the buyer must be the active worker of the parent escrow (enforced by the bidding service and direct creation handlers). Bid acceptance and direct creation both propagate parent linkage into on-chain `createEscrow` as `parentEscrow`, enabling factory-level surcharge enforcement.
-
-**Completion-attestation-v1 profile.** Each attestation link is a signed message with a deterministic canonical format: `completion-attestation-v1|link_id|parent_link_id|from|to|child_escrow_id|task_spec_hash|outcome_hash|issued_at|expires_at|nonce`. The `from_address` (delegator) signs the message; verification recovers the signer via secp256k1 `Ecrecover` and checks it matches `from_address`.
-
-**Chain validation.** The `attestation` package validates chains as DAGs:
-- Signature verification on every link
-- Duplicate `link_id` detection
-- Parent-link integrity (non-root links must reference existing parents)
-- Cycle detection via DFS
-- Child escrow coverage (every known child escrow must be referenced by at least one link)
-- Time-bound validation (issued_at not in the future, expires_at not expired)
-
-The validated chain produces a `root_hash` (Keccak256 of sorted canonical messages) and a `ChainValidationResult` with coverage metadata.
-
-**Integration surfaces.** Attestation chains are accepted on submission (`submit_work` MCP tool and `POST /api/v1/escrows/{id}/submit` HTTP endpoint via `attestation_chain_json`). When an escrow has child escrows, the attestation chain is required and must pass validation. Chains are persisted in `attestation_chains` and `attestation_links` tables and retrievable via `get_attestation_chain` MCP tool, `GET /api/v1/escrows/{id}/attestation-chain` HTTP endpoint, and `escrow-cli attestation-chain` command. The `GET /api/v1/escrows/{id}` response is enriched with attestation chain summaries and child escrow IDs.
-
-**Design choice: off-chain only.** Attestation chains are stored and verified entirely off-chain. On-chain settlement contracts remain unchanged -- the chain provides verifiable evidence for dispute resolution and audit, not consensus-level enforcement. This keeps gas costs low and avoids contract size bloat while preserving the paper's accountability guarantees.
-
-### Checkpoint/Resume (Paper §6.1)
-
-Checkpoint/resume implements standardized state snapshots for mid-task agent swaps. When a worker is replaced (via backup activation, re-delegation, or manual swap), the replacement worker needs the outgoing worker's progress state to resume rather than restart. The paper calls for "a standard schema for checkpoint artifacts" that can be "mapped onto the capabilities available on the agentic market" to "enable the task to be resumed or restarted" (§6.1).
-
-**Checkpoint artifact schema.** Each checkpoint stores:
-- `state_snapshot_uri` — URI pointing to the serialized state artifact (IPFS, S3, etc.)
-- `snapshot_hash` — optional content hash for integrity verification
-- `schema_version` — artifact schema version (default: `checkpoint-v1`)
-- `milestone_index` — optional scoping to a specific milestone in multi-milestone escrows
-- `completion_pct` — optional estimated progress (0-100)
-- `metadata_json` — freeform metadata (tool versions, environment info, etc.)
-
-**Authorization.** Only the escrow's active worker can commit checkpoints. This matches the paper's trust boundary: the worker producing work is the only party with meaningful state to checkpoint. Reads are broadly accessible, matching existing escrow read surfaces.
-
-**Milestone coupling.** Checkpoints optionally scope to a milestone index, coupling with the existing V2 milestone settlement logic for partial compensation. When a worker is swapped mid-milestone, the checkpoint provides resume state while the milestone's partial payout provides compensation for work completed.
-
-**Resume handoff flow:**
-1. Active worker periodically commits checkpoints during task execution
-2. Worker swap occurs (backup activation, re-delegation, or manual replacement)
-3. Replacement worker calls `get_latest_checkpoint` to retrieve the most recent state
-4. Replacement worker fetches the artifact at `state_snapshot_uri` and resumes from that state
-5. Replacement worker continues the escrow lifecycle (submit, etc.)
-
-**Integration surfaces.** Checkpoints are committed via `commit_checkpoint` MCP tool, `POST /api/v1/escrows/{id}/checkpoints` HTTP endpoint, and `escrow-cli checkpoint-commit` command. Retrieval via `list_checkpoints` / `get_latest_checkpoint` MCP tools, `GET /api/v1/escrows/{id}/checkpoints` and `GET .../checkpoints/latest` HTTP endpoints, and `escrow-cli checkpoints` / `checkpoint-latest` commands. A `checkpoint.committed` event is published to the event bus on each commit.
-
-![Checkpoint/Resume Sequence](diagrams/checkpoint-resume-sequence.png)
-
-**Design choice: off-chain only.** Like attestation chains, checkpoints are stored entirely off-chain. No Solidity changes are required. The checkpoint URI and hash provide a commitment that can be referenced in disputes, but on-chain enforcement (e.g., ZK checkpoint verification) is deferred to item 18.
-
-### MCP Tools (Primary Interface)
-
-| Tool | Inputs | Chain Method |
-|---|---|---|
-| `create_escrow` | title, roles, verifier_panel/quorum params, amount, worker_stake, verifier_stake_per_verifier, token, deadlines, milestones, backup_worker, backup_deadline_extension, zk_verifier, circuit_id, parent_escrow_id (optional) | `Factory.createEscrow` |
-| `fund_escrow` | escrow_id | `Escrow.fund` |
-| `deposit_stake` | escrow_id | `Escrow.depositStake` |
-| `deposit_verifier_stake` | escrow_id | `Escrow.depositVerifierStake` |
-| `submit_work` | escrow_id, submission_uri, proof_hash (optional), milestone_index (optional) | `Escrow.submit` / `Escrow.submitMilestone` |
-| `verify_and_approve` | escrow_id, proof, milestone_index (optional) | `Escrow.verifyAndApprove` / `Escrow.verifyAndApproveMilestone` (casts an approval vote toward quorum; when `verifierStakePerVerifier > 0`, verifier stake requirements still apply before voting) |
-| `cast_verifier_vote` | escrow_id, approve, reason_uri, milestone_index (optional) | `Escrow.castVerifierVote` / `Escrow.castMilestoneVerifierVote` |
-| `approve_work` | escrow_id, role, milestone_index (optional) | `Escrow.approveByBuyer` / verifier role maps to quorum vote |
-| `dispute_work` | escrow_id, role, reason_uri, milestone_index (optional) | `Escrow.dispute/castVerifierVote(false)/escalateSilence` / milestone variants |
-| `resolve_dispute` | escrow_id, worker_award_bps, resolution_uri, milestone_index (optional) | `Escrow.resolveDispute` / milestone variant |
-| `abort_milestones` | escrow_id | `Escrow.abortRemainingMilestones` |
-| `activate_backup` | escrow_id | `Escrow.activateBackup` |
-| `get_escrow` | escrow_id | DB read (includes milestone details) |
-| `list_escrows` | role, address, status | DB query |
-| `get_reputation` | address, role (optional) | DB read: raw counters (`reputation`) + damped overlays (`reputation_events` with configurable decay factor) |
-| `mint_dct` | escrow_id, subject, operations, resources, expires_at, issuer (optional), caller | Off-chain DCT mint (authz: buyer only) |
-| `delegate_dct` | parent_token, subject, operations/resources subsets, expires_at, issuer (optional), caller | Off-chain DCT attenuation/delegation (authz: token holder only) |
-| `introspect_dct` | token | Off-chain DCT introspection (public) |
-| `revoke_dct` | token_id, reason/by (optional), caller | Off-chain DCT revoke (authz: issuer or buyer) |
-| `emergency_override_dct` | escrow_id, operation, caller_address, reason, owner | Emergency DCT override (factory owner only) |
-| `list_dct_audit` | escrow_id (optional), limit, offset | List DCT authorization audit entries |
-| `create_rfq` | title, description, buyer, budget_min/max, commit_deadline, reveal_deadline, expires_at, deadline, etc. | DB write (off-chain) with optional parent-linked re-bid cooldown gate |
-| `create_decomposition` | buyer, title, description, spec_hash (optional), `sub_tasks_json` | DB write + structural validation + market context generation (off-chain) |
-| `list_decompositions` | buyer, status (optional) | DB query |
-| `get_decomposition` | decomposition_id | DB read (decomposition + nodes) |
-| `finalize_decomposition` | decomposition_id + RFQ defaults (budgets, deadlines, arbitrator, verifier panel/quorum) | DB read/write + per-leaf RFQ creation |
-| `commit_bid` | rfq_id, bidder, commitment, nonce | DB write (off-chain) |
-| `reveal_bid` | rfq_id, bidder, nonce, salt, amount, estimated_duration, expires_at, etc. | DB write (off-chain) |
-| `list_bids` | rfq_id or bidder | DB query |
-| `accept_bid` | rfq_id, bid_id, caller | `Factory.createEscrow` (on acceptance) |
-| `fund_via_mandate` | escrow_id, mandate_id, authorization params | x402 validate + `Escrow.fundWithAuthorization` |
-| `subscribe_events` | escrow_id (optional), since_id, granularity, limit | EventBus polling (cursor-based) |
-| `get_agent_card` | (none) | Returns A2A agent card JSON |
-| `ucp_create_checkout` | checkout/session metadata + escrow_id or create_escrow_json | UCP adapter over shared escrow service (`create_checkout`) |
-| `ucp_get_checkout` | checkout_id | UCP projection read (`get_checkout`) |
-| `ucp_update_checkout` | checkout_id + mapped operation payload | UCP mapped operation (`update_checkout`) via shared escrow service |
-| `ucp_complete_checkout` | checkout_id + optional role/proof payload | UCP completion orchestration (`complete_checkout`) |
-| `ucp_cancel_checkout` | checkout_id + optional milestone payload | UCP cancellation/refund orchestration (`cancel_checkout`) |
-| `freeze_address` | address | `Factory.freezeAddress` (owner-only) |
-| `unfreeze_address` | address | `Factory.unfreezeAddress` (owner-only) |
-| `freeze_escrow` | escrow_id | `Factory.freezeEscrow` (owner-only) |
-| `unfreeze_escrow` | escrow_id | `Factory.unfreezeEscrow` (owner-only) |
-| `emergency_resolve` | escrow_id, worker_award_bps | `Factory.emergencyResolve` (owner-only) |
-| `list_frozen_addresses` | (none) | DB read |
-| `list_emergency_actions` | limit, offset (optional) | DB read |
-| `get_attestation_chain` | escrow_id | DB read (attestation chains + links) |
-| `commit_checkpoint` | escrow_id, state_snapshot_uri, committed_by, snapshot_hash, milestone_index, completion_pct, metadata_json (optional) | DB write (off-chain, active worker only) |
-| `list_checkpoints` | escrow_id, milestone_index (optional) | DB read |
-| `get_latest_checkpoint` | escrow_id, milestone_index (optional) | DB read |
-
-### HTTP API (Secondary Interface)
-
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/v1/health` | Health check |
-| GET | `/.well-known/ucp` | UCP provider profile and capability declaration |
-| POST | `/api/v1/escrows` | Create escrow (includes `verifier_panel`, quorum params, optional `milestones`, `zk_verifier`, `circuit_id`, `parent_escrow_id`) |
-| GET | `/api/v1/escrows` | List (query: role, address, status) |
-| GET | `/api/v1/escrows/{id}` | Get escrow (includes milestone details if applicable) |
-| POST | `/api/v1/escrows/{id}/fund` | Fund |
-| POST | `/api/v1/ap2/fund` | Fund escrow via AP2 mandate (EIP-3009 gasless) |
-| POST | `/api/v1/ap2/validate` | Validate AP2 mandate against x402 facilitator |
-| GET | `/api/v1/ap2/mandates/{id}` | Get mandate details |
-| POST | `/api/v1/ucp/checkouts` | Create UCP checkout (`create_checkout`) |
-| GET | `/api/v1/ucp/checkouts/{checkout_id}` | Get UCP checkout projection (`get_checkout`) |
-| PATCH | `/api/v1/ucp/checkouts/{checkout_id}` | Update checkout via mapped operation (`update_checkout`) |
-| POST | `/api/v1/ucp/checkouts/{checkout_id}/complete` | Complete checkout flow (`complete_checkout`) |
-| POST | `/api/v1/ucp/checkouts/{checkout_id}/cancel` | Cancel checkout via escrow-native paths (`cancel_checkout`) |
-| POST | `/api/v1/escrows/{id}/deposit-stake` | Deposit worker stake |
-| POST | `/api/v1/escrows/{id}/deposit-verifier-stake` | Deposit verifier stake |
-| POST | `/api/v1/escrows/{id}/submit` | Submit work (optional `proof_hash`, `milestone_index` in body) |
-| POST | `/api/v1/escrows/{id}/verify-approve` | Verify provided proof bytes and approve in one on-chain call (optional `milestone_index` in body) |
-| POST | `/api/v1/escrows/{id}/quorum-vote` | Cast verifier quorum vote (body: approve, reason_uri, optional milestone_index) |
-| POST | `/api/v1/escrows/{id}/approve` | Approve (body: role, optional milestone_index) |
-| POST | `/api/v1/escrows/{id}/dispute` | Dispute (body: role, reason_uri, optional milestone_index) |
-| POST | `/api/v1/escrows/{id}/resolve` | Resolve (body: worker_award_bps, resolution_uri, optional milestone_index) |
-| POST | `/api/v1/escrows/{id}/abort-milestones` | Abort remaining milestones (buyer only) |
-| POST | `/api/v1/escrows/{id}/activate-backup` | Activate backup worker (buyer only) |
-| GET | `/api/v1/reputation/{address}` | Get reputation (query: role) with both raw and damped metrics |
-| POST | `/api/v1/dcts/mint` | Mint DCT (body: caller for authz) |
-| POST | `/api/v1/dcts/delegate` | Delegate DCT with strict attenuation (body: caller for authz) |
-| POST | `/api/v1/dcts/introspect` | Introspect DCT (public) |
-| POST | `/api/v1/dcts/revoke` | Revoke DCT (body: caller for authz) |
-| POST | `/api/v1/dcts/emergency-override` | Emergency DCT override (factory owner only) |
-| GET | `/api/v1/dcts/audit` | List DCT authorization audit entries (query: escrow_id, limit, offset) |
-| GET | `/api/v1/escrows/{id}/dcts` | List DCTs scoped to escrow |
-| POST | `/api/v1/rfqs` | Create RFQ (Task_RFQ broadcast; parent-linked requests are subject to re-bid cooldown) |
-| GET | `/api/v1/rfqs` | List RFQs (query: status, buyer) |
-| GET | `/api/v1/rfqs/{id}` | Get RFQ details with bids |
-| POST | `/api/v1/rfqs/{id}/cancel` | Cancel an open RFQ (buyer only) |
-| POST | `/api/v1/decompositions` | Create decomposition proposal (structural validation + market context) |
-| GET | `/api/v1/decompositions` | List decompositions (query: buyer, status) |
-| GET | `/api/v1/decompositions/{id}` | Get decomposition details with nodes |
-| POST | `/api/v1/decompositions/{id}/finalize` | Finalize valid decomposition into RFQs |
-| POST | `/api/v1/rfqs/{id}/bids/commit` | Commit sealed bid during commit phase |
-| POST | `/api/v1/rfqs/{id}/bids/reveal` | Reveal sealed bid during reveal phase |
-| GET | `/api/v1/rfqs/{id}/bids` | List bids for RFQ |
-| POST | `/api/v1/rfqs/{id}/accept` | Accept bid and create escrow |
-| GET | `/api/v1/bazaar/discovery` | Bazaar-compatible discovery metadata (credential schemas, attestation-v1 profile, endpoint docs) |
-| GET | `/api/v1/events` | SSE event stream for all escrows (query: granularity) |
-| GET | `/api/v1/escrows/{id}/events` | SSE event stream for specific escrow (query: granularity) |
-| GET | `/api/v1/events/ws` | WebSocket event stream (subscription message protocol) |
-| POST | `/webhooks/cdp` | CDP webhook receiver (factory events; requires `CDP_WEBHOOK_SECRET`) |
-| GET | `/.well-known/agent.json` | A2A agent card (capabilities, skills, endpoint URL) |
-| POST | `/a2a` | A2A JSON-RPC 2.0 endpoint (`tasks/send`, `tasks/get`, `tasks/cancel`) |
-| POST | `/api/v1/emergency/freeze-address` | Freeze address (owner-only; body: address) |
-| POST | `/api/v1/emergency/unfreeze-address` | Unfreeze address (owner-only; body: address) |
-| POST | `/api/v1/emergency/freeze-escrow` | Freeze escrow (owner-only; body: escrow_id) |
-| POST | `/api/v1/emergency/unfreeze-escrow` | Unfreeze escrow (owner-only; body: escrow_id) |
-| POST | `/api/v1/emergency/resolve` | Emergency resolve frozen escrow (owner-only; body: escrow_id, worker_award_bps) |
-| GET | `/api/v1/emergency/frozen-addresses` | List frozen addresses |
-| GET | `/api/v1/emergency/actions` | List emergency action audit log (query: limit, offset) |
-| GET | `/api/v1/escrows/{id}/attestation-chain` | Get attestation chain(s) for escrow (links + verification status) |
-| GET | `/api/v1/escrows/{id}/children` | List child escrows for a parent escrow |
-| POST | `/api/v1/escrows/{id}/checkpoints` | Commit checkpoint artifact (active worker only; body: state_snapshot_uri, committed_by, optional milestone_index/snapshot_hash/completion_pct/metadata_json) |
-| GET | `/api/v1/escrows/{id}/checkpoints` | List checkpoints for escrow (query: milestone_index) |
-| GET | `/api/v1/escrows/{id}/checkpoints/latest` | Get latest checkpoint for escrow (query: milestone_index) |
-
-### Configuration
-
-| Env Var | Required | Default | Description |
-|---|---|---|---|
-| `RPC_URL` | Yes (for chain ops) | -- | Ethereum JSON-RPC URL |
-| `PRIVATE_KEY` | Yes (for writes) | -- | Hex-encoded private key |
-| `FACTORY_ADDRESS` | Yes | -- | Deployed factory contract address |
-| `CHAIN_ID` | No | `84532` | Chain ID (Base Sepolia) |
-| `PORT` | No | `8080` | HTTP server port |
-| `DATABASE_URL` | No | `delegation.db` | SQLite database path |
-| `MCP_TRANSPORT` | No | -- | Set to `stdio` to enable MCP server |
-| `CORS_ORIGINS` | No | `*` (wildcard) | Comma-separated allowed origins; empty = allow all |
-| `REQUEST_TIMEOUT` | No | `10s` | Timeout for read-only HTTP requests |
-| `TX_TIMEOUT` | No | `90s` | Timeout for chain transaction HTTP requests |
-| `COMPLEXITY_FLOOR` | No | -- | Minimum escrow amount (wei/smallest unit) for early rejection; `0` or empty = disabled |
-| `CDP_WEBHOOK_SECRET` | No | -- | CDP webhook HMAC secret; enables real-time factory event delivery via `POST /webhooks/cdp` |
-| `X402_ENABLED` | No | `false` | Enable x402 facilitator integration for AP2 mandate funding |
-| `X402_FACILITATOR_URL` | No (if X402_ENABLED) | -- | CDP x402 facilitator API base URL |
-| `A2A_ENABLED` | No | `true` | Enable A2A settlement adapter routes |
-| `A2A_AGENT_NAME` | No | `Escrow Settlement Agent` | Agent card display name |
-| `A2A_AGENT_URL` | No | `http://localhost:{PORT}` | Agent card URL |
-| `UCP_ENABLED` | No | `false` | Enable UCP fulfillment adapter routes/tools/CLI surfaces |
-| `UCP_BASE_URL` | No | `http://localhost:{PORT}` | Public base URL used in `/.well-known/ucp` profile metadata |
-| `UCP_PROVIDER_NAME` | No | `Agent Escrow UCP Provider` | Provider display name in UCP profile |
-| `EVENTS_ENABLED` | No | `true` | Enable SSE/WebSocket event streaming and `subscribe_events` MCP tool |
-| `EVENTS_BUFFER_SIZE` | No | `64` | Per-subscriber channel buffer size |
-| `EVENTS_HEARTBEAT_INTERVAL` | No | `30s` | L0 heartbeat interval for liveness signals |
-| `EMERGENCY_ENABLED` | No | `true` | Enable emergency response protocol endpoints (freeze/unfreeze address/escrow, emergency resolve, audit log) |
-
-### Design Decisions
-
-- **Single binary**: MCP + API + indexer share one process. No message queue or process manager required for V1.
-- **Pure Go SQLite**: `modernc.org/sqlite` avoids CGO, simplifying cross-compilation and CI.
-- **No ORM**: schema is explicit and migration-driven; `database/sql` with hand-written queries.
-- **ABI embedding**: `//go:embed` from files copied at build time (`make go-abi`).
-- **Shared logic**: escrow lifecycle orchestration is centralized in `internal/escrow/service.go` and reused by HTTP, MCP, and UCP surfaces.
-- **UCP as adapter-only envelope**: UCP checkout semantics project onto escrow lifecycle state; UCP cannot bypass verification/dispute/refund invariants.
-- **Synchronous indexer after writes**: `RunOnce()` triggered after transaction submission for immediate event pickup.
-- **Dual-mode event ingestion**: CDP Webhooks for real-time factory events + polling for dynamically-deployed escrow contracts. Both paths deduplicate via `chain_logs` (tx_hash + log_index), so overlapping coverage is safe. Webhook mode is opt-in via `CDP_WEBHOOK_SECRET`.
-- **In-process event bus**: Lightweight pub/sub for real-time client streaming. No external message broker at V2 scale. Publishers (indexer, webhooks) call `Publish()`; subscribers receive on buffered channels with non-blocking sends. SSE as primary transport (proxy/CDN friendly, aligns with MCP SSE reference), WebSocket as secondary for future bidirectional use cases (L2/L3).
+- A single settlement kernel anchors all transports and adapters.
+- Shared domain logic is preferred over transport-specific implementations.
+- Off-chain evidence systems are used when they improve accountability without needing consensus-level enforcement.
+- SQLite and the single-binary process are implementation choices, not architectural commitments.
+- The system is designed to evolve toward client-side signing and more distributed runtime topology without changing escrow semantics.
