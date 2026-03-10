@@ -1,3 +1,0 @@
-{
-  "skip_comment": "The `go-server/internal/dct/` and `go-server/internal/authz/` module-map comment is already fixed in `docs/ARCHITECTURE.md`; no further change was needed there."
-}

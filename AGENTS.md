@@ -134,6 +134,8 @@ go-server/
   internal/events/        In-process event fan-out for SSE/WebSocket/MCP subscribers
   internal/bidding/       RFQ + bid lifecycle logic
   internal/attestation/   Completion-attestation-v1 validation
+  internal/dct/           DCT issuance, attenuation, validation, and lifecycle
+  internal/authz/         Principal authorization for DCT operations
   internal/mcpserver/     MCP server and tool handlers
   internal/api/           HTTP API and middleware
   abi/                    Embedded ABI artifacts copied from Foundry output
