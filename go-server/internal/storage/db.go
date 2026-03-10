@@ -111,9 +111,18 @@ type ImmediateTx struct {
 var inMemoryDBCounter atomic.Uint64
 
 func Open(dsn string) (*DB, error) {
+	// _pragma parameters are applied to every new connection from the pool,
+	// ensuring WAL mode, foreign keys, and busy_timeout are always active.
+	pragmas := "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
 	if dsn == ":memory:" {
 		id := inMemoryDBCounter.Add(1)
-		dsn = fmt.Sprintf("file:agent_escrow_mem_%d?mode=memory&cache=shared", id)
+		dsn = fmt.Sprintf("file:agent_escrow_mem_%d?mode=memory&cache=shared&%s", id, pragmas)
+	} else {
+		sep := "?"
+		if strings.Contains(dsn, "?") {
+			sep = "&"
+		}
+		dsn = dsn + sep + pragmas
 	}
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -121,17 +130,6 @@ func Open(dsn string) (*DB, error) {
 	}
 
 	ctx := context.Background()
-
-	// Enable WAL mode for better concurrent read performance
-	if _, err := sqlDB.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("enable WAL: %w", err)
-	}
-	if _, err := sqlDB.ExecContext(ctx, "PRAGMA foreign_keys=ON"); err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("enable foreign keys: %w", err)
-	}
-
 	if _, err := sqlDB.ExecContext(ctx, migrationSQL); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)
