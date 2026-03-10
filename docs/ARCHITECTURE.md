@@ -46,7 +46,7 @@ These rules matter more than specific file names:
 - The contracts are the source of financial truth. Off-chain systems may cache, index, or enrich state, but they must not invent a competing settlement ledger.
 - `docs/SPEC.md` is the source of truth for settlement states, payout formulas, and role semantics.
 - Transport surfaces are adapters. MCP tools, HTTP handlers, and CLI commands should call shared logic rather than fork behavior.
-- Externally usable features require interface parity across MCP, HTTP, and CLI unless a roadmap item explicitly scopes otherwise.
+- Externally usable features require interface parity across MCP, HTTP, and CLI unless a documented roadmap-scoped exception is approved with a linked roadmap ticket and owner.
 - Large task payloads, prompts, and verification artifacts stay off-chain; the chain stores commitments, checkpoints, and terminal decisions.
 - Event indexing is a reconciliation layer. If the database and chain disagree, the chain wins.
 - The server is on a path from "unified operator process" toward "coordination and indexing layer." Participant signing should move client-side over time rather than centralizing long-term in the server.
