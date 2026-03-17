@@ -223,8 +223,7 @@ func TestCreate_MissingType(t *testing.T) {
 	issue := findIssueByTempID(result.Issues, "leaf-1")
 	if issue == nil {
 		t.Fatalf("expected issue for leaf-1, got %+v", result.Issues)
-	}
-	if issue.Reason != "verification_type required for leaf nodes" {
+	} else if issue.Reason != "verification_type required for leaf nodes" {
 		t.Fatalf("unexpected issue reason: %s", issue.Reason)
 	}
 }
@@ -256,12 +255,13 @@ func TestCreate_ZKProofNoMarketHistory(t *testing.T) {
 	ctx := findContextByTempID(result.MarketContext, "zk-leaf")
 	if ctx == nil {
 		t.Fatalf("missing market context for zk-leaf: %+v", result.MarketContext)
-	}
-	if ctx.Signal != "untested" {
-		t.Fatalf("expected untested signal, got %s", ctx.Signal)
-	}
-	if !strings.Contains(strings.ToLower(ctx.Evidence), "no settled escrows with zk verification found") {
-		t.Fatalf("unexpected evidence: %s", ctx.Evidence)
+	} else {
+		if ctx.Signal != "untested" {
+			t.Fatalf("expected untested signal, got %s", ctx.Signal)
+		}
+		if !strings.Contains(strings.ToLower(ctx.Evidence), "no settled escrows with zk verification found") {
+			t.Fatalf("unexpected evidence: %s", ctx.Evidence)
+		}
 	}
 }
 
@@ -284,12 +284,13 @@ func TestCreate_QuorumNoVerifiers(t *testing.T) {
 	ctx := findContextByTempID(result.MarketContext, "quorum-leaf")
 	if ctx == nil {
 		t.Fatalf("missing market context for quorum-leaf: %+v", result.MarketContext)
-	}
-	if ctx.Signal != "untested" {
-		t.Fatalf("expected untested signal, got %s", ctx.Signal)
-	}
-	if !strings.Contains(strings.ToLower(ctx.Evidence), "no verifier history") {
-		t.Fatalf("expected no verifier history evidence, got %s", ctx.Evidence)
+	} else {
+		if ctx.Signal != "untested" {
+			t.Fatalf("expected untested signal, got %s", ctx.Signal)
+		}
+		if !strings.Contains(strings.ToLower(ctx.Evidence), "no verifier history") {
+			t.Fatalf("expected no verifier history evidence, got %s", ctx.Evidence)
+		}
 	}
 }
 
@@ -320,8 +321,7 @@ func TestCreate_ZKProofMissingCircuitID(t *testing.T) {
 	issue := findIssueByTempID(result.Issues, "zk-no-circuit")
 	if issue == nil {
 		t.Fatalf("expected issue for zk-no-circuit, got %+v", result.Issues)
-	}
-	if issue.Reason != "zk_proof requires circuit_id in verification_details" {
+	} else if issue.Reason != "zk_proof requires circuit_id in verification_details" {
 		t.Fatalf("unexpected issue reason: %s", issue.Reason)
 	}
 }
@@ -351,8 +351,7 @@ func TestCreate_RequiresFurtherDecomposition(t *testing.T) {
 	issue := findIssueByTempID(result.Issues, "leaf-split")
 	if issue == nil {
 		t.Fatalf("expected issue for leaf-split, got %+v", result.Issues)
-	}
-	if issue.Reason != "node flagged as requiring further decomposition" {
+	} else if issue.Reason != "node flagged as requiring further decomposition" {
 		t.Fatalf("unexpected issue reason: %s", issue.Reason)
 	}
 }
@@ -406,8 +405,7 @@ func TestCreate_DelegatePreferencePersisted(t *testing.T) {
 	createdLeaf := findNodeByTitle(result.Nodes, "Human Review")
 	if createdLeaf == nil {
 		t.Fatalf("missing created leaf node: %+v", result.Nodes)
-	}
-	if createdLeaf.DelegatePreference != "human" {
+	} else if createdLeaf.DelegatePreference != "human" {
 		t.Fatalf("expected delegate_preference=human, got %q", createdLeaf.DelegatePreference)
 	}
 
@@ -418,8 +416,7 @@ func TestCreate_DelegatePreferencePersisted(t *testing.T) {
 	storedLeaf := findNodeByTitle(storedNodes, "Human Review")
 	if storedLeaf == nil {
 		t.Fatalf("missing stored leaf node: %+v", storedNodes)
-	}
-	if storedLeaf.DelegatePreference != "human" {
+	} else if storedLeaf.DelegatePreference != "human" {
 		t.Fatalf("expected stored delegate_preference=human, got %q", storedLeaf.DelegatePreference)
 	}
 }
@@ -516,23 +513,25 @@ func TestFinalize_CreatesRFQsWithCorrectTier(t *testing.T) {
 	optRFQ := rfqByVerificationType["optimistic"]
 	if optRFQ == nil {
 		t.Fatal("missing optimistic RFQ")
-	}
-	if optRFQ.ServiceTier != 0 {
-		t.Fatalf("expected optimistic service_tier=0, got %d", optRFQ.ServiceTier)
-	}
-	if optRFQ.BiddingMode != "open" {
-		t.Fatalf("expected optimistic bidding_mode=open, got %s", optRFQ.BiddingMode)
+	} else {
+		if optRFQ.ServiceTier != 0 {
+			t.Fatalf("expected optimistic service_tier=0, got %d", optRFQ.ServiceTier)
+		}
+		if optRFQ.BiddingMode != "open" {
+			t.Fatalf("expected optimistic bidding_mode=open, got %s", optRFQ.BiddingMode)
+		}
 	}
 
 	quorumRFQ := rfqByVerificationType["quorum"]
 	if quorumRFQ == nil {
 		t.Fatal("missing quorum RFQ")
-	}
-	if quorumRFQ.ServiceTier != 1 {
-		t.Fatalf("expected quorum service_tier=1, got %d", quorumRFQ.ServiceTier)
-	}
-	if quorumRFQ.BiddingMode != "sealed" {
-		t.Fatalf("expected quorum bidding_mode=sealed, got %s", quorumRFQ.BiddingMode)
+	} else {
+		if quorumRFQ.ServiceTier != 1 {
+			t.Fatalf("expected quorum service_tier=1, got %d", quorumRFQ.ServiceTier)
+		}
+		if quorumRFQ.BiddingMode != "sealed" {
+			t.Fatalf("expected quorum bidding_mode=sealed, got %s", quorumRFQ.BiddingMode)
+		}
 	}
 }
 

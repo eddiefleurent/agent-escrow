@@ -1,3 +1,4 @@
+//lint:file-ignore ST1003 ABI tuple field names must match Solidity members.
 package chain
 
 import (
@@ -69,12 +70,18 @@ type createParamsTuple struct {
 	BackupWorker             common.Address
 	BackupDeadlineExtension  uint64
 	ZkVerifier               common.Address
-	CircuitID                [32]byte
-	ParentEscrow             common.Address
-	Milestones               []milestoneTuple
+	//nolint:staticcheck // ABI tuple field must match Solidity's `circuitId`.
+	//revive:disable-next-line:var-naming // ABI tuple field must match Solidity's `circuitId`.
+	CircuitId    [32]byte
+	ParentEscrow common.Address
+	Milestones   []milestoneTuple
 }
 
-func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p CreateEscrowParams) (*types.Transaction, error) {
+func packCreateEscrow(p CreateEscrowParams) ([]byte, error) {
+	amount := p.Amount
+	if amount == nil {
+		amount = big.NewInt(0)
+	}
 	workerStake := p.WorkerStake
 	if workerStake == nil {
 		workerStake = big.NewInt(0)
@@ -95,7 +102,7 @@ func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p Cre
 		QuorumVerifierCount:      p.QuorumVerifierCount,
 		VerifierStakePerVerifier: verifierStakePerVerifier,
 		Arbitrator:               p.Arbitrator,
-		Amount:                   p.Amount,
+		Amount:                   amount,
 		WorkerStake:              workerStake,
 		SubmissionDeadline:       p.SubmissionDeadline,
 		ReviewPeriodSeconds:      p.ReviewPeriodSeconds,
@@ -107,11 +114,15 @@ func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p Cre
 		BackupWorker:             p.BackupWorker,
 		BackupDeadlineExtension:  p.BackupDeadlineExtension,
 		ZkVerifier:               p.ZKVerifier,
-		CircuitID:                p.CircuitID,
+		CircuitId:                p.CircuitID,
 		ParentEscrow:             p.ParentEscrow,
 		Milestones:               milestones,
 	}
-	data, err := FactoryABI.Pack("createEscrow", tuple)
+	return FactoryABI.Pack("createEscrow", tuple)
+}
+
+func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p CreateEscrowParams) (*types.Transaction, error) {
+	data, err := packCreateEscrow(p)
 	if err != nil {
 		return nil, fmt.Errorf("pack createEscrow: %w", err)
 	}

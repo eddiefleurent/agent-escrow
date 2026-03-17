@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -263,7 +262,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 		}
 		zkVerifier = common.HexToAddress(req.ZKVerifier)
 	}
-	circuitID, err := parseProofHashHex(req.CircuitID)
+	circuitID, err := numconv.ParseOptionalBytes32Hex(req.CircuitID)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid circuit_id: %v", err)})
 		return
@@ -1861,26 +1860,6 @@ func (h *Handlers) BazaarDiscovery(w http.ResponseWriter, _ *http.Request) {
 
 func isValidAddress(s string) bool {
 	return common.IsHexAddress(s) && s != "0x0000000000000000000000000000000000000000"
-}
-
-func parseProofHashHex(raw string) ([32]byte, error) {
-	var out [32]byte
-	if raw == "" {
-		return out, nil
-	}
-	if !strings.HasPrefix(raw, "0x") {
-		return out, errors.New("expected 0x-prefixed hex")
-	}
-	normalized := raw[2:]
-	if len(normalized) != 64 {
-		return out, fmt.Errorf("expected 32-byte hex (64 chars), got %d", len(normalized))
-	}
-	b, err := hex.DecodeString(normalized)
-	if err != nil {
-		return out, err
-	}
-	copy(out[:], b)
-	return out, nil
 }
 
 // Checkpoint handlers (paper §6.1: checkpoint artifacts for mid-task agent swaps)

@@ -630,6 +630,7 @@ func HasStake(escrow *storage.Escrow) bool {
 
 func ParseProofHashHex(raw string) ([32]byte, error) {
 	var out [32]byte
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return out, nil
 	}
@@ -649,6 +650,7 @@ func ParseProofHashHex(raw string) ([32]byte, error) {
 }
 
 func ParseProofHexBytes(raw string) ([]byte, error) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, errors.New("proof is required")
 	}
