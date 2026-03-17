@@ -26,17 +26,10 @@ func main() {
 		log.Fatal("RPC_URL environment variable is required")
 	}
 
-	factoryAddress := *factoryFlag
-	if factoryAddress == "" {
-		factoryAddress = os.Getenv("FACTORY_ADDRESS")
+	factory, err := resolveFactoryAddress(*factoryFlag, os.Getenv("FACTORY_ADDRESS"))
+	if err != nil {
+		log.Fatal(err)
 	}
-	if factoryAddress == "" {
-		factoryAddress = defaultFactoryAddress
-	}
-	if !common.IsHexAddress(factoryAddress) {
-		log.Fatalf("invalid factory address: %q", factoryAddress)
-	}
-	factory := common.HexToAddress(factoryAddress)
 
 	client, err := ethclient.Dial(rpcURL)
 	if err != nil {
@@ -50,6 +43,34 @@ func main() {
 	}
 	client.Close()
 
+	selectors := buildSelectors()
+
+	fmt.Printf("Code length: %d bytes\n", len(code))
+	for sel, name := range selectors {
+		pattern, err := selectorPattern(sel)
+		if err != nil {
+			log.Fatalf("invalid selector hex %q: %v", sel, err)
+		}
+		found := bytes.Contains(code, pattern)
+		fmt.Printf("  %s (%s): %v\n", sel, name, found)
+	}
+}
+
+func resolveFactoryAddress(flagAddress string, envAddress string) (common.Address, error) {
+	factoryAddress := flagAddress
+	if factoryAddress == "" {
+		factoryAddress = envAddress
+	}
+	if factoryAddress == "" {
+		factoryAddress = defaultFactoryAddress
+	}
+	if !common.IsHexAddress(factoryAddress) {
+		return common.Address{}, fmt.Errorf("invalid factory address: %q", factoryAddress)
+	}
+	return common.HexToAddress(factoryAddress), nil
+}
+
+func buildSelectors() map[string]string {
 	selectors := map[string]string{
 		"c229b1e9": "createEscrow (current ABI w/ milestones)",
 		"362c3f42": "createEscrow (no milestones)",
@@ -65,18 +86,16 @@ func main() {
 		sel := hex.EncodeToString(crypto.Keccak256([]byte(sig))[:4])
 		selectors[sel] = sig
 	}
+	return selectors
+}
 
-	fmt.Printf("Code length: %d bytes\n", len(code))
-	for sel, name := range selectors {
-		selectorBytes, err := hex.DecodeString(sel)
-		if err != nil {
-			log.Fatalf("invalid selector hex %q: %v", sel, err)
-		}
-		// EVM uses PUSH4 (0x63) to load 4-byte selectors for dispatch
-		pattern := append([]byte{0x63}, selectorBytes...)
-		found := bytes.Contains(code, pattern)
-		fmt.Printf("  %s (%s): %v\n", sel, name, found)
+func selectorPattern(selectorHex string) ([]byte, error) {
+	selectorBytes, err := hex.DecodeString(selectorHex)
+	if err != nil {
+		return nil, err
 	}
+	// EVM uses PUSH4 (0x63) to load 4-byte selectors for dispatch.
+	return append([]byte{0x63}, selectorBytes...), nil
 }
 
 func fetchCode(client *ethclient.Client, factory common.Address) ([]byte, error) {

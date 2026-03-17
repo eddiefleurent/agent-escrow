@@ -100,13 +100,7 @@ func run() error {
 	}
 
 	router := api.NewRouter(db, chainClient, idx, cfg, bus)
-	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Port),
-		Handler:      router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
-	}
+	srv := newHTTPServer(cfg.Port, router)
 
 	listenErrCh := make(chan error, 1)
 	go func() {
@@ -133,4 +127,14 @@ func run() error {
 		slog.Error("http shutdown error", "error", err)
 	}
 	return nil
+}
+
+func newHTTPServer(port int, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:         fmt.Sprintf(":%d", port),
+		Handler:      handler,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
 }

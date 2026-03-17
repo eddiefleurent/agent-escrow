@@ -1119,12 +1119,13 @@ func TestFinalizeSealedBidding_ExpiresUnrevealedAndSelectsBestBid(t *testing.T) 
 	}
 	if summary == nil {
 		t.Fatal("expected finalization summary")
-	}
-	if summary.BestBidID == nil || *summary.BestBidID != bidB.ID {
-		t.Fatalf("expected best bid %d, got %+v", bidB.ID, summary.BestBidID)
-	}
-	if summary.SealedBidStatus != "finalized" {
-		t.Fatalf("expected sealed_bid_status finalized, got %q", summary.SealedBidStatus)
+	} else {
+		if summary.BestBidID == nil || *summary.BestBidID != bidB.ID {
+			t.Fatalf("expected best bid %d, got %+v", bidB.ID, summary.BestBidID)
+		}
+		if summary.SealedBidStatus != "finalized" {
+			t.Fatalf("expected sealed_bid_status finalized, got %q", summary.SealedBidStatus)
+		}
 	}
 
 	updatedRFQ, err := db.GetRFQ(ctx, rfq.ID)

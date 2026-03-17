@@ -1,3 +1,4 @@
+//lint:file-ignore ST1003 ABI tuple field names must match Solidity members.
 package chain
 
 import (
@@ -69,9 +70,11 @@ type createParamsTuple struct {
 	BackupWorker             common.Address
 	BackupDeadlineExtension  uint64
 	ZkVerifier               common.Address
-	CircuitID                [32]byte
-	ParentEscrow             common.Address
-	Milestones               []milestoneTuple
+	//nolint:staticcheck // ABI tuple field must match Solidity's `circuitId`.
+	//revive:disable-next-line:var-naming // ABI tuple field must match Solidity's `circuitId`.
+	CircuitId    [32]byte
+	ParentEscrow common.Address
+	Milestones   []milestoneTuple
 }
 
 func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p CreateEscrowParams) (*types.Transaction, error) {
@@ -107,7 +110,7 @@ func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p Cre
 		BackupWorker:             p.BackupWorker,
 		BackupDeadlineExtension:  p.BackupDeadlineExtension,
 		ZkVerifier:               p.ZKVerifier,
-		CircuitID:                p.CircuitID,
+		CircuitId:                p.CircuitID,
 		ParentEscrow:             p.ParentEscrow,
 		Milestones:               milestones,
 	}
