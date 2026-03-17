@@ -92,7 +92,7 @@ func TestClientParsesAPIError(t *testing.T) {
 	defer srv.Close()
 
 	client := NewClient(srv.URL, 0)
-	_, err := client.Get(context.Background(), "/anything", nil)
+	_, err := client.Get(context.Background(), "anything", nil)
 	if err == nil {
 		t.Fatal("expected API error")
 	}

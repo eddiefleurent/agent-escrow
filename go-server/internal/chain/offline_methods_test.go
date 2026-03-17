@@ -9,15 +9,21 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
-func TestCreateEscrowOfflineMode(t *testing.T) {
-	t.Parallel()
-
+func newOfflineClient(t *testing.T) *Client {
+	t.Helper()
 	client, err := NewClient("", "", 84532)
 	if err != nil {
 		t.Fatalf("new offline client: %v", err)
 	}
+	return client
+}
 
-	_, err = client.CreateEscrow(context.Background(),
+func TestCreateEscrowOfflineMode(t *testing.T) {
+	t.Parallel()
+
+	client := newOfflineClient(t)
+
+	_, err := client.CreateEscrow(context.Background(),
 		common.HexToAddress("0x1234567890123456789012345678901234567890"),
 		CreateEscrowParams{
 			Buyer:                    common.HexToAddress("0x1111111111111111111111111111111111111111"),
@@ -41,10 +47,7 @@ func TestCreateEscrowOfflineMode(t *testing.T) {
 func TestEscrowMethodsOfflineMode(t *testing.T) {
 	t.Parallel()
 
-	client, err := NewClient("", "", 84532)
-	if err != nil {
-		t.Fatalf("new offline client: %v", err)
-	}
+	client := newOfflineClient(t)
 	ctx := context.Background()
 	escrow := common.HexToAddress("0x1111111111111111111111111111111111111111")
 	nonce := [32]byte{}
@@ -83,12 +86,9 @@ func TestEscrowMethodsOfflineMode(t *testing.T) {
 func TestStatusOfflineMode(t *testing.T) {
 	t.Parallel()
 
-	client, err := NewClient("", "", 84532)
-	if err != nil {
-		t.Fatalf("new offline client: %v", err)
-	}
+	client := newOfflineClient(t)
 
-	_, err = client.Status(context.Background(), common.HexToAddress("0x1111111111111111111111111111111111111111"))
+	_, err := client.Status(context.Background(), common.HexToAddress("0x1111111111111111111111111111111111111111"))
 	if err == nil {
 		t.Fatal("expected offline mode error")
 	}
