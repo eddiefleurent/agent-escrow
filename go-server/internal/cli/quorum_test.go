@@ -20,6 +20,6 @@ func TestQuorumEscrowActionCommands(t *testing.T) {
 		t.Fatalf("unexpected quorum-vote usage: %q", vote.Use)
 	}
 	if vote.Flags().Lookup("data") == nil {
-		t.Fatal("expected quorum-vote to require payload flags")
+		t.Fatal("expected quorum-vote to expose payload flag --data")
 	}
 }

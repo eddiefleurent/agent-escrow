@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -27,23 +28,29 @@ func TestNewClientTrimsBaseURLAndSetsTimeout(t *testing.T) {
 func TestClientGetAndPost(t *testing.T) {
 	t.Parallel()
 
+	errCh := make(chan error, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" && r.Method == http.MethodGet {
 			if r.URL.RawQuery != "detail=full" {
-				t.Fatalf("expected query detail=full, got %q", r.URL.RawQuery)
+				errCh <- fmt.Errorf("expected query detail=full, got %q", r.URL.RawQuery)
+				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+			errCh <- nil
 			return
 		}
 		if r.URL.Path == "/submit" && r.Method == http.MethodPost {
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode request body: %v", err)
+				errCh <- fmt.Errorf("decode request body: %w", err)
+				return
 			}
 			if body["value"] != "x" {
-				t.Fatalf("expected value x, got %v", body["value"])
+				errCh <- fmt.Errorf("expected value x, got %v", body["value"])
+				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true})
+			errCh <- nil
 			return
 		}
 		http.NotFound(w, r)
@@ -59,6 +66,9 @@ func TestClientGetAndPost(t *testing.T) {
 	if !strings.Contains(string(getPayload), `"status":"ok"`) {
 		t.Fatalf("unexpected GET payload: %s", getPayload)
 	}
+	if handlerErr := <-errCh; handlerErr != nil {
+		t.Fatalf("GET handler error: %v", handlerErr)
+	}
 
 	postPayload, err := client.Post(context.Background(), "submit", map[string]string{"value": "x"})
 	if err != nil {
@@ -66,6 +76,9 @@ func TestClientGetAndPost(t *testing.T) {
 	}
 	if !strings.Contains(string(postPayload), `"accepted":true`) {
 		t.Fatalf("unexpected POST payload: %s", postPayload)
+	}
+	if handlerErr := <-errCh; handlerErr != nil {
+		t.Fatalf("POST handler error: %v", handlerErr)
 	}
 }
 

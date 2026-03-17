@@ -93,8 +93,11 @@ func TestRecordFreezeEscrowAndRevokeDCT(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list emergency actions: %v", err)
 	}
-	if len(actions) == 0 || actions[0].Action != "freeze_escrow" {
-		t.Fatalf("expected freeze_escrow action, got %+v", actions)
+	if len(actions) != 1 {
+		t.Fatalf("expected exactly 1 emergency action, got %d", len(actions))
+	}
+	if actions[0].Action != "freeze_escrow" {
+		t.Fatalf("expected freeze_escrow action, got %q", actions[0].Action)
 	}
 	if actions[0].TxHash != txHash {
 		t.Fatalf("expected tx hash %q, got %q", txHash, actions[0].TxHash)
@@ -140,8 +143,14 @@ func TestRecordEmergencyResolveAndRevokeDCT(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list emergency actions: %v", err)
 	}
-	if len(actions) == 0 || actions[0].Action != "emergency_resolve" {
-		t.Fatalf("expected emergency_resolve action, got %+v", actions)
+	if len(actions) != 1 {
+		t.Fatalf("expected exactly 1 emergency action, got %d", len(actions))
+	}
+	if actions[0].Action != "emergency_resolve" {
+		t.Fatalf("expected emergency_resolve action, got %q", actions[0].Action)
+	}
+	if actions[0].TxHash != txHash {
+		t.Fatalf("expected tx hash %q, got %q", txHash, actions[0].TxHash)
 	}
 	if !strings.Contains(actions[0].Reason, "workerAwardBps=6500") {
 		t.Fatalf("expected workerAwardBps reason, got %q", actions[0].Reason)

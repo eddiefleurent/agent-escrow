@@ -94,6 +94,9 @@ func selectorPattern(selectorHex string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(selectorBytes) != 4 {
+		return nil, fmt.Errorf("selector must be exactly 4 bytes, got %d bytes", len(selectorBytes))
+	}
 	// EVM uses PUSH4 (0x63) to load 4-byte selectors for dispatch.
 	return append([]byte{0x63}, selectorBytes...), nil
 }

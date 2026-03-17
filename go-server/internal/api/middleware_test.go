@@ -43,6 +43,7 @@ func TestCORSMiddlewareAllowAllAndPreflight(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodOptions, "/api/v1/tasks", nil)
 	req.Header.Set("Origin", "https://example.com")
+	req.Header.Set("Access-Control-Request-Method", "POST")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 

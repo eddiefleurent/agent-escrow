@@ -71,10 +71,11 @@ func TestEscrowMethodsOfflineMode(t *testing.T) {
 	for _, tc := range cases {
 		err := tc.call()
 		if err == nil {
-			t.Fatalf("%s: expected offline mode error", tc.name)
+			t.Errorf("%s: expected offline mode error", tc.name)
+			continue
 		}
 		if !strings.Contains(err.Error(), "chain client not connected") {
-			t.Fatalf("%s: expected offline mode error, got %v", tc.name, err)
+			t.Errorf("%s: expected offline mode error, got %v", tc.name, err)
 		}
 	}
 }

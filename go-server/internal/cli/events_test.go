@@ -3,6 +3,8 @@ package cli
 import (
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 )
 
 func TestEventsCommandStructure(t *testing.T) {
@@ -12,7 +14,18 @@ func TestEventsCommandStructure(t *testing.T) {
 	if !hasSubcommand(cmd, "subscribe") {
 		t.Fatal("expected events subscribe subcommand")
 	}
-	subscribe := cmd.Commands()[0]
+
+	var subscribe *cobra.Command
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == "subscribe" {
+			subscribe = sub
+			break
+		}
+	}
+	if subscribe == nil {
+		t.Fatal("expected subscribe command to be found")
+	}
+
 	if subscribe.Flags().Lookup("escrow-id") == nil {
 		t.Fatal("expected subscribe command to expose --escrow-id")
 	}
@@ -34,9 +47,11 @@ func TestStreamContext(t *testing.T) {
 		t.Fatal("expected timeout context to include deadline")
 	}
 
-	<-time.After(8 * time.Millisecond)
-	if ctx.Err() == nil {
-		t.Fatal("expected timeout context to expire")
+	select {
+	case <-ctx.Done():
+		// success
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("context did not expire within timeout")
 	}
 
 	bg, bgCancel := streamContext(&Options{Timeout: 0})

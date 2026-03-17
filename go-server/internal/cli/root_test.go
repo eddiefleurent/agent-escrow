@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"testing"
 	"time"
 )
@@ -33,20 +32,25 @@ func TestCommandContext(t *testing.T) {
 		t.Fatal("expected timeout context to carry deadline")
 	}
 
-	<-time.After(7 * time.Millisecond)
-	if ctx.Err() == nil {
+	select {
+	case <-ctx.Done():
+		// success
+	case <-time.After(50 * time.Millisecond):
 		t.Fatal("expected timeout context to expire")
 	}
 
 	bg, bgCancel := commandContext(&Options{Timeout: 0})
 	defer bgCancel()
-	if bg != context.Background() {
-		t.Fatal("expected background context when timeout is disabled")
+	if _, ok := bg.Deadline(); ok {
+		t.Fatal("expected non-timeout context to have no deadline")
+	}
+	if bg.Err() != nil {
+		t.Fatalf("expected non-timeout context to have no error, got %v", bg.Err())
 	}
 }
 
 func TestNewClientFallsBackToDefaultServer(t *testing.T) {
-	t.Parallel()
+	t.Setenv("ESCROW_SERVER_URL", "")
 
 	c := newClient(&Options{})
 	if c.baseURL != defaultServerURL {
