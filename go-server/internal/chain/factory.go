@@ -78,6 +78,10 @@ type createParamsTuple struct {
 }
 
 func packCreateEscrow(p CreateEscrowParams) ([]byte, error) {
+	amount := p.Amount
+	if amount == nil {
+		amount = big.NewInt(0)
+	}
 	workerStake := p.WorkerStake
 	if workerStake == nil {
 		workerStake = big.NewInt(0)
@@ -98,7 +102,7 @@ func packCreateEscrow(p CreateEscrowParams) ([]byte, error) {
 		QuorumVerifierCount:      p.QuorumVerifierCount,
 		VerifierStakePerVerifier: verifierStakePerVerifier,
 		Arbitrator:               p.Arbitrator,
-		Amount:                   p.Amount,
+		Amount:                   amount,
 		WorkerStake:              workerStake,
 		SubmissionDeadline:       p.SubmissionDeadline,
 		ReviewPeriodSeconds:      p.ReviewPeriodSeconds,
