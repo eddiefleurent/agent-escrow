@@ -77,7 +77,7 @@ type createParamsTuple struct {
 	Milestones   []milestoneTuple
 }
 
-func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p CreateEscrowParams) (*types.Transaction, error) {
+func packCreateEscrow(p CreateEscrowParams) ([]byte, error) {
 	workerStake := p.WorkerStake
 	if workerStake == nil {
 		workerStake = big.NewInt(0)
@@ -114,7 +114,11 @@ func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p Cre
 		ParentEscrow:             p.ParentEscrow,
 		Milestones:               milestones,
 	}
-	data, err := FactoryABI.Pack("createEscrow", tuple)
+	return FactoryABI.Pack("createEscrow", tuple)
+}
+
+func (c *Client) CreateEscrow(ctx context.Context, factory common.Address, p CreateEscrowParams) (*types.Transaction, error) {
+	data, err := packCreateEscrow(p)
 	if err != nil {
 		return nil, fmt.Errorf("pack createEscrow: %w", err)
 	}
