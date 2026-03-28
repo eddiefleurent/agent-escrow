@@ -8,7 +8,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/modelcontextprotocol/go-sdk v1.4.1
 	github.com/spf13/cobra v1.10.2
-	modernc.org/sqlite v1.47.0
+	modernc.org/sqlite v1.48.0
 )
 
 require (
