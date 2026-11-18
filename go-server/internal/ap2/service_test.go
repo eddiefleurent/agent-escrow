@@ -19,14 +19,20 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/x402"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
 const (
 	testFactory    = "0x1234567890123456789012345678901234567890"
 	testEscrowAddr = "0xABCDABCDABCDABCDABCDABCDABCDABCDABCDABCD"
+	testToken      = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
 	testChainID    = 84532
 )
+
+// testDomainSeparator is the token DOMAIN_SEPARATOR the mock returns. Tests
+// sign ReceiveWithAuthorization against this exact value.
+var testDomainSeparator = crypto.Keccak256Hash([]byte("agent-escrow-test-domain-separator"))
 
 // testNow is a fixed clock so validity-window tests are deterministic.
 var testNow = time.Unix(1_800_000_000, 0)
@@ -40,6 +46,8 @@ func setupTestService(t *testing.T) (*Service, *storage.DB, *chain.MockClient) {
 	t.Cleanup(func() { db.Close() })
 
 	mc := chain.NewMockClient()
+	mc.DomainSeparatorHash = testDomainSeparator
+	mc.Receipt = &types.Receipt{Status: types.ReceiptStatusSuccessful}
 	cfg := &config.Config{
 		ChainID:        testChainID,
 		FactoryAddress: testFactory,
@@ -85,6 +93,7 @@ func randomBytes32Hex(t *testing.T) string {
 func testAuthorization(t *testing.T, from common.Address, to, value string) EIP3009Authorization {
 	t.Helper()
 	return EIP3009Authorization{
+		Token:       testToken,
 		From:        from.Hex(),
 		To:          to,
 		Value:       value,
@@ -114,6 +123,13 @@ func sign(t *testing.T, svc *Service, key *ecdsa.PrivateKey, env MandateEnvelope
 	if err != nil {
 		t.Fatalf("decode mandate for signing: %v", err)
 	}
+	authSig, err := signReceiveAuthorization(key, vm.Auth)
+	if err != nil {
+		t.Fatalf("sign authorization: %v", err)
+	}
+	env.Authorization.V = authSig[64]
+	env.Authorization.R = hexutil.Encode(authSig[:32])
+	env.Authorization.S = hexutil.Encode(authSig[32:64])
 	sig, err := crypto.Sign(vm.Digest.Bytes(), key)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
@@ -121,6 +137,19 @@ func sign(t *testing.T, svc *Service, key *ecdsa.PrivateKey, env MandateEnvelope
 	sig[64] += 27
 	env.Signature = hexutil.Encode(sig)
 	return env
+}
+
+func signReceiveAuthorization(key *ecdsa.PrivateKey, auth parsedAuthorization) ([]byte, error) {
+	digest, err := receiveWithAuthorizationDigest(testDomainSeparator, auth)
+	if err != nil {
+		return nil, err
+	}
+	sig, err := crypto.Sign(digest.Bytes(), key)
+	if err != nil {
+		return nil, err
+	}
+	sig[64] += 27
+	return sig, nil
 }
 
 func paymentEnvelope(t *testing.T, signer common.Address, to, value string) MandateEnvelope {
@@ -198,7 +227,7 @@ func createTestEscrow(t *testing.T, db *storage.DB, buyer common.Address) *stora
 		Verifier:                 "0x3333333333333333333333333333333333333333",
 		Arbitrator:               "0x4444444444444444444444444444444444444444",
 		Amount:                   "1000000",
-		Token:                    "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+		Token:                    testToken,
 		Status:                   "created",
 		SubmissionDeadline:       9999999999,
 		ReviewPeriodSeconds:      86400,
@@ -228,12 +257,7 @@ func TestBindToEscrow_GetEscrowErrorPrefix(t *testing.T) {
 	svc, _, _ := setupTestService(t)
 	buyer := newTestSigner(t)
 
-	vm, err := svc.verifyMandate(signedPayment(t, svc, buyer, testEscrowAddr, "1000000"))
-	if err != nil {
-		t.Fatalf("verify mandate: %v", err)
-	}
-
-	_, err = svc.bindToEscrow(context.Background(), vm, 999)
+	_, err := svc.FundViaMandate(context.Background(), 999, signedPayment(t, svc, buyer, testEscrowAddr, "1000000"))
 	if err == nil {
 		t.Fatal("expected missing escrow error")
 	}
@@ -261,38 +285,71 @@ func TestValidateMandate_Valid(t *testing.T) {
 	}
 }
 
-// TestValidateMandate_CrossLanguageVector checks the Go EIP-712 encoding against a
-// signature produced independently by Python eth_account.encode_typed_data with a
-// throwaway key (only its address is recorded here).
+// TestValidateMandate_CrossLanguageVector checks the Go EIP-712 encoding against
+// signatures produced by Python eth_account. Regenerate with
+// `uv run --with eth-account scripts/ap2_eip712_vectors.py`. The key in that
+// script is throwaway; only its address is recorded here. The mock returns the
+// token DOMAIN_SEPARATOR eth_account used for ReceiveWithAuthorization.
 func TestValidateMandate_CrossLanguageVector(t *testing.T) {
-	svc, _, _ := setupTestService(t)
-	svc.Now = func() time.Time { return time.Unix(1_700_000_000, 0) }
+	svc, _, mc := setupTestService(t)
+	svc.Now = func() time.Time { return time.Unix(1_700_000_100, 0) }
+	mc.DomainSeparatorHash = common.HexToHash("0x71f17a3b2ff373b803d70a5a07c046c1a2bc8e89c09ef722fcb047abe94c9818")
 
 	const (
-		signer    = "0x5d3Acb583AF5A89c41994a0fb94C04D48F1bA984"
-		nonce     = "0x1111111111111111111111111111111111111111111111111111111111111111"
-		signature = "0x2cacc0d800cdf100ce6d4ea2dc598b5ac7cca176ed65b73b9a21bad88d53bd6613c7ca3594279f0bf6c131809d640a32cd82acf49c204903e6ab5f6e80b507ec1b"
-		digest    = "0x99553c8022cad9bdcd8d42b78f6ec8d4a19999ccb160443471b14e447ea92221"
+		signer = "0x5c26334971Fb241E574B5b3E8afc3FD9037C93bd"
+		nonce  = "0x1111111111111111111111111111111111111111111111111111111111111111"
+		items  = "0x2222222222222222222222222222222222222222222222222222222222222222"
+		authR  = "0x7b37da95c56d9448ac28f96e19214df49e4baa3cc1d9dbf6e22fc88dfd21c35d"
+		authS  = "0x7c6ca65b66810941274fff39961dd66b9f2653a9f1736a40f14117f6b7685a41"
 	)
-	env := MandateEnvelope{
-		Type: MandateTypePayment,
-		Payload: json.RawMessage(`{"signer":"` + signer + `","amount":"1000000","currency":"USDC","recipient":"` +
-			testEscrowAddr + `","nonce":"` + nonce + `"}`),
-		Signature:     signature,
-		SignerAddress: signer,
-		Authorization: EIP3009Authorization{
-			From: signer, To: testEscrowAddr, Value: "1000000",
-			ValidAfter: "0", ValidBefore: "2000000000", Nonce: nonce,
-			V: 27, R: nonce, S: nonce,
+	auth := EIP3009Authorization{
+		Token: testToken, From: signer, To: testEscrowAddr, Value: "1000000",
+		ValidAfter: "0", ValidBefore: "2000000000", Nonce: nonce,
+		V: 28, R: authR, S: authS,
+	}
+	cases := []struct {
+		name      string
+		kind      MandateType
+		payload   string
+		signature string
+		digest    string
+	}{
+		{
+			name:      "intent",
+			kind:      MandateTypeIntent,
+			payload:   `{"signer":"` + signer + `","budget_amount":"5000000","budget_currency":"USDC","ttl_seconds":3600,"issued_at":1700000000,"description":"vector intent"}`,
+			signature: "0x384248eed8eb25013576808715cae24a81fa1be1c5790462e11ef681a9edb1237b92eda583c310439a54ac555b2aaed6662a8d0561a83387172e278b75f900011c",
+			digest:    "0x922cc19d4da84e7eac2a94312cd51c95b14f7b30a2f77d40d50f3ba5932fbf6a",
+		},
+		{
+			name:      "cart",
+			kind:      MandateTypeCart,
+			payload:   `{"signer":"` + signer + `","merchant":"0x5555555555555555555555555555555555555555","amount":"1000000","currency":"USDC","items_hash":"` + items + `","ttl_seconds":3600,"issued_at":1700000000}`,
+			signature: "0x185dca13e1de3785bed237fa5c74e015c765c0bde7573c13d957e30059a3fc9710a166fea6b3ea87ceede8e15226841b71efe39dd997459893edfae950a56e8a1b",
+			digest:    "0x30a0d288e0a704a78dd5b228a96ab9f10650f51e81aa14392c39d3764c0d641d",
+		},
+		{
+			name:      "payment",
+			kind:      MandateTypePayment,
+			payload:   `{"signer":"` + signer + `","amount":"1000000","currency":"USDC","recipient":"` + testEscrowAddr + `","nonce":"` + nonce + `"}`,
+			signature: "0x1d5d0349a6142dc0a06fe4896f26dcabc8681b6a04a696745b3e1913c16ebbef05684df4d475f3bacda7007b3ffbe93bfe05017f9d846814da9a6c22b7f9d5391c",
+			digest:    "0xeebd048927009211a3bb32a78f56263cb616d75413dcb8ff90c1966bc02c6ee0",
 		},
 	}
-
-	vm, err := svc.verifyMandate(env)
-	if err != nil {
-		t.Fatalf("expected Python-signed vector to verify, got: %v", err)
-	}
-	if vm.Digest.Hex() != digest {
-		t.Fatalf("digest mismatch: got %s, want %s", vm.Digest.Hex(), digest)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := MandateEnvelope{
+				Type: tc.kind, Payload: json.RawMessage(tc.payload),
+				Signature: tc.signature, SignerAddress: signer, Authorization: auth,
+			}
+			vm, err := svc.verifyMandate(context.Background(), env)
+			if err != nil {
+				t.Fatalf("expected Python-signed vector to verify, got: %v", err)
+			}
+			if vm.Digest.Hex() != tc.digest {
+				t.Fatalf("digest mismatch: got %s, want %s", vm.Digest.Hex(), tc.digest)
+			}
+		})
 	}
 }
 
@@ -554,7 +611,7 @@ func TestFundViaMandate_HappyPath(t *testing.T) {
 		t.Fatalf("expected one fundWithAuthorization tx, got %+v", mc.SentTxs)
 	}
 
-	vm, err := svc.verifyMandate(env)
+	vm, err := svc.verifyMandate(context.Background(), env)
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
@@ -658,4 +715,181 @@ func TestFundViaMandate_BindDBErrorNotWrappedAsInvalidMandate(t *testing.T) {
 	if !strings.Contains(err.Error(), "get escrow:") {
 		t.Fatalf("expected get escrow prefix, got: %v", err)
 	}
+}
+
+func mandateCount(t *testing.T, db *storage.DB) int {
+	t.Helper()
+	var n int
+	if err := db.SQLDB().QueryRowContext(context.Background(), `SELECT COUNT(*) FROM ap2_mandates`).Scan(&n); err != nil {
+		t.Fatalf("count mandates: %v", err)
+	}
+	return n
+}
+
+func TestFundViaMandate_RejectsValueAboveEscrowAmount(t *testing.T) {
+	svc, db, mc := setupTestService(t)
+	buyer := newTestSigner(t)
+	escrow := createTestEscrow(t, db, buyer.addr)
+
+	env := signedPayment(t, svc, buyer, testEscrowAddr, "2000000")
+	_, err := svc.FundViaMandate(context.Background(), escrow.ID, env)
+	if !errors.Is(err, ErrInvalidMandate) {
+		t.Fatalf("expected ErrInvalidMandate, got: %v", err)
+	}
+	if len(mc.SentTxs) != 0 {
+		t.Fatalf("expected no chain transaction, got %+v", mc.SentTxs)
+	}
+	if mandateCount(t, db) != 0 {
+		t.Fatal("expected no mandate row")
+	}
+}
+
+func TestFundViaMandate_RejectsTokenMismatch(t *testing.T) {
+	svc, db, mc := setupTestService(t)
+	buyer := newTestSigner(t)
+	escrow := createTestEscrow(t, db, buyer.addr)
+
+	env := paymentEnvelope(t, buyer.addr, testEscrowAddr, "1000000")
+	env.Authorization.Token = "0x1111111111111111111111111111111111111111"
+	env = sign(t, svc, buyer.key, env)
+
+	_, err := svc.FundViaMandate(context.Background(), escrow.ID, env)
+	if !errors.Is(err, ErrInvalidMandate) {
+		t.Fatalf("expected ErrInvalidMandate, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "authorization.token") {
+		t.Fatalf("expected token mismatch, got: %v", err)
+	}
+	if len(mc.SentTxs) != 0 {
+		t.Fatalf("expected no chain transaction, got %+v", mc.SentTxs)
+	}
+	if mandateCount(t, db) != 0 {
+		t.Fatal("expected no mandate row")
+	}
+}
+
+func TestFundViaMandate_RejectsAuthorizationSignatureBeforeWrite(t *testing.T) {
+	svc, db, mc := setupTestService(t)
+	buyer := newTestSigner(t)
+	escrow := createTestEscrow(t, db, buyer.addr)
+
+	env := signedPayment(t, svc, buyer, testEscrowAddr, "1000000")
+	env.Authorization.R = "0x0000000000000000000000000000000000000000000000000000000000000004"
+	_, err := svc.FundViaMandate(context.Background(), escrow.ID, env)
+	if !errors.Is(err, ErrInvalidMandate) {
+		t.Fatalf("expected ErrInvalidMandate, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "authorization signature") {
+		t.Fatalf("expected authorization signature error, got: %v", err)
+	}
+	if len(mc.SentTxs) != 0 {
+		t.Fatalf("expected no chain transaction, got %+v", mc.SentTxs)
+	}
+	if mandateCount(t, db) != 0 {
+		t.Fatal("expected no mandate row")
+	}
+}
+
+func TestFundViaMandate_RetriesAfterChainError(t *testing.T) {
+	svc, db, mc := setupTestService(t)
+	buyer := newTestSigner(t)
+	escrow := createTestEscrow(t, db, buyer.addr)
+	env := signedPayment(t, svc, buyer, testEscrowAddr, "1000000")
+
+	mc.FundWithAuthErr = errors.New("gas estimation failed")
+	_, err := svc.FundViaMandate(context.Background(), escrow.ID, env)
+	if err == nil || errors.Is(err, ErrInvalidMandate) {
+		t.Fatalf("expected chain error, got: %v", err)
+	}
+	if mandateCount(t, db) != 1 {
+		t.Fatalf("expected one failed row, got %d", mandateCount(t, db))
+	}
+
+	mc.FundWithAuthErr = nil
+	resp, err := svc.FundViaMandate(context.Background(), escrow.ID, env)
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if resp.Status != "funded" {
+		t.Fatalf("expected funded, got %s", resp.Status)
+	}
+	if len(mc.SentTxs) != 1 {
+		t.Fatalf("expected one broadcast, got %+v", mc.SentTxs)
+	}
+}
+
+func TestFundViaMandate_RetriesAfterRevert(t *testing.T) {
+	svc, db, mc := setupTestService(t)
+	buyer := newTestSigner(t)
+	escrow := createTestEscrow(t, db, buyer.addr)
+	env := signedPayment(t, svc, buyer, testEscrowAddr, "1000000")
+
+	mc.Receipt = &types.Receipt{Status: types.ReceiptStatusFailed}
+	_, err := svc.FundViaMandate(context.Background(), escrow.ID, env)
+	if err == nil || !strings.Contains(err.Error(), "reverted") {
+		t.Fatalf("expected revert, got: %v", err)
+	}
+
+	mc.Receipt = &types.Receipt{Status: types.ReceiptStatusSuccessful}
+	resp, err := svc.FundViaMandate(context.Background(), escrow.ID, env)
+	if err != nil {
+		t.Fatalf("retry after revert: %v", err)
+	}
+	if resp.Status != "funded" {
+		t.Fatalf("expected funded, got %s", resp.Status)
+	}
+	if len(mc.SentTxs) != 2 {
+		t.Fatalf("expected a second broadcast, got %+v", mc.SentTxs)
+	}
+}
+
+func TestFundViaMandate_PendingReceiptIsNotRebroadcast(t *testing.T) {
+	svc, db, mc := setupTestService(t)
+	buyer := newTestSigner(t)
+	escrow := createTestEscrow(t, db, buyer.addr)
+	env := signedPayment(t, svc, buyer, testEscrowAddr, "1000000")
+
+	mc.Receipt = nil
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, err := svc.FundViaMandate(ctx, escrow.ID, env)
+	if !errors.Is(err, ErrFundingPending) {
+		t.Fatalf("expected pending confirmation, got: %v", err)
+	}
+	if len(mc.SentTxs) != 1 {
+		t.Fatalf("expected one broadcast, got %+v", mc.SentTxs)
+	}
+
+	mc.Receipt = &types.Receipt{Status: types.ReceiptStatusSuccessful}
+	resp, err := svc.FundViaMandate(context.Background(), escrow.ID, env)
+	if err != nil {
+		t.Fatalf("retry after receipt: %v", err)
+	}
+	if resp.Status != "funded" {
+		t.Fatalf("expected funded, got %s", resp.Status)
+	}
+	if len(mc.SentTxs) != 1 {
+		t.Fatalf("expected no second broadcast, got %+v", mc.SentTxs)
+	}
+}
+
+func TestValidateMandate_RejectsAmbiguousJSON(t *testing.T) {
+	svc, _, _ := setupTestService(t)
+	buyer := newTestSigner(t)
+	env := signedPayment(t, svc, buyer, testEscrowAddr, "1000000")
+
+	var payload PaymentMandate
+	if err := json.Unmarshal(env.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"amount":"999","signer":"` + payload.Signer +
+		`","amount":"1000000","currency":"USDC","recipient":"` + payload.Recipient +
+		`","nonce":"` + payload.Nonce + `"}`
+	env.Payload = json.RawMessage(raw)
+	expectInvalid(t, svc, env, "duplicate key")
+
+	cased := `{"Signer":"` + payload.Signer + `","amount":"1000000","currency":"USDC","recipient":"` +
+		payload.Recipient + `","nonce":"` + payload.Nonce + `"}`
+	env.Payload = json.RawMessage(cased)
+	expectInvalid(t, svc, env, "case-variant key")
 }

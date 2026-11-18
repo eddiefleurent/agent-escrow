@@ -2,6 +2,7 @@ package ap2
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -10,7 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
@@ -41,6 +44,7 @@ var mandateTypes = apitypes.Types{
 		{Name: "verifyingContract", Type: "address"},
 	},
 	"Authorization": {
+		{Name: "token", Type: "address"},
 		{Name: "from", Type: "address"},
 		{Name: "to", Type: "address"},
 		{Name: "value", Type: "uint256"},
@@ -84,7 +88,10 @@ var primaryTypes = map[MandateType]string{
 }
 
 // parsedAuthorization holds the decoded EIP-3009 authorization fields.
+// Token is part of the signed mandate, not of the EIP-3009 struct itself.
+// The on-chain transfer uses the token's own domain separator.
 type parsedAuthorization struct {
+	Token       common.Address
 	From        common.Address
 	To          common.Address
 	Value       *big.Int
@@ -94,6 +101,38 @@ type parsedAuthorization struct {
 	R           [32]byte
 	S           [32]byte
 	V           uint8
+}
+
+// receiveWithAuthorizationTypehash is the EIP-3009 typehash used by
+// TaskEscrow.fundWithAuthorization. The escrow calls
+// receiveWithAuthorization, not transferWithAuthorization
+// (src/TransferLib.sol receiveEIP3009).
+var receiveWithAuthorizationTypehash = crypto.Keccak256Hash([]byte(
+	"ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)",
+))
+
+var receiveWithAuthorizationArgs abi.Arguments
+
+func init() {
+	mustType := func(t string) abi.Type {
+		parsed, err := abi.NewType(t, "", nil)
+		if err != nil {
+			panic(err)
+		}
+		return parsed
+	}
+	b32 := mustType("bytes32")
+	addr := mustType("address")
+	u256 := mustType("uint256")
+	receiveWithAuthorizationArgs = abi.Arguments{
+		{Type: b32},
+		{Type: addr},
+		{Type: addr},
+		{Type: u256},
+		{Type: u256},
+		{Type: u256},
+		{Type: b32},
+	}
 }
 
 // verifiedMandate is a decoded mandate. Production code obtains it only from
@@ -119,8 +158,9 @@ func (s *Service) now() time.Time {
 }
 
 // verifyMandate performs all mandate checks: structure, EIP-712 signature,
-// payload-to-authorization consistency, and the validity window.
-func (s *Service) verifyMandate(env MandateEnvelope) (*verifiedMandate, error) {
+// the paired EIP-3009 signature, payload-to-authorization consistency, and
+// the validity window. It does not write a row or submit a transaction.
+func (s *Service) verifyMandate(ctx context.Context, env MandateEnvelope) (*verifiedMandate, error) {
 	if env.Signature == "" {
 		return nil, errors.New("signature is required")
 	}
@@ -140,6 +180,13 @@ func (s *Service) verifyMandate(env MandateEnvelope) (*verifiedMandate, error) {
 	}
 	if recovered != vm.Signer {
 		return nil, errors.New("signature does not match signer_address")
+	}
+
+	// The mandate signature does not cover v/r/s. Check those against the
+	// signed authorization tuple and the token's on-chain domain before the
+	// clock, so a bad transfer signature is rejected on its own.
+	if err := s.verifyEIP3009Authorization(ctx, vm.Auth); err != nil {
+		return nil, err
 	}
 
 	// Validity window, checked after the signature so that only fields the
@@ -208,7 +255,7 @@ func (s *Service) decodeMandate(env MandateEnvelope) (*verifiedMandate, error) {
 	switch env.Type {
 	case MandateTypeIntent:
 		var p IntentMandate
-		if err := decodeStrict(env.Payload, &p); err != nil {
+		if err := decodeStrict(env.Payload, &p, intentPayloadFields); err != nil {
 			return nil, fmt.Errorf("invalid intent payload: %w", err)
 		}
 		if payloadSigner, err = parseAddress("payload.signer", p.Signer); err != nil {
@@ -241,7 +288,7 @@ func (s *Service) decodeMandate(env MandateEnvelope) (*verifiedMandate, error) {
 		}
 	case MandateTypeCart:
 		var p CartMandate
-		if err := decodeStrict(env.Payload, &p); err != nil {
+		if err := decodeStrict(env.Payload, &p, cartPayloadFields); err != nil {
 			return nil, fmt.Errorf("invalid cart payload: %w", err)
 		}
 		if payloadSigner, err = parseAddress("payload.signer", p.Signer); err != nil {
@@ -281,7 +328,7 @@ func (s *Service) decodeMandate(env MandateEnvelope) (*verifiedMandate, error) {
 		}
 	case MandateTypePayment:
 		var p PaymentMandate
-		if err := decodeStrict(env.Payload, &p); err != nil {
+		if err := decodeStrict(env.Payload, &p, paymentPayloadFields); err != nil {
 			return nil, fmt.Errorf("invalid payment payload: %w", err)
 		}
 		if payloadSigner, err = parseAddress("payload.signer", p.Signer); err != nil {
@@ -317,6 +364,7 @@ func (s *Service) decodeMandate(env MandateEnvelope) (*verifiedMandate, error) {
 		return nil, errors.New("payload.signer must equal signer_address")
 	}
 	message["authorization"] = apitypes.TypedDataMessage{
+		"token":       auth.Token.Hex(),
 		"from":        auth.From.Hex(),
 		"to":          auth.To.Hex(),
 		"value":       auth.Value,
@@ -394,6 +442,15 @@ func recoverSigner(digest common.Hash, sig []byte) (common.Address, error) {
 func parseAuthorization(a EIP3009Authorization) (parsedAuthorization, error) {
 	var out parsedAuthorization
 	var err error
+	if a.Token == "" {
+		return out, errors.New("authorization.token is required")
+	}
+	if out.Token, err = parseAddress("authorization.token", a.Token); err != nil {
+		return out, err
+	}
+	if out.Token == (common.Address{}) {
+		return out, errors.New("authorization.token is required")
+	}
 	if a.From == "" {
 		return out, errors.New("authorization.from is required")
 	}
@@ -463,9 +520,12 @@ func ttlWindow(issuedAt, ttlSeconds int64) (time.Time, error) {
 	return time.Unix(issuedAt+ttlSeconds, 0), nil
 }
 
-// decodeStrict decodes a single JSON object, rejecting unknown fields so that
-// every accepted payload field is covered by the signature.
-func decodeStrict(raw []byte, v any) error {
+// decodeStrict rejects ambiguous JSON, then decodes one object.
+// Every accepted payload field is covered by the mandate signature.
+func decodeStrict(raw []byte, v any, fields map[string]fieldSpec) error {
+	if err := strictObject(raw, fields); err != nil {
+		return err
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
@@ -475,6 +535,71 @@ func decodeStrict(raw []byte, v any) error {
 		return errors.New("unexpected trailing data")
 	}
 	return nil
+}
+
+// errChainRead marks a failed eth_call. It is not a bad mandate.
+var errChainRead = errors.New("chain read")
+
+// verifyEIP3009Authorization checks v/r/s against the signed
+// ReceiveWithAuthorization tuple and the token's DOMAIN_SEPARATOR().
+// fundWithAuthorization pulls the escrow amount of the escrow token, so a
+// signature over any other tuple must not be relayed.
+func (s *Service) verifyEIP3009Authorization(ctx context.Context, auth parsedAuthorization) error {
+	if s.Chain == nil {
+		return errors.New("ap2 service has no chain client")
+	}
+	separator, err := s.Chain.DomainSeparator(ctx, auth.Token)
+	if err != nil {
+		return fmt.Errorf("%w: read token DOMAIN_SEPARATOR: %w", errChainRead, err)
+	}
+	if separator == (common.Hash{}) {
+		return errors.New("token DOMAIN_SEPARATOR is empty")
+	}
+	digest, err := receiveWithAuthorizationDigest(separator, auth)
+	if err != nil {
+		return err
+	}
+	sig, err := parseSignature(hexutil.Encode(authorizationSignature(auth)))
+	if err != nil {
+		return fmt.Errorf("invalid authorization signature: %w", err)
+	}
+	recovered, err := recoverSigner(digest, sig)
+	if err != nil {
+		return fmt.Errorf("invalid authorization signature: %w", err)
+	}
+	if recovered != auth.From {
+		return errors.New("authorization signature does not match authorization.from")
+	}
+	return nil
+}
+
+func authorizationSignature(auth parsedAuthorization) []byte {
+	sig := make([]byte, 65)
+	copy(sig[0:32], auth.R[:])
+	copy(sig[32:64], auth.S[:])
+	sig[64] = auth.V
+	return sig
+}
+
+func receiveWithAuthorizationDigest(domainSeparator common.Hash, auth parsedAuthorization) (common.Hash, error) {
+	packed, err := receiveWithAuthorizationArgs.Pack(
+		receiveWithAuthorizationTypehash,
+		auth.From,
+		auth.To,
+		auth.Value,
+		auth.ValidAfter,
+		auth.ValidBefore,
+		auth.Nonce,
+	)
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("encode ReceiveWithAuthorization: %w", err)
+	}
+	structHash := crypto.Keccak256(packed)
+	buf := make([]byte, 0, 2+32+32)
+	buf = append(buf, 0x19, 0x01)
+	buf = append(buf, domainSeparator[:]...)
+	buf = append(buf, structHash...)
+	return crypto.Keccak256Hash(buf), nil
 }
 
 func parseAddress(field, s string) (common.Address, error) {

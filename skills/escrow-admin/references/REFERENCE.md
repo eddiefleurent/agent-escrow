@@ -207,15 +207,20 @@ Types (the primary type is chosen by `type`; JSON `snake_case` fields map to the
 `camelCase` names below):
 
 ```text
-Authorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)
+Authorization(address token,address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)
 IntentMandate(address signer,uint256 budgetAmount,string budgetCurrency,uint256 ttlSeconds,uint256 issuedAt,string description,Authorization authorization)
 CartMandate(address signer,address merchant,uint256 amount,string currency,bytes32 itemsHash,uint256 ttlSeconds,uint256 issuedAt,Authorization authorization)
 PaymentMandate(address signer,uint256 amount,string currency,address recipient,bytes32 nonce,Authorization authorization)
 ```
 
 `authorization` in the typed message is the envelope's EIP-3009 authorization
-(without `v`/`r`/`s`), so a mandate signature cannot be paired with a different
-transfer. Validity window: `valid_after < now < valid_before`, and for intent/cart
+(without `v`/`r`/`s`) plus the token address, so a mandate signature cannot be
+paired with a different transfer. Before any row is written or any funding
+transaction is sent, the server reads the token's `DOMAIN_SEPARATOR()` and
+checks `v`/`r`/`s` against `ReceiveWithAuthorization` (the type
+`fundWithAuthorization` relays; not `TransferWithAuthorization`).
+`authorization.value` must equal the escrow amount and `authorization.token`
+must equal the escrow token. Validity window: `valid_after < now < valid_before`, and for intent/cart
 mandates also `now < issued_at + ttl_seconds` (`issued_at` may be at most 5 minutes
 in the future). See `demo/ap2_demo.py` for a signing example with `eth_account`.
 

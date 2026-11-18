@@ -121,6 +121,7 @@ escrow-cli ap2 validate --output json --data '{
     "signature": "0x<65-byte EIP-712 mandate signature by the buyer>",
     "signer_address": "0xBuyerAddress",
     "authorization": {
+      "token": "0xTokenAddress",
       "from": "0xBuyerAddress",
       "to": "0xEscrowAddress",
       "value": "1000000",

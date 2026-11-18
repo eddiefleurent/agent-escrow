@@ -3,9 +3,12 @@ package ap2
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 )
+
+const maxMandateBody = 1 << 20
 
 // Handler provides HTTP endpoints for the AP2 mandate-to-escrow bridge.
 type Handler struct {
@@ -19,8 +22,13 @@ func NewHandler(svc *Service) *Handler {
 
 // FundViaMandate handles POST /api/v1/ap2/fund.
 func (h *Handler) FundViaMandate(w http.ResponseWriter, r *http.Request) {
-	var req FundViaMandateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	body, err := readBody(r)
+	if err != nil || !json.Valid(body) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	req, err := decodeFundRequest(body)
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -29,6 +37,10 @@ func (h *Handler) FundViaMandate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, ErrInvalidMandate) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid mandate or escrow binding"})
+			return
+		}
+		if errors.Is(err, ErrFundingPending) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 			return
 		}
 		slog.Error("fund via mandate failed", "escrow_id", req.EscrowID, "error", err)
@@ -41,13 +53,18 @@ func (h *Handler) FundViaMandate(w http.ResponseWriter, r *http.Request) {
 
 // ValidateMandate handles POST /api/v1/ap2/validate.
 func (h *Handler) ValidateMandate(w http.ResponseWriter, r *http.Request) {
-	var req ValidateMandateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	body, err := readBody(r)
+	if err != nil || !json.Valid(body) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
+	req, err := decodeValidateRequest(body)
+	if err != nil {
+		writeJSON(w, http.StatusOK, ValidateMandateResponse{Valid: false, Reason: err.Error()})
+		return
+	}
 
-	err := h.svc.ValidateMandate(r.Context(), req.MandateEnvelope)
+	err = h.svc.ValidateMandate(r.Context(), req.MandateEnvelope)
 	if err != nil {
 		writeJSON(w, http.StatusOK, ValidateMandateResponse{Valid: false, Reason: err.Error()})
 		return
@@ -71,6 +88,11 @@ func (h *Handler) GetMandate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, mandate)
+}
+
+func readBody(r *http.Request) ([]byte, error) {
+	defer r.Body.Close()
+	return io.ReadAll(io.LimitReader(r.Body, maxMandateBody))
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

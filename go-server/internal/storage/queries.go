@@ -2572,65 +2572,155 @@ func (d *DB) ListA2ATasksBySession(ctx context.Context, sessionID string) ([]*A2
 
 // ── AP2 Mandates ──
 
-// CreateAP2Mandate inserts a new AP2 mandate record.
-func (d *DB) CreateAP2Mandate(ctx context.Context, id, mandateType, mandateHash, signerAddress, budgetAmount, budgetCurrency string, expiresAt *string, escrowID *int64, rawPayload string) error {
-	status := "bound"
-	if escrowID == nil {
-		status = "pending"
-	}
+const ap2MandateColumns = `id, mandate_type, mandate_hash, signer_address, budget_amount, budget_currency, expires_at, escrow_id, funding_tx_hash, status, raw_payload, created_at, chain_id, token, authorizer, authorization_nonce`
+
+// CreateAP2Mandate inserts a pending AP2 mandate. Callers have already verified
+// the mandate and its EIP-3009 authorization.
+func (d *DB) CreateAP2Mandate(ctx context.Context, rec AP2MandateInsert) error {
 	_, err := d.db.ExecContext(ctx,
-		`INSERT INTO ap2_mandates (id, mandate_type, mandate_hash, signer_address, budget_amount, budget_currency, expires_at, escrow_id, status, raw_payload)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, mandateType, mandateHash, signerAddress, nilIfEmpty(budgetAmount), nilIfEmpty(budgetCurrency), expiresAt, escrowID, status, rawPayload)
+		`INSERT INTO ap2_mandates (
+			id, mandate_type, mandate_hash, signer_address, budget_amount, budget_currency,
+			expires_at, escrow_id, status, raw_payload, chain_id, token, authorizer, authorization_nonce
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+		rec.ID, rec.MandateType, rec.MandateHash, rec.SignerAddress,
+		nilIfEmpty(rec.BudgetAmount), nilIfEmpty(rec.BudgetCurrency), rec.ExpiresAt, rec.EscrowID,
+		rec.RawPayload, rec.ChainID, rec.Token, rec.Authorizer, rec.AuthorizationNonce)
 	if err != nil {
 		return fmt.Errorf("insert ap2_mandate: %w", err)
 	}
 	return nil
 }
 
-// UpdateAP2MandateFunding updates a mandate's funding tx hash and status.
-func (d *DB) UpdateAP2MandateFunding(ctx context.Context, mandateID, txHash string) error {
+// GetAP2MandateByAuthorization returns the row reserved for one EIP-3009 nonce.
+func (d *DB) GetAP2MandateByAuthorization(ctx context.Context, chainID int64, token, authorizer, nonce string) (*AP2Mandate, error) {
+	row := d.db.QueryRowContext(ctx,
+		`SELECT `+ap2MandateColumns+` FROM ap2_mandates
+		 WHERE chain_id = ? AND token = ? AND authorizer = ? AND authorization_nonce = ?`,
+		chainID, token, authorizer, nonce)
+	m, err := scanAP2Mandate(row)
+	if err != nil {
+		return nil, fmt.Errorf("get ap2 mandate by authorization: %w", err)
+	}
+	return m, nil
+}
+
+// ReopenFailedAP2Mandate moves a failed row back to pending so the same
+// authorization nonce can be broadcast again. Returns false when the row was
+// no longer failed.
+func (d *DB) ReopenFailedAP2Mandate(ctx context.Context, id string, rec AP2MandateInsert) (bool, error) {
 	res, err := d.db.ExecContext(ctx,
-		`UPDATE ap2_mandates SET funding_tx_hash = ?, status = 'funded' WHERE id = ?`,
-		txHash, mandateID)
+		`UPDATE ap2_mandates
+		 SET status = 'pending', funding_tx_hash = NULL,
+		     mandate_type = ?, mandate_hash = ?, signer_address = ?,
+		     budget_amount = ?, budget_currency = ?, expires_at = ?, escrow_id = ?, raw_payload = ?,
+		     chain_id = ?, token = ?, authorizer = ?, authorization_nonce = ?
+		 WHERE id = ? AND status = 'failed'`,
+		rec.MandateType, rec.MandateHash, rec.SignerAddress,
+		nilIfEmpty(rec.BudgetAmount), nilIfEmpty(rec.BudgetCurrency), rec.ExpiresAt, rec.EscrowID, rec.RawPayload,
+		rec.ChainID, rec.Token, rec.Authorizer, rec.AuthorizationNonce, id)
 	if err != nil {
-		return fmt.Errorf("UpdateAP2MandateFunding: %w", err)
+		return false, fmt.Errorf("reopen ap2 mandate: %w", err)
 	}
-	rows, err := res.RowsAffected()
+	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("UpdateAP2MandateFunding rows affected: %w", err)
+		return false, fmt.Errorf("reopen ap2 mandate rows affected: %w", err)
 	}
-	if rows == 0 {
-		return fmt.Errorf("UpdateAP2MandateFunding id=%s: %w", mandateID, sql.ErrNoRows)
+	return n == 1, nil
+}
+
+// RefreshPendingAP2Mandate updates a pending row that has not been broadcast.
+func (d *DB) RefreshPendingAP2Mandate(ctx context.Context, id string, rec AP2MandateInsert) (bool, error) {
+	res, err := d.db.ExecContext(ctx,
+		`UPDATE ap2_mandates
+		 SET mandate_type = ?, mandate_hash = ?, signer_address = ?,
+		     budget_amount = ?, budget_currency = ?, expires_at = ?, escrow_id = ?, raw_payload = ?
+		 WHERE id = ? AND status = 'pending' AND (funding_tx_hash IS NULL OR funding_tx_hash = '')`,
+		rec.MandateType, rec.MandateHash, rec.SignerAddress,
+		nilIfEmpty(rec.BudgetAmount), nilIfEmpty(rec.BudgetCurrency), rec.ExpiresAt, rec.EscrowID, rec.RawPayload, id)
+	if err != nil {
+		return false, fmt.Errorf("refresh pending ap2 mandate: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("refresh pending ap2 mandate rows affected: %w", err)
+	}
+	return n == 1, nil
+}
+
+// SetAP2MandatePendingTx records a broadcast tx hash without marking the row funded.
+func (d *DB) SetAP2MandatePendingTx(ctx context.Context, id, txHash string) error {
+	return d.execAP2Status(ctx, id,
+		`UPDATE ap2_mandates SET funding_tx_hash = ?, status = 'pending' WHERE id = ? AND status = 'pending'`,
+		txHash, id)
+}
+
+// MarkAP2MandateFunded marks a pending row funded. The caller has a successful receipt.
+func (d *DB) MarkAP2MandateFunded(ctx context.Context, id, txHash string) error {
+	return d.execAP2Status(ctx, id,
+		`UPDATE ap2_mandates SET funding_tx_hash = ?, status = 'funded' WHERE id = ? AND status = 'pending'`,
+		txHash, id)
+}
+
+// MarkAP2MandateFailed marks a pending row failed so the authorization nonce can be retried.
+func (d *DB) MarkAP2MandateFailed(ctx context.Context, id string) error {
+	return d.execAP2Status(ctx, id,
+		`UPDATE ap2_mandates SET status = 'failed' WHERE id = ? AND status = 'pending'`,
+		id)
+}
+
+func (d *DB) execAP2Status(ctx context.Context, id, query string, args ...any) error {
+	res, err := d.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("update ap2 mandate %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update ap2 mandate %s rows affected: %w", id, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("update ap2 mandate %s: %w", id, sql.ErrNoRows)
 	}
 	return nil
 }
 
 // GetAP2Mandate retrieves a mandate by ID.
 func (d *DB) GetAP2Mandate(ctx context.Context, id string) (*AP2Mandate, error) {
-	row := d.db.QueryRowContext(ctx,
-		`SELECT id, mandate_type, mandate_hash, signer_address, budget_amount, budget_currency, expires_at, escrow_id, funding_tx_hash, status, raw_payload, created_at
-		 FROM ap2_mandates WHERE id = ?`, id)
-
-	var m AP2Mandate
-	var budgetAmt, budgetCur, expiresAt, fundingTx, createdAt sql.NullString
-	var escrowID sql.NullInt64
-
-	err := row.Scan(&m.ID, &m.MandateType, &m.MandateHash, &m.SignerAddress,
-		&budgetAmt, &budgetCur, &expiresAt, &escrowID, &fundingTx, &m.Status, &m.RawPayload, &createdAt)
+	row := d.db.QueryRowContext(ctx, `SELECT `+ap2MandateColumns+` FROM ap2_mandates WHERE id = ?`, id)
+	m, err := scanAP2Mandate(row)
 	if err != nil {
 		return nil, fmt.Errorf("get ap2 mandate: %w", err)
+	}
+	return m, nil
+}
+
+func scanAP2Mandate(row interface{ Scan(...any) error }) (*AP2Mandate, error) {
+	var m AP2Mandate
+	var budgetAmt, budgetCur, expiresAt, fundingTx, createdAt sql.NullString
+	var token, authorizer, authNonce sql.NullString
+	var escrowID, chainID sql.NullInt64
+
+	err := row.Scan(&m.ID, &m.MandateType, &m.MandateHash, &m.SignerAddress,
+		&budgetAmt, &budgetCur, &expiresAt, &escrowID, &fundingTx, &m.Status, &m.RawPayload, &createdAt,
+		&chainID, &token, &authorizer, &authNonce)
+	if err != nil {
+		return nil, err
 	}
 
 	m.BudgetAmount = budgetAmt.String
 	m.BudgetCurrency = budgetCur.String
 	m.FundingTxHash = fundingTx.String
+	m.Token = token.String
+	m.Authorizer = authorizer.String
+	m.AuthorizationNonce = authNonce.String
 	if expiresAt.Valid {
 		m.ExpiresAt = expiresAt.String
 	}
 	if escrowID.Valid {
 		eid := escrowID.Int64
 		m.EscrowID = &eid
+	}
+	if chainID.Valid {
+		m.ChainID = chainID.Int64
 	}
 	if createdAt.Valid {
 		t, err := parseSQLiteTime(createdAt.String)
@@ -2639,7 +2729,6 @@ func (d *DB) GetAP2Mandate(ctx context.Context, id string) (*AP2Mandate, error) 
 		}
 		m.CreatedAt = t
 	}
-
 	return &m, nil
 }
 

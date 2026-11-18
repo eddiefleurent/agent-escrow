@@ -45,7 +45,11 @@ type PaymentMandate struct {
 }
 
 // EIP3009Authorization contains the EIP-3009 signature fields for gasless funding.
+// Token is signed as part of the mandate Authorization type. It is not a field
+// of the token's ReceiveWithAuthorization struct; that struct is bound to the
+// token by the token's EIP-712 domain.
 type EIP3009Authorization struct {
+	Token       string `json:"token"`
 	From        string `json:"from"`
 	To          string `json:"to"`
 	Value       string `json:"value"`

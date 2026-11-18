@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
@@ -35,6 +36,11 @@ type MockClient struct {
 
 	CallResult []byte
 	CallErr    error
+
+	// DomainSeparatorHash is returned by DomainSeparator for every token.
+	// DomainSeparatorErr, when set, is returned instead.
+	DomainSeparatorHash common.Hash
+	DomainSeparatorErr  error
 
 	SentTxs []MockTxRecord
 
@@ -162,6 +168,21 @@ func (m *MockClient) CallContract(_ context.Context, _ common.Address, _ []byte)
 	return m.CallResult, m.CallErr
 }
 
+func (m *MockClient) DomainSeparator(ctx context.Context, _ common.Address) (common.Hash, error) {
+	if err := m.applyDelay(ctx); err != nil {
+		return common.Hash{}, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.DomainSeparatorErr != nil {
+		return common.Hash{}, m.DomainSeparatorErr
+	}
+	if m.DomainSeparatorHash == (common.Hash{}) {
+		return common.Hash{}, errors.New("domain separator not configured")
+	}
+	return m.DomainSeparatorHash, nil
+}
+
 func (m *MockClient) TransactionReceipt(_ context.Context, _ common.Hash) (*types.Receipt, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -171,7 +192,7 @@ func (m *MockClient) TransactionReceipt(_ context.Context, _ common.Hash) (*type
 	if m.Receipt != nil {
 		return m.Receipt, nil
 	}
-	return nil, errors.New("receipt not found")
+	return nil, ethereum.NotFound
 }
 
 func (m *MockClient) CreateEscrow(_ context.Context, factory common.Address, p CreateEscrowParams) (*types.Transaction, error) {

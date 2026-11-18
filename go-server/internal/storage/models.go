@@ -259,18 +259,39 @@ type A2ATask struct {
 
 // AP2Mandate represents an AP2 mandate linked to an escrow (paper §6: AP2 stake-on-bid).
 type AP2Mandate struct {
-	ID             string    `json:"id"`
-	MandateType    string    `json:"mandate_type"`
-	MandateHash    string    `json:"mandate_hash"`
-	SignerAddress  string    `json:"signer_address"`
-	BudgetAmount   string    `json:"budget_amount,omitempty"`
-	BudgetCurrency string    `json:"budget_currency,omitempty"`
-	ExpiresAt      string    `json:"expires_at,omitempty"`
-	EscrowID       *int64    `json:"escrow_id,omitempty"`
-	FundingTxHash  string    `json:"funding_tx_hash,omitempty"`
-	Status         string    `json:"status"`
-	RawPayload     string    `json:"raw_payload"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID                 string    `json:"id"`
+	MandateType        string    `json:"mandate_type"`
+	MandateHash        string    `json:"mandate_hash"`
+	SignerAddress      string    `json:"signer_address"`
+	BudgetAmount       string    `json:"budget_amount,omitempty"`
+	BudgetCurrency     string    `json:"budget_currency,omitempty"`
+	ExpiresAt          string    `json:"expires_at,omitempty"`
+	EscrowID           *int64    `json:"escrow_id,omitempty"`
+	FundingTxHash      string    `json:"funding_tx_hash,omitempty"`
+	Status             string    `json:"status"`
+	RawPayload         string    `json:"raw_payload"`
+	CreatedAt          time.Time `json:"created_at"`
+	ChainID            int64     `json:"chain_id,omitempty"`
+	Token              string    `json:"token,omitempty"`
+	Authorizer         string    `json:"authorizer,omitempty"`
+	AuthorizationNonce string    `json:"authorization_nonce,omitempty"`
+}
+
+// AP2MandateInsert is a new pending AP2 mandate row.
+type AP2MandateInsert struct {
+	ID                 string
+	MandateType        string
+	MandateHash        string
+	SignerAddress      string
+	BudgetAmount       string
+	BudgetCurrency     string
+	ExpiresAt          *string
+	EscrowID           *int64
+	RawPayload         string
+	ChainID            int64
+	Token              string
+	Authorizer         string
+	AuthorizationNonce string
 }
 
 // UCPSession links a UCP checkout/session to an escrow lifecycle projection.

@@ -364,7 +364,7 @@ These systems are intentionally layered beside the escrow contract, not inside i
 Adapter modules translate external protocols into shared escrow semantics:
 
 - **A2A** exposes settlement capability to A2A agents with escrow-specific metadata. It records tasks only; it does not yet create or link escrows.
-- **AP2** provides gasless funding into escrow through EIP-3009 `fundWithAuthorization`, submitted by the server signer. Mandate signature verification is in flight (roadmap `H1`). The **x402** facilitator client is wired into the AP2 service but has no production callers.
+- **AP2** provides gasless funding into escrow through EIP-3009 `fundWithAuthorization`, submitted by the server signer. The mandate is an EIP-712 signature over the payload and the paired authorization, including the token. The server checks that authorization's `ReceiveWithAuthorization` signature against the token's `DOMAIN_SEPARATOR()` before writing a row or relaying (roadmap `H1`). The **x402** facilitator client is wired into the AP2 service but has no production callers.
 - **UCP** projects commerce-oriented checkout flows onto escrow lifecycle semantics.
 
 The architectural rule is that adapters may reshape transport semantics, but they may not bypass verification, dispute, refund, or settlement invariants.

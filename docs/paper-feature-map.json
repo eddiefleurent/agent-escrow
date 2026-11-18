@@ -239,7 +239,7 @@
       {
         "id": "S6-AP2",
         "status": "partial",
-        "notes": "Mandate validation, escrow binding, and EIP-3009 funding via the server signer (`Chain.FundWithAuthorization`, go-server/internal/ap2/service.go:238) work. The mandate `signature` is only checked for non-emptiness and never verified (go-server/internal/ap2/service.go:52); fund safety currently rests on the token's own EIP-3009 check. The verification fix is tracked as H1 (separate PR in flight). Funding does not route through x402. No stake-on-bid or clawback semantics.",
+        "notes": "Mandate validation, escrow binding, and EIP-3009 funding via the server signer (`Chain.FundWithAuthorization`) work. The mandate is an EIP-712 signature over the payload and the paired authorization, including the token. The server verifies the `ReceiveWithAuthorization` signature against the token `DOMAIN_SEPARATOR()` before writing a row or relaying (`H1`). Funding does not route through x402. No stake-on-bid or clawback semantics.",
         "roadmap_items": [
           "9",
           "H1"
@@ -376,7 +376,7 @@
         "6.1"
       ],
       "decision_vs_paper": "Implemented AP2 mandate validation, escrow binding, and funding through the escrow `fundWithAuthorization` bridge using the server signer. The x402 facilitator client is wired into the service but never invoked.",
-      "residual_gap": "Mandate signature is never verified (H1, fix in flight). x402 client has no callers. Richer AP2-native conditional state semantics remain open."
+      "residual_gap": "Mandate and EIP-3009 signatures are verified (H1). x402 client has no callers. Richer AP2-native conditional state semantics remain open."
     },
     {
       "item_id": "10",
@@ -612,13 +612,13 @@
       "item_id": "H1",
       "phase": "Hardening",
       "title": "AP2 mandate signature verification",
-      "status": "in_progress",
+      "status": "implemented",
       "paper_refs": [
         "6",
         "6.1"
       ],
-      "decision_vs_paper": "Verify the mandate signature (signer binds to `authorization.from`) before funding, instead of relying only on the token's EIP-3009 check.",
-      "residual_gap": "Fix PR in flight separately; until it merges the signature field is checked for non-emptiness only (go-server/internal/ap2/service.go:52)."
+      "decision_vs_paper": "Verify the EIP-712 mandate signature (signer binds to `authorization.from`) and the paired EIP-3009 `ReceiveWithAuthorization` signature against the token `DOMAIN_SEPARATOR()` before funding. The signed authorization includes the token and must equal the escrow amount and token.",
+      "residual_gap": "No material gap for H1. x402 is still unwired (S6-x402)."
     },
     {
       "item_id": "H2",
@@ -772,7 +772,7 @@
       "status": "planned",
       "blocked_on_owner": true,
       "paper_refs": [],
-      "decision_vs_paper": "Squash the 27 SQLite migrations into one baseline before mainnet (hard cutoff).",
+      "decision_vs_paper": "Squash the 28 SQLite migrations into one baseline before mainnet (hard cutoff).",
       "residual_gap": "Blocked on the owner: forces a re-index of existing testnet databases from the start block."
     },
     {
@@ -962,7 +962,6 @@
     "SH2",
     "SH3",
     "SH4",
-    "H1",
     "H5",
     "H6",
     "H7",
@@ -1028,7 +1027,7 @@
       "gap_id": "G-AP2-SIGNATURE",
       "paper_section": "6",
       "description": "AP2 mandate signature is not verified.",
-      "resolution": "H1 (fix in flight)."
+      "resolution": "H1. EIP-712 mandate signatures and the paired ReceiveWithAuthorization signature are verified before funding."
     },
     {
       "gap_id": "G-X402-UNUSED",
@@ -1049,5 +1048,5 @@
       "resolution": "H9 (blocked on owner)."
     }
   ],
-  "execution_order_notes": "Completed items (R1, SH1) are omitted. H2-H4 are in flight; H1 is in flight as a separate fix PR. H8, SH5, and H9-H15 are blocked on owner decisions and are listed in the order they would start once unblocked. Contract items H7 and H9-H13 ship together as one bundled v2 redeploy."
+  "execution_order_notes": "Completed items (R1, SH1, H1) are omitted. H2-H4 are in flight. H8, SH5, and H9-H15 are blocked on owner decisions and are listed in the order they would start once unblocked. Contract items H7 and H9-H13 ship together as one bundled v2 redeploy."
 }

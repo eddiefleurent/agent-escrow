@@ -49,6 +49,7 @@ RECEIVE_WITH_AUTH_TYPES = {
 AP2_DOMAIN_NAME = "agent-escrow AP2"
 AP2_DOMAIN_VERSION = "1"
 AP2_AUTHORIZATION_TYPE = [
+    {"name": "token", "type": "address"},
     {"name": "from", "type": "address"},
     {"name": "to", "type": "address"},
     {"name": "value", "type": "uint256"},
@@ -337,7 +338,10 @@ def main():
             "currency": "USDC",
             "recipient": escrow_addr,
             "nonce": nonce,
-            "authorization": message,
+            "authorization": {
+                "token": USDC,
+                **message,
+            },
         },
     )
     mandate_signed = Account.sign_message(mandate_signable, private_key=buyer_key)
@@ -360,6 +364,7 @@ def main():
             "signature": mandate_signature,
             "signer_address": buyer_addr,
             "authorization": {
+                "token": USDC,
                 "from": buyer_addr,
                 "to": escrow_addr,
                 "value": ESCROW_AMOUNT,
