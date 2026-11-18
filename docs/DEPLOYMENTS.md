@@ -2,7 +2,9 @@
 
 ## Base Sepolia (Chain ID 84532)
 
-### V2 -- ERC20/USDC Support (Current)
+> **Record gap (2026-11-17).** No deployment of the V3 contracts (verifier quorum, service tiers, ZK slot, re-delegation surcharge) is recorded in this file. Multi-verifier quorum (V3 item 19) was merged on 2026-02-28 (commit `cca6c93`), after the factories below were deployed, so none of them includes it; no deployment of the other V3 contract features is recorded either. Record the V3 factory address, deploy tx hash, block, and date here after the next Base Sepolia deployment, and re-verify the contract source on the explorer as `CLAUDE.md` requires.
+
+### V2 -- ERC20/USDC Support (Last recorded; pre-V3)
 
 | Item | Value |
 |---|---|
@@ -15,6 +17,16 @@
 | Protocol Fee | 100 bps (1%) |
 | Date | 2026-02-20 |
 | Explorer | [sepolia.basescan.org](https://sepolia.basescan.org/address/0x798830e2d3C25cF9296fe06a46D808CFB550e880) |
+
+### Referenced but unrecorded factory
+
+| Item | Value |
+|---|---|
+| Factory Address | `0x7006930a9d309ca476b5538800da16525ecb191d` |
+| Where it appears | `demo/DEMO_RUN.md` (demos dated 2026-02-24, described there as deployed after the `EscrowDeployer` refactor) and the default address in `go-server/cmd/check_selector/main.go` |
+| Deploy tx hash, block, deployer, fee | Not recorded in this repository |
+
+This address is quoted from the demo log and the code, not independently verified here. It predates the V3 quorum and tier contracts, so it should not be treated as a V3 deployment.
 
 ### V1 -- Settlement Kernel (Retired)
 
