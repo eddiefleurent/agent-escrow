@@ -251,14 +251,8 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 	if err != nil {
 		return nil, err
 	}
-	if buyer == worker {
-		return nil, fmt.Errorf("%w: buyer and worker must be distinct addresses", ErrValidation)
-	}
-	if buyer == arbitrator {
-		return nil, fmt.Errorf("%w: buyer and arbitrator must be distinct addresses", ErrValidation)
-	}
-	if worker == arbitrator {
-		return nil, fmt.Errorf("%w: worker and arbitrator must be distinct addresses", ErrValidation)
+	if err := validateDistinctCreateRoles(buyer, worker, arbitrator); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrValidation, err)
 	}
 	factory, err := parseAddress("s.Cfg.FactoryAddress", s.Cfg.FactoryAddress)
 	if err != nil {
@@ -609,6 +603,18 @@ func NormalizeToken(token string) string {
 		return ""
 	}
 	return token
+}
+
+func validateDistinctCreateRoles(buyer, worker, arbitrator common.Address) error {
+	switch {
+	case buyer == worker:
+		return errors.New("buyer and worker must be distinct addresses")
+	case buyer == arbitrator:
+		return errors.New("buyer and arbitrator must be distinct addresses")
+	case worker == arbitrator:
+		return errors.New("worker and arbitrator must be distinct addresses")
+	}
+	return nil
 }
 
 // parseAddress validates and converts a hex address string, returning ErrValidation if malformed or zero.
