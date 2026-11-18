@@ -155,7 +155,7 @@ Use this as a strict setup checklist so every lane runs against identical assump
    ```
 4. Confirm buyer has ETH gas headroom for full sequence.
 5. For USDC/AP2/UCP runs, confirm USDC balances for all participating signers.
-6. Verify emergency endpoints are configured if demo includes emergency paths (`OWNER_ADDRESS` present server-side).
+6. For emergency demos, start the server with `EMERGENCY_ENABLED=true` and `ADMIN_TOKEN`, and set the matching `ESCROW_ADMIN_TOKEN` in the demo environment.
 7. Run automated preflight:
    ```bash
    # ETH lanes

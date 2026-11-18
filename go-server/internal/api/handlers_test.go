@@ -60,6 +60,7 @@ func setupWithEmergency(t *testing.T) *testEnv {
 
 	env := setup(t)
 	env.cfg.EmergencyEnabled = true
+	env.cfg.AdminToken = strings.Repeat("x", 32)
 	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
 	return env
 }
@@ -82,6 +83,9 @@ func (e *testEnv) request(t *testing.T, method, path, body string) *httptest.Res
 		req.Header.Set("Content-Type", "application/json")
 	} else {
 		req = httptest.NewRequest(method, path, http.NoBody)
+	}
+	if e.cfg.AdminToken != "" {
+		req.Header.Set("Authorization", "Bearer "+e.cfg.AdminToken)
 	}
 	rr := httptest.NewRecorder()
 	e.mux.ServeHTTP(rr, req)
@@ -973,18 +977,22 @@ func TestResolveDispute_Success(t *testing.T) {
 	}
 }
 
-func TestCORS_Preflight_WildcardDefault(t *testing.T) {
+func TestCORS_DefaultDeniesCrossOrigin(t *testing.T) {
 	env := setup(t)
 
-	req := httptest.NewRequest(http.MethodOptions, "/api/v1/health", http.NoBody)
-	rr := httptest.NewRecorder()
-	env.mux.ServeHTTP(rr, req)
+	for method, want := range map[string]int{http.MethodOptions: http.StatusNoContent, http.MethodGet: http.StatusOK} {
+		req := httptest.NewRequest(method, "/api/v1/health", http.NoBody)
+		req.Header.Set("Origin", "https://example.com")
+		req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+		rr := httptest.NewRecorder()
+		env.mux.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusNoContent {
-		t.Fatalf("expected 204, got %d", rr.Code)
-	}
-	if rr.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Fatalf("expected wildcard CORS header, got %q", rr.Header().Get("Access-Control-Allow-Origin"))
+		if rr.Code != want {
+			t.Fatalf("%s: expected %d, got %d", method, want, rr.Code)
+		}
+		if _, present := rr.Header()["Access-Control-Allow-Origin"]; present {
+			t.Fatalf("%s: expected no Access-Control-Allow-Origin header", method)
+		}
 	}
 }
 

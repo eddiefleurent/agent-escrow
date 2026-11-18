@@ -541,12 +541,12 @@
       "item_id": "SH1",
       "phase": "Security Gate",
       "title": "Admin auth for emergency endpoints",
-      "status": "planned",
+      "status": "implemented",
       "paper_refs": [
         "4.9"
       ],
-      "decision_vs_paper": "Add explicit admin-token middleware to off-chain emergency surfaces before production traffic; on-chain owner checks alone do not protect the HTTP control plane.",
-      "residual_gap": "Entire item is pending."
+      "decision_vs_paper": "Require bearer authentication for HTTP emergency and DCT admin routes, default HTTP and local stdio MCP emergency access to disabled, and require explicit origin configuration for cross-origin HTTP and WebSocket access.",
+      "residual_gap": "No material gap for SH1 scope."
     },
     {
       "item_id": "SH2",

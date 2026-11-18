@@ -25,6 +25,9 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	}
 
 	mux := http.NewServeMux()
+	handleAdmin := func(pattern string, handler http.HandlerFunc) {
+		mux.HandleFunc(pattern, requireAdmin(cfg.AdminToken, cfg.OwnerAddress, handler))
+	}
 
 	mux.HandleFunc("GET /api/v1/health", h.Health)
 	mux.HandleFunc("POST /api/v1/escrows", h.CreateEscrow)
@@ -52,7 +55,7 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	mux.HandleFunc("POST /api/v1/dcts/delegate", h.DelegateDCT)
 	mux.HandleFunc("POST /api/v1/dcts/introspect", h.IntrospectDCT)
 	mux.HandleFunc("POST /api/v1/dcts/revoke", h.RevokeDCT)
-	mux.HandleFunc("GET /api/v1/dcts/audit", h.ListDCTAudit)
+	handleAdmin("GET /api/v1/dcts/audit", h.ListDCTAudit)
 	mux.HandleFunc("GET /api/v1/escrows/{id}/dcts", h.ListEscrowDCTs)
 
 	// Bazaar-compatible discovery metadata (paper §4.6 Table 3, Bazaar extensions)
@@ -76,14 +79,14 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 
 	// Emergency response protocol endpoints (paper §4.9)
 	if cfg.EmergencyEnabled {
-		mux.HandleFunc("POST /api/v1/dcts/emergency-override", h.EmergencyOverrideDCT)
-		mux.HandleFunc("POST /api/v1/emergency/freeze-address", h.FreezeAddress)
-		mux.HandleFunc("POST /api/v1/emergency/unfreeze-address", h.UnfreezeAddress)
-		mux.HandleFunc("POST /api/v1/emergency/freeze-escrow", h.FreezeEscrow)
-		mux.HandleFunc("POST /api/v1/emergency/unfreeze-escrow", h.UnfreezeEscrow)
-		mux.HandleFunc("POST /api/v1/emergency/resolve", h.EmergencyResolve)
-		mux.HandleFunc("GET /api/v1/emergency/frozen-addresses", h.ListFrozenAddresses)
-		mux.HandleFunc("GET /api/v1/emergency/actions", h.ListEmergencyActions)
+		handleAdmin("POST /api/v1/dcts/emergency-override", h.EmergencyOverrideDCT)
+		handleAdmin("POST /api/v1/emergency/freeze-address", h.FreezeAddress)
+		handleAdmin("POST /api/v1/emergency/unfreeze-address", h.UnfreezeAddress)
+		handleAdmin("POST /api/v1/emergency/freeze-escrow", h.FreezeEscrow)
+		handleAdmin("POST /api/v1/emergency/unfreeze-escrow", h.UnfreezeEscrow)
+		handleAdmin("POST /api/v1/emergency/resolve", h.EmergencyResolve)
+		handleAdmin("GET /api/v1/emergency/frozen-addresses", h.ListFrozenAddresses)
+		handleAdmin("GET /api/v1/emergency/actions", h.ListEmergencyActions)
 	}
 
 	if cfg.WebhookMode() {

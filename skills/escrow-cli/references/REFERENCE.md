@@ -270,6 +270,8 @@ SSE stream. Stays open until interrupted.
 
 ### `emergency`
 
+Set `ESCROW_ADMIN_TOKEN` in the environment to authenticate these commands.
+
 Owner-only operations for incident response.
 
 #### `emergency freeze-address` (body required)
@@ -579,9 +581,10 @@ POST /api/v1/dcts/emergency-override
 |-------|------|----------|-------------|
 | `escrow_id` | int | yes | Target escrow |
 | `operation` | string | yes | Operation to authorize |
-| `caller_address` | string | yes | Address to authorize for the operation |
+| `caller_address` | string | no | Address recorded with the override |
 | `reason` | string | yes | Reason for override |
-| `owner` | string | yes | Factory owner address (must match config) |
+
+The server uses its configured `OWNER_ADDRESS` after authenticating the bearer token. Set `ESCROW_ADMIN_TOKEN` in the CLI environment.
 
 #### `dct list-escrow <escrow-id>`
 
@@ -601,7 +604,7 @@ GET /api/v1/dcts/audit
 |------------|-------------|
 | `[escrow-id]` arg | Filter to a specific escrow (optional) |
 
-Returns DCT authorization audit log entries in chronological order.
+Returns DCT authorization audit log entries in chronological order. Set `ESCROW_ADMIN_TOKEN` in the CLI environment.
 
 ---
 

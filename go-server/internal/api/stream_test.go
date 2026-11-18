@@ -323,3 +323,52 @@ func TestMCPSubscribeEvents(t *testing.T) {
 		t.Error("expected non-empty JSON output")
 	}
 }
+
+func TestWebSocketRouterOriginPolicy(t *testing.T) {
+	t.Parallel()
+
+	const crossOrigin = "https://client.example"
+	for _, tc := range []struct {
+		name      string
+		allowlist []string
+		origin    string
+		sameHost  bool
+		want      int
+	}{
+		{name: "cross-origin denied by default", origin: crossOrigin, want: http.StatusForbidden},
+		{name: "explicit allowlist", allowlist: []string{crossOrigin}, origin: crossOrigin, want: http.StatusSwitchingProtocols},
+		{name: "explicit wildcard", allowlist: []string{"*"}, origin: crossOrigin, want: http.StatusSwitchingProtocols},
+		{name: "same-origin browser", sameHost: true, want: http.StatusSwitchingProtocols},
+		{name: "non-browser client", want: http.StatusSwitchingProtocols},
+		{name: "non-browser client with allowlist", allowlist: []string{crossOrigin}, want: http.StatusSwitchingProtocols},
+		{name: "origin outside allowlist", allowlist: []string{crossOrigin}, origin: "https://evil.example", want: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := baseRouterConfig()
+			cfg.EventsEnabled = true
+			cfg.CORSOrigins = tc.allowlist
+			bus := events.NewEventBus(4)
+			server := httptest.NewServer(NewRouter(nil, nil, nil, cfg, bus))
+			defer server.Close()
+
+			headers := http.Header{}
+			if tc.sameHost {
+				headers.Set("Origin", server.URL)
+			} else if tc.origin != "" {
+				headers.Set("Origin", tc.origin)
+			}
+			wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v1/events/ws"
+			conn, resp, err := websocket.DefaultDialer.DialContext(t.Context(), wsURL, headers)
+			if conn != nil {
+				defer conn.Close()
+			}
+			if resp == nil {
+				t.Fatalf("expected handshake response, got %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != tc.want {
+				t.Fatalf("expected handshake status %d, got %d (error: %v)", tc.want, resp.StatusCode, err)
+			}
+		})
+	}
+}

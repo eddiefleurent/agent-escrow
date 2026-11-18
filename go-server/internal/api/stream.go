@@ -19,12 +19,12 @@ type StreamHandler struct {
 
 // NewStreamHandler creates a handler wired to the given event bus.
 // allowedOrigins controls which origins are permitted for WebSocket upgrades;
-// an empty slice or a slice containing "*" means all origins are allowed.
+// an empty slice uses the WebSocket upgrader's same-origin default, and "*"
+// explicitly allows all origins.
 func NewStreamHandler(bus *events.EventBus, allowedOrigins ...[]string) *StreamHandler {
 	allowed := make(map[string]bool)
-	allowAll := true
-	if len(allowedOrigins) > 0 && len(allowedOrigins[0]) > 0 {
-		allowAll = false
+	allowAll := false
+	if len(allowedOrigins) > 0 {
 		for _, o := range allowedOrigins[0] {
 			if o == "*" {
 				allowAll = true
@@ -107,13 +107,14 @@ type wsSubscribeMsg struct {
 // HandleWebSocket upgrades the connection and streams events based on a
 // subscription message from the client.
 func (sh *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool {
-			if sh.allowAllOrigins {
-				return true
-			}
-			return sh.allowedOrigins[r.Header.Get("Origin")]
-		},
+	upgrader := websocket.Upgrader{}
+	if len(sh.allowedOrigins) > 0 {
+		upgrader.CheckOrigin = func(r *http.Request) bool {
+			// Non-browser clients send no Origin and are not a CSRF vector;
+			// match gorilla's default and allow them.
+			origin := r.Header.Get("Origin")
+			return origin == "" || sh.allowAllOrigins || sh.allowedOrigins[origin]
+		}
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {

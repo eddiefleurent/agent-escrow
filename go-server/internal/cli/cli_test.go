@@ -73,6 +73,8 @@ func setupCLITestEnv(t *testing.T) *cliTestEnv {
 		RequestTimeout:   10 * time.Second,
 		TxTimeout:        90 * time.Second,
 		EmergencyEnabled: true,
+		AdminToken:       strings.Repeat("x", 32),
+		OwnerAddress:     "0xowner",
 		UCPEnabled:       true,
 		UCPProviderName:  "Test UCP Provider",
 	}
@@ -286,6 +288,7 @@ func TestCLIDCTMintSmoke(t *testing.T) {
 }
 
 func TestCLIEmergencyFrozenAddresses(t *testing.T) {
+	t.Setenv("ESCROW_ADMIN_TOKEN", strings.Repeat("x", 32))
 	env := setupCLITestEnv(t)
 	stdout, stderr, err := runCLI(t, env.server.URL, "emergency", "frozen-addresses")
 	if err != nil {
@@ -487,5 +490,59 @@ func TestCLIUCPCreateGetUpdate(t *testing.T) {
 	}
 	if got, _ := updateResp["last_operation"].(string); strings.TrimSpace(got) != "fund" {
 		t.Fatalf("expected last_operation to be %q after ucp update, got %q (resp=%v)", "fund", got, updateResp)
+	}
+}
+
+func TestCLIAdminDCTCommands(t *testing.T) {
+	env := setupCLITestEnv(t)
+	ctx := t.Context()
+	task, err := env.db.CreateTask(ctx, "Task", "desc", "0xabc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	escrow, err := env.db.CreateEscrow(ctx, &storage.Escrow{TaskID: task.ID, ChainID: 84532, FactoryAddress: "0xf", EscrowAddress: "0xe", EscrowID: 1, Buyer: "0xb", Worker: "0xw", Verifier: "0xv", Arbitrator: "0xa", Amount: "1", Status: "funded", SubmissionDeadline: 1, ReviewPeriodSeconds: 1, DisputePeriodSeconds: 1, ArbitratorTimeoutSeconds: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := `{"escrow_id":` + strconv.FormatInt(escrow.ID, 10) + `,"operation":"revoke_all","reason":"test incident"}`
+	t.Setenv("ESCROW_ADMIN_TOKEN", strings.Repeat("x", 32))
+	stdout, stderr, err := runCLI(t, env.server.URL, "dct", "emergency-override", "--data", payload)
+	if err != nil || !strings.Contains(stdout, "override_applied") {
+		t.Fatalf("override: err=%v stdout=%s stderr=%s", err, stdout, stderr)
+	}
+	stdout, stderr, err = runCLI(t, env.server.URL, "dct", "audit")
+	if err != nil || !strings.Contains(stdout, "emergency_override") {
+		t.Fatalf("audit: err=%v stdout=%s stderr=%s", err, stdout, stderr)
+	}
+}
+
+func TestCLIAdminTokenIsLimitedToAdminEndpoint(t *testing.T) {
+	token := strings.Repeat("x", 32)
+	t.Setenv("ESCROW_ADMIN_TOKEN", token)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/dcts/audit" {
+			if r.Header.Get("Authorization") != "Bearer "+token {
+				t.Error("admin request did not include the configured credential")
+			}
+			http.Redirect(w, r, "/untrusted", http.StatusTemporaryRedirect)
+			return
+		}
+		if r.URL.Path != "/api/v1/health" {
+			t.Errorf("unexpected request to %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "" {
+			t.Error("public request included an admin credential")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	if _, _, err := runCLI(t, server.URL, "health"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := runCLI(t, server.URL, "dct", "audit")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusTemporaryRedirect {
+		t.Fatalf("expected the admin request to stop at the redirect, got %v", err)
 	}
 }
