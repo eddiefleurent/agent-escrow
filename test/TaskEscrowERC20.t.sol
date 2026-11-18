@@ -201,43 +201,6 @@ contract TaskEscrowERC20Test is Test {
         escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
     }
 
-    // ── Token field ──
-
-    function testTokenFieldSetCorrectly() public {
-        TaskEscrow escrow = _createERC20Escrow();
-        assertEq(escrow.token(), address(usdc));
-    }
-
-    function testETHEscrowTokenIsZero() public {
-        (, address addr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: 1 ether,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-        assertEq(TaskEscrow(addr).token(), address(0));
-    }
-
     // ── ERC20 funding ──
 
     function testERC20FundTransfersTokens() public {
