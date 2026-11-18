@@ -267,21 +267,21 @@ type listDCTAuditArgs struct {
 }
 
 type fundViaMandateArgs struct {
-	EscrowID        FlexibleString `json:"escrow_id" jsonschema:"Database escrow ID to fund"`
-	MandateType     string         `json:"mandate_type" jsonschema:"AP2 mandate type: intent, cart, or payment"`
-	SignerAddress   string         `json:"signer_address" jsonschema:"Mandate signer address (must be escrow buyer)"`
-	Signature       string         `json:"signature" jsonschema:"65-byte EIP-712 signature (0x hex) by signer_address over the typed mandate (domain: name 'agent-escrow AP2', version '1', server chainId, verifyingContract = factory); covers the payload and the EIP-3009 authorization"`
-	Payload         string         `json:"payload" jsonschema:"JSON string of the mandate payload for mandate_type (intent/cart require issued_at and ttl_seconds); unknown fields are rejected"`
-	AuthToken       string         `json:"auth_token" jsonschema:"ERC-20 token the EIP-3009 authorization spends. Must equal the escrow token. Signed as the first field of the mandate Authorization type"`
-	AuthFrom        string         `json:"auth_from" jsonschema:"EIP-3009 authorization from address"`
-	AuthTo          string         `json:"auth_to" jsonschema:"EIP-3009 authorization to address (must match escrow address)"`
-	AuthValue       string         `json:"auth_value" jsonschema:"EIP-3009 authorization value as a base-10 string. Must equal the escrow amount exactly"`
-	AuthValidAfter  string         `json:"auth_valid_after" jsonschema:"EIP-3009 validAfter timestamp"`
-	AuthValidBefore string         `json:"auth_valid_before" jsonschema:"EIP-3009 validBefore timestamp"`
-	AuthNonce       string         `json:"auth_nonce" jsonschema:"EIP-3009 nonce (hex)"`
-	AuthV           FlexibleString `json:"auth_v" jsonschema:"EIP-3009 signature v"`
-	AuthR           string         `json:"auth_r" jsonschema:"EIP-3009 signature r (hex)"`
-	AuthS           string         `json:"auth_s" jsonschema:"EIP-3009 signature s (hex)"`
+	EscrowID         FlexibleString `json:"escrow_id" jsonschema:"Database escrow ID to fund"`
+	MandateType      string         `json:"mandate_type" jsonschema:"AP2 mandate type: intent, cart, or payment"`
+	SignerAddress    string         `json:"signer_address" jsonschema:"Mandate signer address (must be escrow buyer)"`
+	Signature        string         `json:"signature" jsonschema:"65-byte EIP-712 signature (0x hex) by signer_address over the typed mandate (domain: name 'agent-escrow AP2', version '1', server chainId, verifyingContract = factory); covers the payload and the EIP-3009 authorization"`
+	Payload          string         `json:"payload" jsonschema:"JSON string of the mandate payload for mandate_type (intent/cart require issued_at and ttl_seconds); unknown fields are rejected"`
+	AuthTokenAddress string         `json:"auth_token_address" jsonschema:"ERC-20 token the EIP-3009 authorization spends. Must equal the escrow token. Signed as the first field of the mandate Authorization type"`
+	AuthFrom         string         `json:"auth_from" jsonschema:"EIP-3009 authorization from address"`
+	AuthTo           string         `json:"auth_to" jsonschema:"EIP-3009 authorization to address (must match escrow address)"`
+	AuthValue        string         `json:"auth_value" jsonschema:"EIP-3009 authorization value as a base-10 string. Must equal the escrow amount exactly"`
+	AuthValidAfter   string         `json:"auth_valid_after" jsonschema:"EIP-3009 validAfter timestamp"`
+	AuthValidBefore  string         `json:"auth_valid_before" jsonschema:"EIP-3009 validBefore timestamp"`
+	AuthNonce        string         `json:"auth_nonce" jsonschema:"EIP-3009 nonce (hex)"`
+	AuthV            FlexibleString `json:"auth_v" jsonschema:"EIP-3009 signature v"`
+	AuthR            string         `json:"auth_r" jsonschema:"EIP-3009 signature r (hex)"`
+	AuthS            string         `json:"auth_s" jsonschema:"EIP-3009 signature s (hex)"`
 }
 
 type subscribeEventsArgs struct {
@@ -1820,7 +1820,7 @@ func (s *Server) handleFundViaMandate(ctx context.Context, req *mcp.CallToolRequ
 		Signature:     args.Signature,
 		SignerAddress: args.SignerAddress,
 		Authorization: ap2.EIP3009Authorization{
-			Token:       args.AuthToken,
+			Token:       args.AuthTokenAddress,
 			From:        args.AuthFrom,
 			To:          authTo,
 			Value:       args.AuthValue,
