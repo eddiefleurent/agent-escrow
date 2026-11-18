@@ -73,7 +73,7 @@ make go-run
 - All `/api/v1/emergency/*` routes, `POST /api/v1/dcts/emergency-override`, and `GET /api/v1/dcts/audit` require `Authorization: Bearer <ADMIN_TOKEN>`. DCT audit can be enabled independently by provisioning the token alone. Set `OWNER_ADDRESS` to the factory owner for DCT emergency override. On-chain emergency transactions require the server's signing key to belong to the factory owner.
 - Set `ESCROW_ADMIN_TOKEN` in the CLI environment to the same value as the server's `ADMIN_TOKEN`. Use HTTPS for remote admin requests.
 - To expose MCP emergency tools and DCT audit, set `MCP_TRANSPORT=stdio` and `MCP_EMERGENCY_ENABLED=true`. This opt-in is independent of HTTP emergency access because the stdio session is local to the operator and trusts the client attached to that process.
-- Leave `CORS_ORIGINS` unset to omit `Access-Control-Allow-Origin` from HTTP responses. To allow cross-origin requests, configure a comma-separated list of allowed origins or explicitly set `*`.
+- Leave `CORS_ORIGINS` unset to omit `Access-Control-Allow-Origin` from HTTP responses. With no allowlist, browser WebSocket upgrades also require a matching origin host. To allow cross-origin access, configure a comma-separated list of allowed origins or explicitly set `*`.
 
 ### Build Everything
 ```bash

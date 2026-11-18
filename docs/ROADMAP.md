@@ -156,7 +156,7 @@ All five items below are **blocking gates**: V4 work does not start until all ar
 - [x] Disable HTTP emergency access by default and require an `ADMIN_TOKEN` of at least 32 characters to enable it.
 - [x] Require a bearer token for HTTP emergency routes, DCT emergency override, and DCT audit listing. Return `401 Unauthorized` for missing or invalid credentials.
 - [x] Require separate opt-in for local MCP emergency tools and DCT audit. Read the CLI credential from `ESCROW_ADMIN_TOKEN`.
-- [x] Default to no cross-origin HTTP access unless configured.
+- [x] Deny cross-origin HTTP and WebSocket access by default.
 - [x] Verify the defaults and credential checks in tests and document setup in `docs/SETUP.md`.
 
 #### SH2: Per-IP rate limiting on POST endpoints

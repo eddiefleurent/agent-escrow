@@ -545,7 +545,7 @@
       "paper_refs": [
         "4.9"
       ],
-      "decision_vs_paper": "Require bearer authentication for HTTP emergency and DCT admin routes, default HTTP and local stdio MCP emergency access to disabled, and require explicit CORS configuration for cross-origin HTTP access.",
+      "decision_vs_paper": "Require bearer authentication for HTTP emergency and DCT admin routes, default HTTP and local stdio MCP emergency access to disabled, and require explicit origin configuration for cross-origin HTTP and WebSocket access.",
       "residual_gap": "No material gap for SH1 scope."
     },
     {
