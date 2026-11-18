@@ -1,155 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.34;
 
-import {Test} from "forge-std/Test.sol";
+import {BaseEscrowTest} from "./BaseEscrowTest.sol";
 import {TaskEscrowFactory} from "../src/TaskEscrowFactory.sol";
 import {TaskEscrow} from "../src/TaskEscrow.sol";
-import {IERC20} from "../src/interfaces/IERC20.sol";
+import {MockERC20, MockERC20NoReturn, MockFeeOnTransferERC20} from "./mocks/MockERC20.sol";
 
-/// @dev Minimal ERC20 for testing. Standard-compliant (returns bool).
-contract MockERC20 is IERC20 {
-    string public name;
-    string public symbol;
-    uint8 public decimals;
-    uint256 public totalSupply;
-    mapping(address => uint256) public balanceOf;
-    mapping(address => mapping(address => uint256)) public allowance;
-
-    constructor(string memory _name, string memory _symbol, uint8 _decimals) {
-        name = _name;
-        symbol = _symbol;
-        decimals = _decimals;
-    }
-
-    function mint(address to, uint256 amount) external {
-        balanceOf[to] += amount;
-        totalSupply += amount;
-    }
-
-    function transfer(address to, uint256 amount) external returns (bool) {
-        require(balanceOf[msg.sender] >= amount, "insufficient balance");
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
-        return true;
-    }
-
-    function approve(address spender, uint256 amount) external returns (bool) {
-        allowance[msg.sender][spender] = amount;
-        return true;
-    }
-
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
-        require(balanceOf[from] >= amount, "insufficient balance");
-        require(allowance[from][msg.sender] >= amount, "insufficient allowance");
-        balanceOf[from] -= amount;
-        allowance[from][msg.sender] -= amount;
-        balanceOf[to] += amount;
-        return true;
-    }
-}
-
-/// @dev ERC20 that does not return a bool on transfer/transferFrom (like USDT).
-contract MockERC20NoReturn {
-    string public name;
-    string public symbol;
-    uint8 public decimals;
-    uint256 public totalSupply;
-    mapping(address => uint256) public balanceOf;
-    mapping(address => mapping(address => uint256)) public allowance;
-
-    constructor(string memory _name, string memory _symbol, uint8 _decimals) {
-        name = _name;
-        symbol = _symbol;
-        decimals = _decimals;
-    }
-
-    function mint(address to, uint256 amount) external {
-        balanceOf[to] += amount;
-        totalSupply += amount;
-    }
-
-    function transfer(address to, uint256 amount) external {
-        require(balanceOf[msg.sender] >= amount, "insufficient balance");
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
-    }
-
-    function approve(address spender, uint256 amount) external {
-        allowance[msg.sender][spender] = amount;
-    }
-
-    function transferFrom(address from, address to, uint256 amount) external {
-        require(balanceOf[from] >= amount, "insufficient balance");
-        require(allowance[from][msg.sender] >= amount, "insufficient allowance");
-        balanceOf[from] -= amount;
-        allowance[from][msg.sender] -= amount;
-        balanceOf[to] += amount;
-    }
-}
-
-/// @dev ERC20 that takes a 1% fee on transfer (fee-on-transfer / deflationary token).
-contract MockFeeOnTransferERC20 is IERC20 {
-    string public name;
-    string public symbol;
-    uint8 public decimals;
-    uint256 public totalSupply;
-    mapping(address => uint256) public balanceOf;
-    mapping(address => mapping(address => uint256)) public allowance;
-
-    constructor(string memory _name, string memory _symbol, uint8 _decimals) {
-        name = _name;
-        symbol = _symbol;
-        decimals = _decimals;
-    }
-
-    function mint(address to, uint256 amount) external {
-        balanceOf[to] += amount;
-        totalSupply += amount;
-    }
-
-    function transfer(address to, uint256 amount) external returns (bool) {
-        require(balanceOf[msg.sender] >= amount, "insufficient balance");
-        uint256 fee = amount / 100;
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount - fee;
-        return true;
-    }
-
-    function approve(address spender, uint256 amount) external returns (bool) {
-        allowance[msg.sender][spender] = amount;
-        return true;
-    }
-
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
-        require(balanceOf[from] >= amount, "insufficient balance");
-        require(allowance[from][msg.sender] >= amount, "insufficient allowance");
-        uint256 fee = amount / 100;
-        balanceOf[from] -= amount;
-        allowance[from][msg.sender] -= amount;
-        balanceOf[to] += amount - fee;
-        return true;
-    }
-}
-
-contract TaskEscrowERC20Test is Test {
-    TaskEscrowFactory internal factory;
+contract TaskEscrowERC20Test is BaseEscrowTest {
     MockERC20 internal usdc;
 
-    address internal owner = makeAddr("owner");
-    address internal buyer = makeAddr("buyer");
-    address internal worker = makeAddr("worker");
-    address internal verifier = makeAddr("verifier");
-    address internal arbitrator = makeAddr("arbitrator");
-    address internal treasury = makeAddr("treasury");
+    uint256 internal constant USDC_AMOUNT = 1000e6; // 1000 USDC (6 decimals)
 
-    uint256 internal constant AMOUNT = 1000e6; // 1000 USDC (6 decimals)
-    uint16 internal constant FEE_BPS = 100; // 1%
-    uint64 internal constant REVIEW = 86_400;
-    uint64 internal constant DISPUTE = 172_800;
-    uint64 internal constant ARB_TIMEOUT = 7 days;
-
-    function setUp() public {
-        factory = new TaskEscrowFactory(FEE_BPS, FEE_BPS, treasury, owner);
+    function setUp() public override {
+        super.setUp();
         usdc = new MockERC20("USD Coin", "USDC", 6);
         usdc.mint(buyer, 10_000e6);
     }
@@ -159,46 +22,11 @@ contract TaskEscrowERC20Test is Test {
     }
 
     function _createERC20EscrowWithStake(uint256 stake) internal returns (TaskEscrow) {
-        (, address addr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: stake,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(usdc),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-        return TaskEscrow(addr);
-    }
-
-    function _fundERC20Escrow(TaskEscrow escrow) internal {
-        vm.startPrank(buyer);
-        usdc.approve(address(escrow), AMOUNT);
-        escrow.fund();
-        vm.stopPrank();
-    }
-
-    function _fundAndSubmit(TaskEscrow escrow) internal {
-        _fundERC20Escrow(escrow);
-        vm.prank(worker);
-        escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.amount = USDC_AMOUNT;
+        params.workerStake = stake;
+        params.token = address(usdc);
+        return _create(params);
     }
 
     // ── ERC20 funding ──
@@ -207,11 +35,11 @@ contract TaskEscrowERC20Test is Test {
         TaskEscrow escrow = _createERC20Escrow();
         uint256 buyerBefore = usdc.balanceOf(buyer);
 
-        _fundERC20Escrow(escrow);
+        _fund(escrow);
 
         assertEq(uint256(escrow.status()), uint256(TaskEscrow.Status.Funded));
-        assertEq(usdc.balanceOf(address(escrow)), AMOUNT);
-        assertEq(usdc.balanceOf(buyer), buyerBefore - AMOUNT);
+        assertEq(usdc.balanceOf(address(escrow)), USDC_AMOUNT);
+        assertEq(usdc.balanceOf(buyer), buyerBefore - USDC_AMOUNT);
     }
 
     function testERC20FundRejectsETH() public {
@@ -219,7 +47,7 @@ contract TaskEscrowERC20Test is Test {
         vm.deal(buyer, 1 ether);
 
         vm.startPrank(buyer);
-        usdc.approve(address(escrow), AMOUNT);
+        usdc.approve(address(escrow), USDC_AMOUNT);
         vm.expectRevert(TaskEscrow.ETHNotAccepted.selector);
         escrow.fund{value: 1 ether}();
         vm.stopPrank();
@@ -245,9 +73,9 @@ contract TaskEscrowERC20Test is Test {
         vm.prank(buyer);
         escrow.approveByBuyer();
 
-        uint256 fee = (AMOUNT * FEE_BPS) / 10_000;
+        uint256 fee = (USDC_AMOUNT * FEE_BPS) / 10_000;
         assertEq(uint256(escrow.status()), uint256(TaskEscrow.Status.Settled));
-        assertEq(usdc.balanceOf(worker), workerBefore + (AMOUNT - fee));
+        assertEq(usdc.balanceOf(worker), workerBefore + (USDC_AMOUNT - fee));
         assertEq(usdc.balanceOf(treasury), treasuryBefore + fee);
         assertEq(usdc.balanceOf(address(escrow)), 0);
     }
@@ -264,9 +92,9 @@ contract TaskEscrowERC20Test is Test {
         vm.prank(verifier);
         escrow.castVerifierVote(true, "");
 
-        uint256 fee = (AMOUNT * FEE_BPS) / 10_000;
+        uint256 fee = (USDC_AMOUNT * FEE_BPS) / 10_000;
         assertEq(uint256(escrow.status()), uint256(TaskEscrow.Status.Settled));
-        assertEq(usdc.balanceOf(worker), workerBefore + (AMOUNT - fee));
+        assertEq(usdc.balanceOf(worker), workerBefore + (USDC_AMOUNT - fee));
         assertEq(usdc.balanceOf(treasury), treasuryBefore + fee);
         assertEq(usdc.balanceOf(address(escrow)), 0);
     }
@@ -287,10 +115,10 @@ contract TaskEscrowERC20Test is Test {
         vm.prank(arbitrator);
         escrow.resolveDispute(5000, "ipfs://resolution");
 
-        uint256 workerGross = (AMOUNT * 5000) / 10_000;
+        uint256 workerGross = (USDC_AMOUNT * 5000) / 10_000;
         uint256 fee = (workerGross * FEE_BPS) / 10_000;
         uint256 workerNet = workerGross - fee;
-        uint256 buyerRefund = AMOUNT - workerGross;
+        uint256 buyerRefund = USDC_AMOUNT - workerGross;
 
         assertEq(uint256(escrow.status()), uint256(TaskEscrow.Status.Settled));
         assertEq(usdc.balanceOf(worker), workerBefore + workerNet);
@@ -312,7 +140,7 @@ contract TaskEscrowERC20Test is Test {
         escrow.resolveDispute(0, "ipfs://resolution");
 
         assertEq(uint256(escrow.status()), uint256(TaskEscrow.Status.Settled));
-        assertEq(usdc.balanceOf(buyer), buyerBefore + AMOUNT);
+        assertEq(usdc.balanceOf(buyer), buyerBefore + USDC_AMOUNT);
         assertEq(usdc.balanceOf(address(escrow)), 0);
     }
 
@@ -329,8 +157,8 @@ contract TaskEscrowERC20Test is Test {
         vm.prank(arbitrator);
         escrow.resolveDispute(10_000, "ipfs://resolution");
 
-        uint256 fee = (AMOUNT * FEE_BPS) / 10_000;
-        assertEq(usdc.balanceOf(worker), workerBefore + AMOUNT - fee);
+        uint256 fee = (USDC_AMOUNT * FEE_BPS) / 10_000;
+        assertEq(usdc.balanceOf(worker), workerBefore + USDC_AMOUNT - fee);
         assertEq(usdc.balanceOf(treasury), treasuryBefore + fee);
         assertEq(usdc.balanceOf(address(escrow)), 0);
     }
@@ -339,7 +167,7 @@ contract TaskEscrowERC20Test is Test {
 
     function testERC20TimeoutRefund() public {
         TaskEscrow escrow = _createERC20Escrow();
-        _fundERC20Escrow(escrow);
+        _fund(escrow);
 
         vm.warp(block.timestamp + 8 days);
         uint256 buyerBefore = usdc.balanceOf(buyer);
@@ -348,7 +176,7 @@ contract TaskEscrowERC20Test is Test {
         escrow.claimTimeoutRefund();
 
         assertEq(uint256(escrow.status()), uint256(TaskEscrow.Status.Refunded));
-        assertEq(usdc.balanceOf(buyer), buyerBefore + AMOUNT);
+        assertEq(usdc.balanceOf(buyer), buyerBefore + USDC_AMOUNT);
         assertEq(usdc.balanceOf(address(escrow)), 0);
     }
 
@@ -368,7 +196,7 @@ contract TaskEscrowERC20Test is Test {
         escrow.claimArbitratorTimeout();
 
         assertEq(uint256(escrow.status()), uint256(TaskEscrow.Status.Refunded));
-        assertEq(usdc.balanceOf(buyer), buyerBefore + AMOUNT);
+        assertEq(usdc.balanceOf(buyer), buyerBefore + USDC_AMOUNT);
         assertEq(usdc.balanceOf(address(escrow)), 0);
     }
 
@@ -421,10 +249,10 @@ contract TaskEscrowERC20Test is Test {
         vm.prank(arbitrator);
         escrow.resolveDispute(workerAwardBps, "ipfs://resolution");
 
-        uint256 workerGross = (AMOUNT * workerAwardBps) / 10_000;
+        uint256 workerGross = (USDC_AMOUNT * workerAwardBps) / 10_000;
         uint256 fee = (workerGross * FEE_BPS) / 10_000;
         uint256 workerNet = workerGross - fee;
-        uint256 buyerRefund = AMOUNT - workerGross;
+        uint256 buyerRefund = USDC_AMOUNT - workerGross;
 
         assertEq(usdc.balanceOf(worker), workerBefore + workerNet);
         assertEq(usdc.balanceOf(buyer), buyerBefore + buyerRefund);
@@ -437,37 +265,14 @@ contract TaskEscrowERC20Test is Test {
     function testFeeOnTransferTokenReverts() public {
         MockFeeOnTransferERC20 fot = new MockFeeOnTransferERC20("FeeToken", "FOT", 6);
         fot.mint(buyer, 10_000e6);
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.amount = USDC_AMOUNT;
+        params.token = address(fot);
 
-        (, address addr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(fot),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-        TaskEscrow escrow = TaskEscrow(addr);
+        TaskEscrow escrow = _create(params);
 
         vm.startPrank(buyer);
-        fot.approve(address(escrow), AMOUNT);
+        fot.approve(address(escrow), USDC_AMOUNT);
         vm.expectRevert(TaskEscrow.InsufficientReceived.selector);
         escrow.fund();
         vm.stopPrank();
@@ -482,7 +287,7 @@ contract TaskEscrowERC20Test is Test {
         TaskEscrow escrow = _createERC20EscrowWithStake(stakeAmount);
         usdc.mint(worker, stakeAmount);
 
-        _fundERC20Escrow(escrow);
+        _fund(escrow);
 
         vm.startPrank(worker);
         usdc.approve(address(escrow), stakeAmount);
@@ -500,8 +305,8 @@ contract TaskEscrowERC20Test is Test {
         vm.prank(buyer);
         escrow.approveByBuyer();
 
-        uint256 fee = (AMOUNT * FEE_BPS) / 10_000;
-        assertEq(usdc.balanceOf(worker), workerBefore + (AMOUNT - fee) + stakeAmount);
+        uint256 fee = (USDC_AMOUNT * FEE_BPS) / 10_000;
+        assertEq(usdc.balanceOf(worker), workerBefore + (USDC_AMOUNT - fee) + stakeAmount);
         assertEq(usdc.balanceOf(treasury), treasuryBefore + fee);
         assertEq(usdc.balanceOf(address(escrow)), 0);
     }
@@ -509,7 +314,7 @@ contract TaskEscrowERC20Test is Test {
     function testERC20WorkerStakeSubmitWithoutStakeReverts() public {
         uint256 stakeAmount = 50e6;
         TaskEscrow escrow = _createERC20EscrowWithStake(stakeAmount);
-        _fundERC20Escrow(escrow);
+        _fund(escrow);
 
         vm.expectRevert(TaskEscrow.StakeNotDeposited.selector);
         vm.prank(worker);
@@ -519,7 +324,7 @@ contract TaskEscrowERC20Test is Test {
     function testERC20WorkerStakeRejectsETH() public {
         uint256 stakeAmount = 50e6;
         TaskEscrow escrow = _createERC20EscrowWithStake(stakeAmount);
-        _fundERC20Escrow(escrow);
+        _fund(escrow);
         vm.deal(worker, 1 ether);
 
         vm.expectRevert(TaskEscrow.ETHNotAccepted.selector);
@@ -532,7 +337,7 @@ contract TaskEscrowERC20Test is Test {
         TaskEscrow escrow = _createERC20EscrowWithStake(stakeAmount);
         usdc.mint(worker, stakeAmount);
 
-        _fundERC20Escrow(escrow);
+        _fund(escrow);
 
         vm.startPrank(worker);
         usdc.approve(address(escrow), stakeAmount);
@@ -549,7 +354,7 @@ contract TaskEscrowERC20Test is Test {
         vm.prank(arbitrator);
         escrow.resolveDispute(0, "ipfs://resolution");
 
-        assertEq(usdc.balanceOf(buyer), buyerBefore + AMOUNT + stakeAmount);
+        assertEq(usdc.balanceOf(buyer), buyerBefore + USDC_AMOUNT + stakeAmount);
         assertEq(usdc.balanceOf(worker), workerBefore);
         assertEq(usdc.balanceOf(address(escrow)), 0);
     }
@@ -559,7 +364,7 @@ contract TaskEscrowERC20Test is Test {
         TaskEscrow escrow = _createERC20EscrowWithStake(stakeAmount);
         usdc.mint(worker, stakeAmount);
 
-        _fundERC20Escrow(escrow);
+        _fund(escrow);
 
         vm.startPrank(worker);
         usdc.approve(address(escrow), stakeAmount);
@@ -577,10 +382,10 @@ contract TaskEscrowERC20Test is Test {
         vm.prank(arbitrator);
         escrow.resolveDispute(5000, "ipfs://resolution");
 
-        uint256 workerGross = (AMOUNT * 5000) / 10_000;
+        uint256 workerGross = (USDC_AMOUNT * 5000) / 10_000;
         uint256 fee = (workerGross * FEE_BPS) / 10_000;
         uint256 workerNet = workerGross - fee;
-        uint256 buyerRefund = AMOUNT - workerGross;
+        uint256 buyerRefund = USDC_AMOUNT - workerGross;
         uint256 stakeReturn = (stakeAmount * 5000) / 10_000;
         uint256 stakeForfeited = stakeAmount - stakeReturn;
 
@@ -595,41 +400,18 @@ contract TaskEscrowERC20Test is Test {
     function testNoReturnERC20HappyPath() public {
         MockERC20NoReturn usdt = new MockERC20NoReturn("Tether", "USDT", 6);
         usdt.mint(buyer, 10_000e6);
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.amount = USDC_AMOUNT;
+        params.token = address(usdt);
 
-        (, address addr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(usdt),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-        TaskEscrow escrow = TaskEscrow(addr);
+        TaskEscrow escrow = _create(params);
 
         vm.startPrank(buyer);
-        usdt.approve(address(escrow), AMOUNT);
+        usdt.approve(address(escrow), USDC_AMOUNT);
         escrow.fund();
         vm.stopPrank();
 
-        assertEq(usdt.balanceOf(address(escrow)), AMOUNT);
+        assertEq(usdt.balanceOf(address(escrow)), USDC_AMOUNT);
 
         vm.prank(worker);
         escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
@@ -640,9 +422,9 @@ contract TaskEscrowERC20Test is Test {
         vm.prank(buyer);
         escrow.approveByBuyer();
 
-        uint256 fee = (AMOUNT * FEE_BPS) / 10_000;
+        uint256 fee = (USDC_AMOUNT * FEE_BPS) / 10_000;
         assertEq(uint256(escrow.status()), uint256(TaskEscrow.Status.Settled));
-        assertEq(usdt.balanceOf(worker), workerBefore + (AMOUNT - fee));
+        assertEq(usdt.balanceOf(worker), workerBefore + (USDC_AMOUNT - fee));
         assertEq(usdt.balanceOf(treasury), treasuryBefore + fee);
         assertEq(usdt.balanceOf(address(escrow)), 0);
     }

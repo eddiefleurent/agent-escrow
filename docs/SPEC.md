@@ -156,6 +156,8 @@ Optional escrow-level verifier wiring at creation (`zkVerifier`, `circuitId`) en
 
 When verifier quorum is configured, `verifyAndApprove` / `verifyAndApproveMilestone` contribute one approval vote toward quorum (rather than bypassing quorum), while `proofHash` remains an immutable on-chain commitment for off-chain proof validation and dispute evidence.
 
+**Binding limitation.** The slot does not bind the proof to the task. `IZKVerifier.verifyProof(circuitId, proof)` receives no `taskSpecHash`, `submissionHash`, escrow address, chain id, or milestone, and the worker chooses `proofHash`. Unless the circuit itself commits to those values, a proof that is valid for the circuit is accepted in any escrow using the same verifier and circuit. Treat a passing proof as one panel member's approval vote, not as independent assurance, until public-input binding is added (roadmap `H12`).
+
 ## 5) Settlement Math
 
 ### Approval (Single-Shot)
@@ -251,9 +253,10 @@ All divisions floor toward zero (Solidity default). Remainders stay with the buy
 These must hold for every escrow at all times:
 
 1. **Balance conservation**:
-   - At terminal completion, escrow balance is always `0`.
-   - Before terminal completion, escrow balance equals remaining undistributed escrow principal plus any still-held worker stake.
-   - For single-shot escrows, this is `amount` (or `amount + workerStake` when staked).
+   - At terminal completion, all escrow principal and worker stake has been distributed. Verifier-stake refunds and slashes are pull-based (`withdrawable`), so the contract balance then equals the sum of unclaimed `withdrawable` credits and reaches `0` only once every credit is withdrawn.
+   - Before funding (`Created`), the escrow balance is `0`.
+   - Once funded and before terminal completion, escrow balance equals remaining undistributed escrow principal + any still-held worker stake + active verifier stakes (`quorumStakeCount * verifierStakePerVerifier`) + unclaimed `withdrawable` credits (e.g. verifier stakes released by `dispute`, `escalateSilence`, or `expireNoQuorum`).
+   - For funded single-shot escrows, the remaining undistributed escrow principal is `amount`.
    - For milestone escrows, each approved/resolved partial payout, each milestone timeout refund, and each `abortRemainingMilestones` refund reduces the remaining undistributed escrow principal before terminal completion.
 2. **Terminal exclusivity**: Settled, Refunded, and Cancelled are mutually exclusive. No function can transition from a terminal state to a non-terminal state.
 3. **Fund conservation**: total funds distributed from the escrow principal and worker stake never exceeds `amount + workerStake`. Verifier stake flows are governed separately by invariant 9.

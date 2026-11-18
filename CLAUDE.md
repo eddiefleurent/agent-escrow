@@ -20,7 +20,7 @@ This project implements the ["Intelligent AI Delegation"](https://arxiv.org/abs/
 - **On-chain**: `TaskEscrowFactory` + `TaskEscrow` (Solidity 0.8.34, Foundry)
 - **Off-chain**: Single Go binary -- MCP server + HTTP API + event indexer
 - **Storage**: SQLite via `modernc.org/sqlite` (pure Go, no CGO)
-- **Agent interfaces**: Skills + `escrow-cli` for shell agents, MCP tools (43 by default, 57 with all optional tools enabled) for MCP-native agents, plus HTTP API
+- **Agent interfaces**: Skills + `escrow-cli` for shell agents, MCP tools (57 total: 43 enabled by default, including the opt-out events and A2A tools, plus 14 behind the UCP and emergency opt-ins) for MCP-native agents, plus HTTP API
 - **Target chain**: Base Sepolia (chain ID 84532)
 
 ## Public Project -- Production Blockchain
@@ -114,7 +114,7 @@ go-server/
     indexer/                Event polling -> DB reconciliation
     attestation/           Completion-attestation-v1 profile, chain validation (paper §4.8)
     bidding/               Shared bidding protocol logic (RFQ + Bid lifecycle)
-    mcpserver/             MCP server + tool handlers
+    mcpserver/             MCP server + 57 tool handlers (43 default, 14 opt-in)
     api/                   HTTP JSON API + middleware
   abi/                     Embedded ABI artifacts (copied by make go-abi)
 skills/                   Agent skills (including `skills/escrow-cli/`)

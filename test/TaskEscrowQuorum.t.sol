@@ -1,33 +1,23 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.34;
 
-import {Test} from "forge-std/Test.sol";
+import {BaseEscrowTest} from "./BaseEscrowTest.sol";
 import {TaskEscrowFactory} from "../src/TaskEscrowFactory.sol";
 import {TaskEscrow} from "../src/TaskEscrow.sol";
 import {MockZKVerifier} from "./mocks/MockZKVerifier.sol";
 
-contract TaskEscrowQuorumTest is Test {
-    TaskEscrowFactory internal factory;
+contract TaskEscrowQuorumTest is BaseEscrowTest {
     MockZKVerifier internal zk;
 
-    address internal owner = makeAddr("owner");
-    address internal treasury = makeAddr("treasury");
-    address internal buyer = makeAddr("buyer");
-    address internal worker = makeAddr("worker");
     address internal verifierA = makeAddr("verifierA");
     address internal verifierB = makeAddr("verifierB");
     address internal verifierC = makeAddr("verifierC");
-    address internal arbitrator = makeAddr("arbitrator");
     address internal outsider = makeAddr("outsider");
 
-    uint16 internal constant FEE_BPS = 100;
-    uint64 internal constant REVIEW = 1 days;
-    uint64 internal constant DISPUTE = 2 days;
-    uint64 internal constant ARB_TIMEOUT = 7 days;
     bytes32 internal constant CIRCUIT_ID = keccak256("quorum-circuit");
 
-    function setUp() public {
-        factory = new TaskEscrowFactory(FEE_BPS, FEE_BPS, treasury, owner);
+    function setUp() public override {
+        super.setUp();
         zk = new MockZKVerifier();
         vm.txGasPrice(0);
 
@@ -490,32 +480,16 @@ contract TaskEscrowQuorumTest is Test {
         bytes32 circuitId
     ) internal returns (TaskEscrow escrow, uint256 escrowId) {
         address escrowAddr;
-        (escrowId, escrowAddr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: _panel(),
-                quorumThreshold: threshold,
-                quorumVerifierCount: count,
-                verifierStakePerVerifier: verifierStakePerVerifier,
-                arbitrator: arbitrator,
-                amount: 1 ether,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec-quorum-single"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: serviceTier,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: zkVerifierAddr,
-                circuitId: circuitId,
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.verifierPanel = _panel();
+        params.quorumThreshold = threshold;
+        params.quorumVerifierCount = count;
+        params.verifierStakePerVerifier = verifierStakePerVerifier;
+        params.amount = 1 ether;
+        params.serviceTier = serviceTier;
+        params.zkVerifier = zkVerifierAddr;
+        params.circuitId = circuitId;
+        (escrowId, escrowAddr) = factory.createEscrow(params);
         escrow = TaskEscrow(escrowAddr);
     }
 
@@ -532,32 +506,15 @@ contract TaskEscrowQuorumTest is Test {
         });
 
         address escrowAddr;
-        (escrowId, escrowAddr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: _panel(),
-                quorumThreshold: threshold,
-                quorumVerifierCount: count,
-                verifierStakePerVerifier: verifierStakePerVerifier,
-                arbitrator: arbitrator,
-                amount: 2 ether,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 14 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec-quorum-milestone"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: milestones
-            })
-        );
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.verifierPanel = _panel();
+        params.quorumThreshold = threshold;
+        params.quorumVerifierCount = count;
+        params.verifierStakePerVerifier = verifierStakePerVerifier;
+        params.amount = 2 ether;
+        params.submissionDeadline = uint64(block.timestamp + 14 days);
+        params.milestones = milestones;
+        (escrowId, escrowAddr) = factory.createEscrow(params);
         escrow = TaskEscrow(escrowAddr);
     }
 

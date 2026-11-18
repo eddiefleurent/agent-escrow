@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {TaskEscrowFactory} from "../src/TaskEscrowFactory.sol";
 import {TaskEscrow} from "../src/TaskEscrow.sol";
+import {BaseEscrowTest} from "./BaseEscrowTest.sol";
 
 contract TaskEscrowHandler is Test {
     TaskEscrow public escrow;
@@ -86,65 +87,26 @@ contract TaskEscrowHandler is Test {
     }
 }
 
-contract TaskEscrowInvariantsTest is StdInvariant, Test {
-    TaskEscrowFactory internal factory;
+/// forge-config: default.invariant.runs = 256
+/// forge-config: default.invariant.depth = 500
+contract TaskEscrowInvariantsTest is StdInvariant, BaseEscrowTest {
     TaskEscrow internal escrow;
     TaskEscrowHandler internal handler;
 
-    address internal owner = makeAddr("owner");
-    address internal buyer = makeAddr("buyer");
-    address internal worker = makeAddr("worker");
-    address internal verifier = makeAddr("verifier");
-    address internal arbitrator = makeAddr("arbitrator");
-    address internal treasury = makeAddr("treasury");
-
-    uint256 internal constant AMOUNT = 1 ether;
-    uint16 internal constant FEE_BPS = 100; // 1%
-    uint64 internal constant REVIEW = 86_400;
-    uint64 internal constant DISPUTE = 172_800;
-    uint64 internal constant ARB_TIMEOUT = 7 days;
-
     uint256 internal baselineSystemSum;
 
-    function setUp() public {
-        factory = new TaskEscrowFactory(FEE_BPS, FEE_BPS, treasury, owner);
+    function setUp() public override {
+        super.setUp();
 
+        TaskEscrowFactory.CreateParams memory p = _defaultParams();
+        p.submissionDeadline = uint64(block.timestamp + 30 days);
         vm.prank(address(0xBEEF));
-        (, address escrowAddr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 30 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-        escrow = TaskEscrow(escrowAddr);
+        escrow = _create(p);
 
         vm.deal(buyer, 10 ether);
         vm.deal(worker, 1 ether);
 
-        vm.prank(buyer);
-        escrow.fund{value: AMOUNT}();
-        vm.prank(worker);
-        escrow.submit(keccak256("submission"), "ipfs://result", bytes32(0));
+        _fundAndSubmit(escrow);
 
         baselineSystemSum = buyer.balance + worker.balance + treasury.balance + address(escrow).balance;
 

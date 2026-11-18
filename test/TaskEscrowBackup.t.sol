@@ -1,31 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.34;
 
-import {Test} from "forge-std/Test.sol";
+import {BaseEscrowTest} from "./BaseEscrowTest.sol";
 import {TaskEscrowFactory} from "../src/TaskEscrowFactory.sol";
 import {TaskEscrow} from "../src/TaskEscrow.sol";
 
-contract TaskEscrowBackupTest is Test {
-    TaskEscrowFactory internal factory;
-
-    address internal owner = makeAddr("owner");
-    address internal buyer = makeAddr("buyer");
-    address internal worker = makeAddr("worker");
-    address internal verifier = makeAddr("verifier");
-    address internal arbitrator = makeAddr("arbitrator");
-    address internal treasury = makeAddr("treasury");
-    address internal backup = makeAddr("backup");
-
-    uint256 internal constant AMOUNT = 1 ether;
-    uint256 internal constant STAKE = 0.1 ether;
-    uint16 internal constant FEE_BPS = 100; // 1%
-    uint64 internal constant REVIEW = 86_400;
-    uint64 internal constant DISPUTE = 172_800;
-    uint64 internal constant ARB_TIMEOUT = 7 days;
-    uint64 internal constant BACKUP_EXTENSION = 7 days;
-
-    function setUp() public {
-        factory = new TaskEscrowFactory(FEE_BPS, FEE_BPS, treasury, owner);
+contract TaskEscrowBackupTest is BaseEscrowTest {
+    function setUp() public override {
+        super.setUp();
         vm.deal(buyer, 100 ether);
         vm.deal(worker, 10 ether);
         vm.deal(backup, 10 ether);
@@ -36,33 +18,10 @@ contract TaskEscrowBackupTest is Test {
     }
 
     function _createBackupEscrowWithStake(uint256 stake) internal returns (TaskEscrow) {
-        (, address addr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: stake,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec-backup"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: backup,
-                backupDeadlineExtension: BACKUP_EXTENSION,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-        return TaskEscrow(addr);
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.workerStake = stake;
+        params = _withBackup(params);
+        return _create(params);
     }
 
     function _createBackupMilestoneEscrow() internal returns (TaskEscrow) {
@@ -76,34 +35,13 @@ contract TaskEscrowBackupTest is Test {
         ms[2] = TaskEscrowFactory.CreateMilestoneParams({
             amount: 1 ether, submissionDeadline: uint64(block.timestamp + 21 days)
         });
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.amount = 3 ether;
+        params.submissionDeadline = uint64(block.timestamp + 21 days);
+        params = _withBackup(params);
+        params.milestones = ms;
 
-        (, address addr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: 3 ether,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 21 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec-backup-ms"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: backup,
-                backupDeadlineExtension: BACKUP_EXTENSION,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: ms
-            })
-        );
-        return TaskEscrow(addr);
+        return _create(params);
     }
 
     // ── Happy path: primary times out, backup submits and gets approved ──
@@ -246,33 +184,7 @@ contract TaskEscrowBackupTest is Test {
 
     function testBackupCannotActivateWithoutDesignation() public {
         // Create escrow without backup
-        (, address addr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec-no-backup"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-        TaskEscrow e = TaskEscrow(addr);
+        TaskEscrow e = _create(_defaultParams());
 
         vm.prank(buyer);
         e.fund{value: AMOUNT}();
@@ -317,33 +229,7 @@ contract TaskEscrowBackupTest is Test {
     // ── No backup (address(0)) behaves identically to V1 ──
 
     function testNoBackupWorkerV1Compatible() public {
-        (, address addr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec-v1"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-        TaskEscrow e = TaskEscrow(addr);
+        TaskEscrow e = _create(_defaultParams());
 
         assertEq(e.activeWorker(), worker);
         assertEq(e.backupWorker(), address(0));
@@ -371,120 +257,32 @@ contract TaskEscrowBackupTest is Test {
 
     function testBackupWorkerMustBeDistinct() public {
         // backupWorker == buyer
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.backupWorker = buyer;
+        params.backupDeadlineExtension = BACKUP_EXTENSION;
         vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
-        factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: buyer,
-                backupDeadlineExtension: BACKUP_EXTENSION,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
+        factory.createEscrow(params);
 
         // backupWorker == worker
+        TaskEscrowFactory.CreateParams memory params2 = _defaultParams();
+        params2.backupWorker = worker;
+        params2.backupDeadlineExtension = BACKUP_EXTENSION;
         vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
-        factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: worker,
-                backupDeadlineExtension: BACKUP_EXTENSION,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
+        factory.createEscrow(params2);
 
         // backupWorker == verifier
+        TaskEscrowFactory.CreateParams memory params3 = _defaultParams();
+        params3.backupWorker = verifier;
+        params3.backupDeadlineExtension = BACKUP_EXTENSION;
         vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
-        factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: verifier,
-                backupDeadlineExtension: BACKUP_EXTENSION,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
+        factory.createEscrow(params3);
 
         // backupWorker == arbitrator
+        TaskEscrowFactory.CreateParams memory params4 = _defaultParams();
+        params4.backupWorker = arbitrator;
+        params4.backupDeadlineExtension = BACKUP_EXTENSION;
         vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
-        factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: arbitrator,
-                backupDeadlineExtension: BACKUP_EXTENSION,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
+        factory.createEscrow(params4);
     }
 
     // ── Backup also defaults: buyer claims timeout refund ──

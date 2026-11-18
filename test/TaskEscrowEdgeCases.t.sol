@@ -1,30 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.34;
 
-import {Test} from "forge-std/Test.sol";
+import {BaseEscrowTest} from "./BaseEscrowTest.sol";
 import {TaskEscrowFactory} from "../src/TaskEscrowFactory.sol";
 import {TaskEscrow} from "../src/TaskEscrow.sol";
 
-contract TaskEscrowEdgeCasesTest is Test {
-    TaskEscrowFactory internal factory;
+contract TaskEscrowEdgeCasesTest is BaseEscrowTest {
     TaskEscrow internal escrow;
 
-    address internal owner = makeAddr("owner");
-    address internal buyer = makeAddr("buyer");
-    address internal worker = makeAddr("worker");
-    address internal verifier = makeAddr("verifier");
-    address internal arbitrator = makeAddr("arbitrator");
-    address internal treasury = makeAddr("treasury");
     address internal randomUser = makeAddr("randomUser");
 
-    uint256 internal constant AMOUNT = 1 ether;
-    uint16 internal constant FEE_BPS = 100; // 1%
-    uint64 internal constant REVIEW = 86_400;
-    uint64 internal constant DISPUTE = 172_800;
-    uint64 internal constant ARB_TIMEOUT = 7 days;
-
-    function setUp() public {
-        factory = new TaskEscrowFactory(FEE_BPS, FEE_BPS, treasury, owner);
+    function setUp() public override {
+        super.setUp();
         escrow = _createEscrow(uint64(block.timestamp + 7 days));
 
         vm.deal(buyer, 10 ether);
@@ -107,32 +94,7 @@ contract TaskEscrowEdgeCasesTest is Test {
 
         vm.expectRevert(TaskEscrowFactory.Paused.selector);
         vm.prank(randomUser);
-        factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec-2"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
+        factory.createEscrow(_defaultParams());
     }
 
     function testFuzz_DisputeSettlementConservesFunds(uint16 workerAwardBps) public {
@@ -199,36 +161,14 @@ contract TaskEscrowEdgeCasesTest is Test {
         ];
 
         for (uint256 i = 0; i < cases.length; ++i) {
+            TaskEscrowFactory.CreateParams memory params = _defaultParams();
+            params.buyer = cases[i].buyerAddr;
+            params.worker = cases[i].workerAddr;
+            params.verifierPanel[0] = cases[i].panelVerifier;
+            params.arbitrator = cases[i].arbitratorAddr;
             vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
             vm.prank(randomUser);
-            factory.createEscrow(
-                TaskEscrowFactory.CreateParams({
-                    buyer: cases[i].buyerAddr,
-                    worker: cases[i].workerAddr,
-                    verifierPanel: [
-                        cases[i].panelVerifier, address(0), address(0), address(0), address(0), address(0), address(0)
-                    ],
-                    quorumThreshold: 1,
-                    quorumVerifierCount: 1,
-                    verifierStakePerVerifier: 0,
-                    arbitrator: cases[i].arbitratorAddr,
-                    amount: AMOUNT,
-                    workerStake: 0,
-                    submissionDeadline: uint64(block.timestamp + 7 days),
-                    reviewPeriodSeconds: REVIEW,
-                    disputePeriodSeconds: DISPUTE,
-                    taskSpecHash: keccak256("spec"),
-                    arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                    token: address(0),
-                    serviceTier: 0,
-                    backupWorker: address(0),
-                    backupDeadlineExtension: 0,
-                    zkVerifier: address(0),
-                    circuitId: bytes32(0),
-                    parentEscrow: address(0),
-                    milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-                })
-            );
+            factory.createEscrow(params);
         }
     }
 
@@ -332,34 +272,11 @@ contract TaskEscrowEdgeCasesTest is Test {
         internal
         returns (TaskEscrow created)
     {
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.submissionDeadline = submissionDeadline;
+        params.token = tokenAddr;
         vm.prank(randomUser);
-        (, address escrowAddress) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: submissionDeadline,
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: tokenAddr,
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-        return TaskEscrow(escrowAddress);
+        return _create(params);
     }
 }
 
