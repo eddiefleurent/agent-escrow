@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -26,8 +27,19 @@ type Config struct {
 	CORSOrigins    []string      // Allowed HTTP CORS origins; empty omits the allow-origin header
 	RequestTimeout time.Duration // Timeout for read-only requests (default 10s)
 	TxTimeout      time.Duration // Timeout for chain transaction requests (default 90s)
-	LogChunkSize   uint64        // Max block range per eth_getLogs request (default 2000)
-	StartBlock     uint64        // Block to start indexing from (0 = use defaultLookback)
+	// MaxBodyBytes caps each HTTP request body. Zero selects DefaultMaxBodyBytes
+	// at the edge. A negative value fails validation.
+	MaxBodyBytes int64
+	// RateLimitRPS is the sustained per-client-IP rate for POST, PUT, PATCH,
+	// and DELETE. Zero disables the limiter.
+	RateLimitRPS float64
+	// RateLimitBurst is the token-bucket size. Zero disables the limiter.
+	RateLimitBurst int
+	// TrustedProxies lists CIDRs allowed to supply X-Forwarded-For. Empty
+	// means the rate limiter keys on RemoteAddr and ignores that header.
+	TrustedProxies []*net.IPNet
+	LogChunkSize   uint64 // Max block range per eth_getLogs request (default 2000)
+	StartBlock     uint64 // Block to start indexing from (0 = use defaultLookback)
 	// RebidCooldownSeconds enforces minimum delay between parent-linked RFQ creations.
 	// 0 disables the cooldown gate.
 	RebidCooldownSeconds int64
@@ -73,6 +85,15 @@ type Config struct {
 	AdminToken   string
 	OwnerAddress string // Factory owner address for emergency override authorization (OWNER_ADDRESS)
 }
+
+const (
+	// DefaultMaxBodyBytes is the request body cap when MAX_BODY_BYTES is unset (1 MiB).
+	DefaultMaxBodyBytes int64 = 1 << 20
+	// DefaultRateLimitRPS is the per-client rate for mutating requests.
+	DefaultRateLimitRPS float64 = 10
+	// DefaultRateLimitBurst is the per-client token bucket size.
+	DefaultRateLimitBurst = 20
+)
 
 // WebhookMode reports whether CDP webhook mode is enabled (secret is configured).
 func (c *Config) WebhookMode() bool {
@@ -281,6 +302,11 @@ func Load() (*Config, error) {
 		mcpEmergencyEnabled = v
 	}
 
+	maxBodyBytes, rateLimitRPS, rateLimitBurst, trustedProxies, err := loadEdgeLimits()
+	if err != nil {
+		return nil, err
+	}
+
 	eventsHeartbeatInterval := 30 * time.Second
 	if raw := os.Getenv("EVENTS_HEARTBEAT_INTERVAL"); raw != "" {
 		d, err := time.ParseDuration(raw)
@@ -304,6 +330,10 @@ func Load() (*Config, error) {
 		CORSOrigins:             corsOrigins,
 		RequestTimeout:          requestTimeout,
 		TxTimeout:               txTimeout,
+		MaxBodyBytes:            maxBodyBytes,
+		RateLimitRPS:            rateLimitRPS,
+		RateLimitBurst:          rateLimitBurst,
+		TrustedProxies:          trustedProxies,
 		LogChunkSize:            logChunkSize,
 		StartBlock:              startBlock,
 		RebidCooldownSeconds:    rebidCooldownSeconds,
@@ -389,6 +419,25 @@ func (c *Config) Validate() ValidationResult {
 		r.Errors = append(r.Errors, "TX_TIMEOUT must be positive")
 	}
 
+	if c.MaxBodyBytes < 0 {
+		r.Errors = append(r.Errors, "MAX_BODY_BYTES must be positive")
+	}
+
+	if math.IsNaN(c.RateLimitRPS) || math.IsInf(c.RateLimitRPS, 0) || c.RateLimitRPS < 0 {
+		r.Errors = append(r.Errors, "RATE_LIMIT_RPS must be a non-negative number")
+	}
+
+	if c.RateLimitBurst < 0 {
+		r.Errors = append(r.Errors, "RATE_LIMIT_BURST must be a non-negative integer")
+	}
+
+	for _, network := range c.TrustedProxies {
+		if network == nil {
+			r.Errors = append(r.Errors, "TRUSTED_PROXIES contains an invalid CIDR")
+			break
+		}
+	}
+
 	if c.RebidCooldownSeconds < 0 {
 		r.Errors = append(r.Errors, "REBID_COOLDOWN_SECONDS must be >= 0")
 	}
@@ -451,4 +500,62 @@ func validateEthAddress(s string) error {
 
 func parseURL(raw string) (*url.URL, error) {
 	return url.Parse(raw)
+}
+
+// loadEdgeLimits reads the HTTP body cap, rate limit, and trusted-proxy CIDRs.
+func loadEdgeLimits() (int64, float64, int, []*net.IPNet, error) {
+	maxBody := DefaultMaxBodyBytes
+	if raw := strings.TrimSpace(os.Getenv("MAX_BODY_BYTES")); raw != "" {
+		v, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || v <= 0 {
+			return 0, 0, 0, nil, errors.New("invalid MAX_BODY_BYTES: must be a positive integer")
+		}
+		maxBody = v
+	}
+
+	rps := DefaultRateLimitRPS
+	if raw := strings.TrimSpace(os.Getenv("RATE_LIMIT_RPS")); raw != "" {
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+			return 0, 0, 0, nil, errors.New("invalid RATE_LIMIT_RPS: must be a non-negative number")
+		}
+		rps = v
+	}
+
+	burst := DefaultRateLimitBurst
+	if raw := strings.TrimSpace(os.Getenv("RATE_LIMIT_BURST")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 0 {
+			return 0, 0, 0, nil, errors.New("invalid RATE_LIMIT_BURST: must be a non-negative integer")
+		}
+		burst = v
+	}
+
+	trusted, err := parseTrustedProxies(os.Getenv("TRUSTED_PROXIES"))
+	if err != nil {
+		return 0, 0, 0, nil, err
+	}
+	return maxBody, rps, burst, trusted, nil
+}
+
+// parseTrustedProxies splits a comma-separated CIDR list. An empty value
+// means no proxy is trusted.
+func parseTrustedProxies(raw string) ([]*net.IPNet, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var nets []*net.IPNet
+	for part := range strings.SplitSeq(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		_, network, err := net.ParseCIDR(part)
+		if err != nil {
+			return nil, fmt.Errorf("invalid TRUSTED_PROXIES entry %q: must be a CIDR", part)
+		}
+		nets = append(nets, network)
+	}
+	return nets, nil
 }

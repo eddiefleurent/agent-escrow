@@ -150,7 +150,13 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	var handler http.Handler = mux
 	handler = timeoutMiddleware(cfg.RequestTimeout, cfg.TxTimeout, handler)
 	handler = corsMiddleware(cfg.CORSOrigins, handler)
+	// Outermost first: recovery, request ID, logging, body cap, rate limit.
+	// Request ID is installed before logging so the access line and JSON
+	// error bodies can both carry it.
+	handler = rateLimitMiddleware(cfg.RateLimitRPS, cfg.RateLimitBurst, cfg.TrustedProxies, handler)
+	handler = bodyLimitMiddleware(cfg.MaxBodyBytes, handler)
 	handler = loggingMiddleware(handler)
+	handler = requestIDMiddleware(handler)
 	handler = recoveryMiddleware(handler)
 
 	return handler

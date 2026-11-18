@@ -60,6 +60,10 @@ export CHAIN_ID=84532         # default: 84532 (Base Sepolia)
 export PORT=8080               # default: 8080
 export DATABASE_URL=app.db     # default: delegation.db
 export MCP_TRANSPORT=stdio     # enable MCP server on stdio
+# export MAX_BODY_BYTES=1048576       # default: 1 MiB
+# export RATE_LIMIT_RPS=10            # 0 disables; default 10
+# export RATE_LIMIT_BURST=20          # 0 disables; default 20
+# export TRUSTED_PROXIES=10.0.0.0/8   # CIDRs allowed to send X-Forwarded-For
 ```
 
 Start the server:
@@ -74,6 +78,14 @@ make go-run
 - Set `ESCROW_ADMIN_TOKEN` in the CLI environment to the same value as the server's `ADMIN_TOKEN`. Use HTTPS for remote admin requests.
 - To expose MCP emergency tools and DCT audit, set `MCP_TRANSPORT=stdio` and `MCP_EMERGENCY_ENABLED=true`. This opt-in is independent of HTTP emergency access because the stdio session is local to the operator and trusts the client attached to that process. Enabling it grants that MCP client full owner rights (any `owner`/`caller` argument it sends is treated as authenticated), so only enable it for an operator-controlled agent.
 - Leave `CORS_ORIGINS` unset to omit `Access-Control-Allow-Origin` from HTTP responses. With no allowlist, browser WebSocket upgrades also require a matching origin host. To allow cross-origin access, configure a comma-separated list of allowed origins or explicitly set `*`.
+
+### HTTP Request Limits
+
+- `MAX_BODY_BYTES` caps every request body (default `1048576`, 1 MiB). A larger body, including a chunked body with no `Content-Length`, returns `413` and a JSON error. The edge reads the body through `http.MaxBytesReader` before the handler decodes it.
+- `RATE_LIMIT_RPS` and `RATE_LIMIT_BURST` set a per-client-IP token bucket for `POST`, `PUT`, `PATCH`, and `DELETE` (defaults `10` and `20`). Either value set to `0` disables the limiter. `GET` is not limited. SSE (`/api/v1/events` and `/api/v1/escrows/{id}/events`) and the WebSocket endpoint (`/api/v1/events/ws`) are exempt. A rejected request returns `429` with `Retry-After`.
+- The client IP is taken from `RemoteAddr`. `X-Forwarded-For` is used only when that peer belongs to a CIDR in `TRUSTED_PROXIES` (comma-separated, for example `10.0.0.0/8,172.16.0.0/12`). The leftmost forwarded address is the client, so a trusted proxy should overwrite the header. Unset, the header is ignored and cannot be used to pick a fresh bucket.
+- Idle rate-limit buckets are dropped after 10 minutes, and the table keeps at most 10000 addresses.
+- Every response echoes `X-Request-ID`. An inbound id is kept when it is at most 128 characters and contains only `A-Z`, `a-z`, `0-9`, `-`, `_`, and `.`. Anything else is replaced with a UUID. The id is stored on the request context, written on the HTTP access log as `request_id`, and copied into JSON error bodies.
 
 ### Build Everything
 ```bash

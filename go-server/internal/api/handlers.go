@@ -1728,9 +1728,38 @@ func handleEscrowServiceActionError(w http.ResponseWriter, r *http.Request, acti
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
+	if status >= 400 {
+		v = withRequestID(w, v)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Error("writeJSON encode failed", "status", status, "error", err)
+		slog.Error("writeJSON encode failed",
+			"status", status,
+			"error", err,
+			"request_id", w.Header().Get("X-Request-ID"),
+		)
 	}
+}
+
+// withRequestID copies the echoed X-Request-ID into a JSON error object so
+// clients can correlate the body with the response header.
+func withRequestID(w http.ResponseWriter, v any) any {
+	id := w.Header().Get("X-Request-ID")
+	if id == "" {
+		return v
+	}
+	switch body := v.(type) {
+	case map[string]string:
+		if _, ok := body["error"]; ok && body["request_id"] == "" {
+			body["request_id"] = id
+		}
+	case map[string]any:
+		if _, ok := body["error"]; ok {
+			if _, exists := body["request_id"]; !exists {
+				body["request_id"] = id
+			}
+		}
+	}
+	return v
 }

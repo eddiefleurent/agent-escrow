@@ -565,34 +565,34 @@
       "item_id": "SH2",
       "phase": "Security Gate",
       "title": "Per-IP rate limiting on POST endpoints",
-      "status": "planned",
+      "status": "implemented",
       "paper_refs": [
         "4.9"
       ],
-      "decision_vs_paper": "Use thin stdlib middleware with operator-tunable ceilings to bound RPC spend and gas-drain abuse without changing protocol semantics.",
-      "residual_gap": "Entire item is pending. Queued next with SH3 and SH4 as one HTTP-hardening change."
+      "decision_vs_paper": "Per-client-IP token bucket on mutating HTTP methods, keyed by RemoteAddr unless the peer is in TRUSTED_PROXIES. SSE and WebSocket are exempt. Setting RATE_LIMIT_RPS or RATE_LIMIT_BURST to 0 disables the limit.",
+      "residual_gap": "No material gap for SH2 scope."
     },
     {
       "item_id": "SH3",
       "phase": "Security Gate",
       "title": "Request body size cap",
-      "status": "planned",
+      "status": "implemented",
       "paper_refs": [
         "4.9"
       ],
-      "decision_vs_paper": "Impose hard request-size ceilings at the HTTP edge to prevent unbounded memory pressure in public deployments.",
-      "residual_gap": "Entire item is pending."
+      "decision_vs_paper": "Cap request bodies with http.MaxBytesReader at MAX_BODY_BYTES (default 1 MiB) and reject oversize reads with HTTP 413.",
+      "residual_gap": "No material gap for SH3 scope."
     },
     {
       "item_id": "SH4",
       "phase": "Security Gate",
       "title": "Request ID tracing",
-      "status": "planned",
+      "status": "implemented",
       "paper_refs": [
         "4.9"
       ],
-      "decision_vs_paper": "Add request-scoped correlation IDs as an operational prerequisite for incident response and auditability on public infrastructure.",
-      "residual_gap": "Entire item is pending."
+      "decision_vs_paper": "Echo a validated X-Request-ID or a generated UUID on every response, store it with authz.WithRequestID, and include it on the request log line and in JSON error bodies.",
+      "residual_gap": "No material gap for SH4 scope."
     },
     {
       "item_id": "SH5",
