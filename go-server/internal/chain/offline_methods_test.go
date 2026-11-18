@@ -68,6 +68,12 @@ func TestEscrowMethodsOfflineMode(t *testing.T) {
 		{name: "ApproveByBuyer", call: func() error { _, e := client.ApproveByBuyer(ctx, escrow); return e }},
 		{name: "ResolveDispute", call: func() error { _, e := client.ResolveDispute(ctx, escrow, 5000, "ipfs://resolution"); return e }},
 		{name: "ClaimTimeoutRefund", call: func() error { _, e := client.ClaimTimeoutRefund(ctx, escrow); return e }},
+		{name: "ExpireNoQuorum", call: func() error { _, e := client.ExpireNoQuorum(ctx, escrow, "ipfs://reason"); return e }},
+		{name: "ExpireMilestoneNoQuorum", call: func() error {
+			_, e := client.ExpireMilestoneNoQuorum(ctx, escrow, 1, "ipfs://reason")
+			return e
+		}},
+		{name: "MilestoneStatus", call: func() error { _, e := client.MilestoneStatus(ctx, escrow, 1); return e }},
 		{name: "ActivateBackup", call: func() error { _, e := client.ActivateBackup(ctx, escrow); return e }},
 	}
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/a2a"
@@ -43,6 +44,25 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	mux.HandleFunc("POST /api/v1/escrows/{id}/quorum-vote", h.CastVerifierVote)
 	mux.HandleFunc("POST /api/v1/escrows/{id}/dispute", h.DisputeWork)
 	mux.HandleFunc("POST /api/v1/escrows/{id}/resolve", h.ResolveDispute)
+	recovery := h.escrowService()
+	mux.HandleFunc("POST /api/v1/escrows/{id}/cancel", h.recoveryHandler("cancel", false, func(ctx context.Context, escrow *storage.Escrow, _ recoveryRequest) (string, error) {
+		return recovery.CancelBeforeFunding(ctx, escrow)
+	}))
+	claimTimeout := func(ctx context.Context, escrow *storage.Escrow, req recoveryRequest) (string, error) {
+		return recovery.ClaimTimeoutRefund(ctx, escrow, req.MilestoneIndex)
+	}
+	claimArbitratorTimeout := func(ctx context.Context, escrow *storage.Escrow, req recoveryRequest) (string, error) {
+		return recovery.ClaimArbitratorTimeout(ctx, escrow, req.MilestoneIndex)
+	}
+	expireNoQuorum := func(ctx context.Context, escrow *storage.Escrow, req recoveryRequest) (string, error) {
+		return recovery.ExpireNoQuorum(ctx, escrow, req.MilestoneIndex, req.ReasonURI)
+	}
+	mux.HandleFunc("POST /api/v1/escrows/{id}/claim-timeout", h.recoveryHandler("claim-timeout", false, claimTimeout))
+	mux.HandleFunc("POST /api/v1/escrows/{id}/claim-arbitrator-timeout", h.recoveryHandler("claim-arbitrator-timeout", false, claimArbitratorTimeout))
+	mux.HandleFunc("POST /api/v1/escrows/{id}/expire-no-quorum", h.recoveryHandler("expire-no-quorum", false, expireNoQuorum))
+	mux.HandleFunc("POST /api/v1/escrows/{id}/claim-milestone-timeout", h.recoveryHandler("claim-milestone-timeout", true, claimTimeout))
+	mux.HandleFunc("POST /api/v1/escrows/{id}/claim-milestone-arbitrator-timeout", h.recoveryHandler("claim-milestone-arbitrator-timeout", true, claimArbitratorTimeout))
+	mux.HandleFunc("POST /api/v1/escrows/{id}/expire-milestone-no-quorum", h.recoveryHandler("expire-milestone-no-quorum", true, expireNoQuorum))
 	mux.HandleFunc("POST /api/v1/escrows/{id}/abort-milestones", h.AbortRemainingMilestones)
 	mux.HandleFunc("POST /api/v1/escrows/{id}/activate-backup", h.ActivateBackup)
 	mux.HandleFunc("GET /api/v1/escrows/{id}/attestation-chain", h.GetAttestationChain)

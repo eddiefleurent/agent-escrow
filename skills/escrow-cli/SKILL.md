@@ -176,6 +176,8 @@ escrow-cli escrow fund <id> --output json
 escrow-cli escrow stake <id> --output json
 escrow-cli escrow submit <id> --data '{"submission_uri":"..."}' --output json
 escrow-cli escrow approve <id> --data '{"role":"buyer"}' --output json
+escrow-cli escrow claim-timeout <id> --output json
+escrow-cli escrow claim-milestone-timeout <id> --data '{"milestone_index":0}' --output json
 escrow-cli escrow dispute <id> --data '{"role":"buyer","reason_uri":"..."}' --output json
 escrow-cli escrow resolve <id> --data '{"worker_award_bps":"10000","resolution_uri":"..."}' --output json
 escrow-cli rfq create --data '{}' --output json

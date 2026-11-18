@@ -30,6 +30,21 @@ type escrowIDArgs struct {
 	EscrowID FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID (from create_escrow response), or on-chain escrow address (0x...)"`
 }
 
+type milestoneRecoveryArgs struct {
+	escrowIDArgs
+	MilestoneIndex FlexibleString `json:"milestone_index" jsonschema:"Zero-based index of the current milestone"`
+}
+
+type expireNoQuorumArgs struct {
+	escrowIDArgs
+	ReasonURI string `json:"reason_uri,omitempty" jsonschema:"Optional URI describing the reason for opening the dispute"`
+}
+
+type expireMilestoneNoQuorumArgs struct {
+	milestoneRecoveryArgs
+	ReasonURI string `json:"reason_uri,omitempty" jsonschema:"Optional URI describing the reason for opening the dispute"`
+}
+
 type ucpCreateCheckoutArgs struct {
 	CheckoutID       string         `json:"checkout_id,omitempty" jsonschema:"Optional provider-defined checkout ID. If omitted, server generates one."`
 	SessionID        string         `json:"session_id,omitempty" jsonschema:"Optional session correlation ID. If omitted, server generates one."`
@@ -392,6 +407,33 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Name:        "list_escrows",
 		Description: "List escrows, optionally filtered by role (buyer/worker/verifier/arbitrator), address, and status.",
 	}, s.handleListEscrows)
+
+	recovery := s.escrowService()
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "cancel_before_funding", Description: "Cancel an unfunded escrow as its buyer.",
+	}, s.recoveryHandler(recovery.CancelBeforeFunding))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "claim_timeout_refund", Description: "Claim a single-escrow refund as its buyer after the submission deadline.",
+	}, s.recoveryHandler(func(ctx context.Context, escrow *storage.Escrow) (string, error) {
+		return recovery.ClaimTimeoutRefund(ctx, escrow, nil)
+	}))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "claim_arbitrator_timeout", Description: "Claim a single-escrow refund as its buyer after an unresolved dispute passes the arbitrator deadline.",
+	}, s.recoveryHandler(func(ctx context.Context, escrow *storage.Escrow) (string, error) {
+		return recovery.ClaimArbitratorTimeout(ctx, escrow, nil)
+	}))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "claim_milestone_timeout_refund", Description: "Claim the current milestone's refund as the buyer after its submission deadline.",
+	}, s.milestoneRecoveryHandler(recovery.ClaimTimeoutRefund))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "claim_milestone_arbitrator_timeout", Description: "Claim the current milestone's refund as the buyer after its unresolved dispute passes the arbitrator deadline.",
+	}, s.milestoneRecoveryHandler(recovery.ClaimArbitratorTimeout))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "expire_no_quorum", Description: "Move an expired single-escrow review without quorum to dispute as the buyer, active worker, or a panel verifier.",
+	}, s.handleExpireNoQuorum)
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "expire_milestone_no_quorum", Description: "Move an expired milestone review without quorum to dispute as the buyer, active worker, or a panel verifier.",
+	}, s.handleExpireMilestoneNoQuorum)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "abort_remaining_milestones",
@@ -842,6 +884,52 @@ func (s *Server) handleListEscrows(ctx context.Context, req *mcp.CallToolRequest
 		return textResult(fmt.Sprintf("error: %v", err)), nil, nil
 	}
 	return jsonResult(escrows)
+}
+
+func (s *Server) recoveryHandler(run func(context.Context, *storage.Escrow) (string, error)) mcp.ToolHandlerFor[escrowIDArgs, any] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
+		return s.runRecovery(ctx, args.EscrowID.String(), run)
+	}
+}
+
+func (s *Server) milestoneRecoveryHandler(run func(context.Context, *storage.Escrow, *int) (string, error)) mcp.ToolHandlerFor[milestoneRecoveryArgs, any] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, args milestoneRecoveryArgs) (*mcp.CallToolResult, any, error) {
+		return s.runMilestoneRecovery(ctx, args, run)
+	}
+}
+
+func (s *Server) handleExpireNoQuorum(ctx context.Context, _ *mcp.CallToolRequest, args expireNoQuorumArgs) (*mcp.CallToolResult, any, error) {
+	return s.runRecovery(ctx, args.EscrowID.String(), func(ctx context.Context, escrow *storage.Escrow) (string, error) {
+		return s.escrowService().ExpireNoQuorum(ctx, escrow, nil, args.ReasonURI)
+	})
+}
+
+func (s *Server) handleExpireMilestoneNoQuorum(ctx context.Context, _ *mcp.CallToolRequest, args expireMilestoneNoQuorumArgs) (*mcp.CallToolResult, any, error) {
+	return s.runMilestoneRecovery(ctx, args.milestoneRecoveryArgs, func(ctx context.Context, escrow *storage.Escrow, index *int) (string, error) {
+		return s.escrowService().ExpireNoQuorum(ctx, escrow, index, args.ReasonURI)
+	})
+}
+
+func (s *Server) runMilestoneRecovery(ctx context.Context, args milestoneRecoveryArgs, run func(context.Context, *storage.Escrow, *int) (string, error)) (*mcp.CallToolResult, any, error) {
+	idx, err := strconv.Atoi(args.MilestoneIndex.String())
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid milestone_index: %w", err)
+	}
+	return s.runRecovery(ctx, args.EscrowID.String(), func(ctx context.Context, escrow *storage.Escrow) (string, error) {
+		return run(ctx, escrow, &idx)
+	})
+}
+
+func (s *Server) runRecovery(ctx context.Context, id string, run func(context.Context, *storage.Escrow) (string, error)) (*mcp.CallToolResult, any, error) {
+	escrow, err := s.resolveEscrowID(ctx, id)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve escrow: %w", err)
+	}
+	hash, err := run(ctx, escrow)
+	if err != nil {
+		return nil, nil, err
+	}
+	return jsonResult(map[string]string{"tx_hash": hash})
 }
 
 func (s *Server) handleAbortRemainingMilestones(ctx context.Context, req *mcp.CallToolRequest, args escrowIDArgs) (*mcp.CallToolResult, any, error) {
