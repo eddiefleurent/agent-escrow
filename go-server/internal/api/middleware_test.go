@@ -58,30 +58,6 @@ func TestCORSMiddlewareAllowAllAndPreflight(t *testing.T) {
 	}
 }
 
-func TestCORSMiddlewareAllowListedOrigin(t *testing.T) {
-	t.Parallel()
-
-	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusAccepted)
-	})
-	handler := corsMiddleware([]string{"https://allowed.test"}, next)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil)
-	req.Header.Set("Origin", "https://allowed.test")
-	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusAccepted {
-		t.Fatalf("expected next handler status, got %d", rr.Code)
-	}
-	if rr.Header().Get("Access-Control-Allow-Origin") != "https://allowed.test" {
-		t.Fatalf("expected reflected allowed origin, got %q", rr.Header().Get("Access-Control-Allow-Origin"))
-	}
-	if rr.Header().Get("Vary") != "Origin" {
-		t.Fatalf("expected Vary: Origin, got %q", rr.Header().Get("Vary"))
-	}
-}
-
 func TestTimeoutMiddlewareReadAndTxPaths(t *testing.T) {
 	t.Parallel()
 

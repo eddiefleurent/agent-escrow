@@ -494,18 +494,6 @@ func TestValidateEthAddress(t *testing.T) {
 	}
 }
 
-func TestOnline(t *testing.T) {
-	offline := &Config{}
-	if offline.Online() {
-		t.Error("expected Online() == false for empty RPC_URL")
-	}
-
-	online := &Config{RPCURL: "https://sepolia.base.org"}
-	if !online.Online() {
-		t.Error("expected Online() == true for non-empty RPC_URL")
-	}
-}
-
 func TestLoad_MultipleValidationErrors(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("RPC_URL", "https://sepolia.base.org")

@@ -181,190 +181,55 @@ contract TaskEscrowEdgeCasesTest is Test {
 
     // ── Role address distinctness checks ──
 
-    function testRolesNotDistinct_BuyerEqualsWorker() public {
-        vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
-        vm.prank(randomUser);
-        factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: buyer,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
+    struct DistinctRoleCase {
+        address buyerAddr;
+        address workerAddr;
+        address panelVerifier;
+        address arbitratorAddr;
     }
 
-    function testRolesNotDistinct_BuyerEqualsVerifier() public {
-        vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
-        vm.prank(randomUser);
-        factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [buyer, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-    }
+    function testRolesNotDistinct() public {
+        DistinctRoleCase[6] memory cases = [
+            DistinctRoleCase(buyer, buyer, verifier, arbitrator),
+            DistinctRoleCase(buyer, worker, buyer, arbitrator),
+            DistinctRoleCase(buyer, worker, verifier, buyer),
+            DistinctRoleCase(buyer, worker, worker, arbitrator),
+            DistinctRoleCase(buyer, worker, verifier, worker),
+            DistinctRoleCase(buyer, worker, verifier, verifier)
+        ];
 
-    function testRolesNotDistinct_BuyerEqualsArbitrator() public {
-        vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
-        vm.prank(randomUser);
-        factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: buyer,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-    }
-
-    function testRolesNotDistinct_WorkerEqualsVerifier() public {
-        vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
-        vm.prank(randomUser);
-        factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [worker, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-    }
-
-    function testRolesNotDistinct_WorkerEqualsArbitrator() public {
-        vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
-        vm.prank(randomUser);
-        factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: worker,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-    }
-
-    function testRolesNotDistinct_VerifierEqualsArbitrator() public {
-        vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
-        vm.prank(randomUser);
-        factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: verifier,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
+        for (uint256 i = 0; i < cases.length; ++i) {
+            vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
+            vm.prank(randomUser);
+            factory.createEscrow(
+                TaskEscrowFactory.CreateParams({
+                    buyer: cases[i].buyerAddr,
+                    worker: cases[i].workerAddr,
+                    verifierPanel: [
+                        cases[i].panelVerifier, address(0), address(0), address(0), address(0), address(0), address(0)
+                    ],
+                    quorumThreshold: 1,
+                    quorumVerifierCount: 1,
+                    verifierStakePerVerifier: 0,
+                    arbitrator: cases[i].arbitratorAddr,
+                    amount: AMOUNT,
+                    workerStake: 0,
+                    submissionDeadline: uint64(block.timestamp + 7 days),
+                    reviewPeriodSeconds: REVIEW,
+                    disputePeriodSeconds: DISPUTE,
+                    taskSpecHash: keccak256("spec"),
+                    arbitratorTimeoutSeconds: ARB_TIMEOUT,
+                    token: address(0),
+                    serviceTier: 0,
+                    backupWorker: address(0),
+                    backupDeadlineExtension: 0,
+                    zkVerifier: address(0),
+                    circuitId: bytes32(0),
+                    parentEscrow: address(0),
+                    milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
+                })
+            );
+        }
     }
 
     // ── Two-step ownership transfer ──

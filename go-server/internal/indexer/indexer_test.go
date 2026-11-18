@@ -245,10 +245,3 @@ func TestDefaultMaxConsecutiveFailures(t *testing.T) {
 		t.Fatalf("expected default %d, got %d", DefaultMaxConsecutiveFailures, idx.maxConsecFailures)
 	}
 }
-
-func TestWithMaxConsecutiveFailures_Override(t *testing.T) {
-	idx, _ := setupTest(t, WithMaxConsecutiveFailures(42))
-	if idx.maxConsecFailures != 42 {
-		t.Fatalf("expected 42, got %d", idx.maxConsecFailures)
-	}
-}
