@@ -38,6 +38,9 @@ RPC is unreachable -- check the server's `RPC_URL` configuration.
 
 ## Emergency Protocol
 
+Set `ESCROW_ADMIN_TOKEN` in the CLI environment to the server's `ADMIN_TOKEN`.
+The HTTP server must have `EMERGENCY_ENABLED=true` for emergency commands.
+
 Use when a security incident requires immediate intervention. All emergency actions
 are logged in an audit trail.
 

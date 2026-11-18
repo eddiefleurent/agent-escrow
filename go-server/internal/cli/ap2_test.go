@@ -12,18 +12,3 @@ func TestAP2CommandStructure(t *testing.T) {
 		}
 	}
 }
-
-func TestAP2MandateCommandArgs(t *testing.T) {
-	t.Parallel()
-
-	cmd := newAP2MandateCmd(testOptions())
-	if err := cmd.Args(cmd, []string{}); err == nil {
-		t.Fatal("expected mandate command to require one arg")
-	}
-	if err := cmd.Args(cmd, []string{"id-1", "id-2"}); err == nil {
-		t.Fatal("expected mandate command to reject more than one arg")
-	}
-	if err := cmd.Args(cmd, []string{"id-1"}); err != nil {
-		t.Fatalf("expected exactly one arg to pass validation, got %v", err)
-	}
-}

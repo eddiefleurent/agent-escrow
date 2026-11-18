@@ -86,15 +86,16 @@ The CLI is a thin HTTP client over the existing API; business logic stays in the
 
 MCP remains first-class for MCP-native clients. Any MCP-compatible client (Claude, GPT, custom agents) can use escrow without Solidity or wallet libraries -- the server handles chain interaction.
 
-Default configuration (`EMERGENCY_ENABLED=true`, `EVENTS_ENABLED=true`, `A2A_ENABLED=true`, `UCP_ENABLED=false`) exposes tools for:
+With MCP enabled over stdio, the default configuration exposes tools for:
 
 - Escrow lifecycle and dispute resolution (single-shot + milestone flows)
 - Verifier quorum + ZK-assisted approval paths
 - Bidding and decomposition (`Task_RFQ`, sealed bids, decomposition finalize)
 - Attestation chains and checkpoint/resume handoffs
-- DCT mint/delegate/revoke/introspect + authorization audit views
-- AP2/x402 mandate funding, event subscriptions, A2A discovery, and emergency controls
-- UCP checkout operations (`ucp_*`) when `UCP_ENABLED=true`
+- DCT mint/delegate/revoke/introspect
+- AP2/x402 mandate funding, event subscriptions, and A2A discovery
+
+Set `UCP_ENABLED=true` to expose UCP checkout tools. Set `MCP_EMERGENCY_ENABLED=true` to expose emergency controls and DCT audit in the local stdio session. See [admin access setup](docs/SETUP.md#admin-access-and-cors).
 
 The architectural rationale for MCP lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The authoritative current tool registration lives in [`go-server/internal/mcpserver/tools.go`](go-server/internal/mcpserver/tools.go).
 

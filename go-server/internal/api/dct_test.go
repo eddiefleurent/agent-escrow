@@ -98,48 +98,48 @@ func TestListDCTAuditAuth(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock := chain.NewMockClient()
+	token := strings.Repeat("x", 32)
 	cfg := &config.Config{
 		ChainID:        1,
 		FactoryAddress: "0xf",
-		OwnerAddress:   "0xowner",
+		AdminToken:     token,
 		RequestTimeout: 10 * time.Second,
 		TxTimeout:      10 * time.Second,
 	}
-	router := testCallerMiddleware(NewRouter(db, mock, indexer.New(db, mock, cfg.FactoryAddress), cfg, nil))
+	router := NewRouter(db, nil, nil, cfg, nil)
 	ts := httptest.NewServer(router)
 	defer ts.Close()
 
 	ctx := context.Background()
 
-	t.Run("forbidden without auth", func(t *testing.T) {
+	t.Run("unauthorized without bearer token", func(t *testing.T) {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/dcts/audit", nil)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("request error: %v", err)
 		}
 		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusForbidden {
-			t.Errorf("expected 403, got %d", resp.StatusCode)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("expected 401, got %d", resp.StatusCode)
 		}
 	})
 
-	t.Run("forbidden for non-owner", func(t *testing.T) {
+	t.Run("unauthorized with wrong bearer token", func(t *testing.T) {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/dcts/audit", nil)
-		req.Header.Set("X-Test-Caller", "0xnotowner")
+		req.Header.Set("Authorization", "Bearer "+strings.Repeat("y", 32))
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("request error: %v", err)
 		}
 		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusForbidden {
-			t.Errorf("expected 403, got %d", resp.StatusCode)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("expected 401, got %d", resp.StatusCode)
 		}
 	})
 
-	t.Run("allowed for owner", func(t *testing.T) {
+	t.Run("allowed with valid bearer token", func(t *testing.T) {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/dcts/audit", nil)
-		req.Header.Set("X-Test-Caller", "0xowner")
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("request error: %v", err)
@@ -152,7 +152,7 @@ func TestListDCTAuditAuth(t *testing.T) {
 
 	t.Run("limit exceeds max returns 400", func(t *testing.T) {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/dcts/audit?limit=9999", nil)
-		req.Header.Set("X-Test-Caller", "0xowner")
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("request error: %v", err)
@@ -165,7 +165,7 @@ func TestListDCTAuditAuth(t *testing.T) {
 
 	t.Run("invalid limit returns 400", func(t *testing.T) {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/dcts/audit?limit=0", nil)
-		req.Header.Set("X-Test-Caller", "0xowner")
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("request error: %v", err)

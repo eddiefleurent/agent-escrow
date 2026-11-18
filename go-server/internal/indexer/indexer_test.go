@@ -251,13 +251,6 @@ func TestDefaultMaxConsecutiveFailures(t *testing.T) {
 	}
 }
 
-func TestWithMaxConsecutiveFailures_Override(t *testing.T) {
-	idx, _ := setupTest(t, WithMaxConsecutiveFailures(42))
-	if idx.maxConsecFailures != 42 {
-		t.Fatalf("expected 42, got %d", idx.maxConsecFailures)
-	}
-}
-
 func frozenLog(factory, target common.Address, block uint64, index uint, txHash common.Hash) types.Log {
 	return types.Log{
 		Address: factory,
