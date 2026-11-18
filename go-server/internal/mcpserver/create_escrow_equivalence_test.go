@@ -121,7 +121,9 @@ func TestCreateEscrowTransportEquivalence(t *testing.T) {
 			}
 			httpEnv := newCreateTransportTestEnv(t, tc.parentAddress, buyer)
 			mcpEnv := newCreateTransportTestEnv(t, tc.parentAddress, buyer)
-			for _, env := range []*createTransportTestEnv{httpEnv, mcpEnv} {
+			ucpEnv := newCreateTransportTestEnv(t, tc.parentAddress, buyer)
+			ucpEnv.cfg.UCPEnabled = true
+			for _, env := range []*createTransportTestEnv{httpEnv, mcpEnv, ucpEnv} {
 				if tc.noFloor {
 					env.cfg.ComplexityFloor = ""
 				}
@@ -130,14 +132,21 @@ func TestCreateEscrowTransportEquivalence(t *testing.T) {
 				}
 			}
 			httpError := httpEnv.callHTTP(t, "/api/v1/escrows", args)
+			ucpError := ucpEnv.callHTTP(t, "/api/v1/ucp/checkouts", map[string]any{"create_escrow": args})
 			if tc.wantError == "" {
-				ucpEnv := newCreateTransportTestEnv(t, tc.parentAddress, buyer)
-				ucpEnv.cfg.UCPEnabled = true
-				if msg := ucpEnv.callHTTP(t, "/api/v1/ucp/checkouts", map[string]any{"create_escrow": args}); msg != "" {
-					t.Fatalf("expected successful inline UCP create, got %q", msg)
+				if ucpError != "" {
+					t.Fatalf("expected successful inline UCP create, got %q", ucpError)
 				}
 				if params := ucpEnv.mock.LastCreateEscrowParams; params == nil || !reflect.DeepEqual(httpEnv.mock.LastCreateEscrowParams, params) {
 					t.Errorf("UCP chain create params differ: HTTP %+v, UCP %+v", httpEnv.mock.LastCreateEscrowParams, params)
+				}
+			} else {
+				// UCP wraps parser errors, so assert the validation class rather than exact text.
+				if !strings.Contains(ucpError, tc.wantError) {
+					t.Errorf("want UCP validation class %q, got %q", tc.wantError, ucpError)
+				}
+				if ucpEnv.mock.LastCreateEscrowParams != nil {
+					t.Error("invalid UCP request reached chain")
 				}
 			}
 			for _, key := range []string{"quorum_threshold", "quorum_verifier_count", "service_tier", "parent_escrow_id"} {
