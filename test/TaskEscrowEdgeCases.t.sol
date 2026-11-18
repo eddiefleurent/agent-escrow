@@ -143,52 +143,33 @@ contract TaskEscrowEdgeCasesTest is BaseEscrowTest {
 
     // ── Role address distinctness checks ──
 
-    function testRolesNotDistinct_BuyerEqualsWorker() public {
-        TaskEscrowFactory.CreateParams memory params = _defaultParams();
-        params.worker = buyer;
-        vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
-        vm.prank(randomUser);
-        factory.createEscrow(params);
+    struct DistinctRoleCase {
+        address buyerAddr;
+        address workerAddr;
+        address panelVerifier;
+        address arbitratorAddr;
     }
 
-    function testRolesNotDistinct_BuyerEqualsVerifier() public {
-        TaskEscrowFactory.CreateParams memory params = _defaultParams();
-        params.verifierPanel = [buyer, address(0), address(0), address(0), address(0), address(0), address(0)];
-        vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
-        vm.prank(randomUser);
-        factory.createEscrow(params);
-    }
+    function testRolesNotDistinct() public {
+        DistinctRoleCase[6] memory cases = [
+            DistinctRoleCase(buyer, buyer, verifier, arbitrator),
+            DistinctRoleCase(buyer, worker, buyer, arbitrator),
+            DistinctRoleCase(buyer, worker, verifier, buyer),
+            DistinctRoleCase(buyer, worker, worker, arbitrator),
+            DistinctRoleCase(buyer, worker, verifier, worker),
+            DistinctRoleCase(buyer, worker, verifier, verifier)
+        ];
 
-    function testRolesNotDistinct_BuyerEqualsArbitrator() public {
-        TaskEscrowFactory.CreateParams memory params = _defaultParams();
-        params.arbitrator = buyer;
-        vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
-        vm.prank(randomUser);
-        factory.createEscrow(params);
-    }
-
-    function testRolesNotDistinct_WorkerEqualsVerifier() public {
-        TaskEscrowFactory.CreateParams memory params = _defaultParams();
-        params.verifierPanel = [worker, address(0), address(0), address(0), address(0), address(0), address(0)];
-        vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
-        vm.prank(randomUser);
-        factory.createEscrow(params);
-    }
-
-    function testRolesNotDistinct_WorkerEqualsArbitrator() public {
-        TaskEscrowFactory.CreateParams memory params = _defaultParams();
-        params.arbitrator = worker;
-        vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
-        vm.prank(randomUser);
-        factory.createEscrow(params);
-    }
-
-    function testRolesNotDistinct_VerifierEqualsArbitrator() public {
-        TaskEscrowFactory.CreateParams memory params = _defaultParams();
-        params.arbitrator = verifier;
-        vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
-        vm.prank(randomUser);
-        factory.createEscrow(params);
+        for (uint256 i = 0; i < cases.length; ++i) {
+            TaskEscrowFactory.CreateParams memory params = _defaultParams();
+            params.buyer = cases[i].buyerAddr;
+            params.worker = cases[i].workerAddr;
+            params.verifierPanel[0] = cases[i].panelVerifier;
+            params.arbitrator = cases[i].arbitratorAddr;
+            vm.expectRevert(TaskEscrow.RolesNotDistinct.selector);
+            vm.prank(randomUser);
+            factory.createEscrow(params);
+        }
     }
 
     // ── Two-step ownership transfer ──

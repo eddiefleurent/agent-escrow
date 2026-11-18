@@ -10,7 +10,8 @@ import {IERC20} from "../../src/interfaces/IERC20.sol";
 /// @dev Every handler action is bracketed by `begin(e)` / `end(e)`. Because each action targets exactly one
 /// escrow, every balance delta observed between the two calls is attributable to that escrow. The ledger
 /// combines three independent sources of truth so that a bug in one is caught by another:
-///   1. actual token/ETH balance deltas of every participant,
+///   1. actual token/ETH balance deltas of every participant, each checked against the amount the
+///      settlement events (plus stake that left the escrow) assign to that participant,
 ///   2. settlement events emitted by the escrow (Settled, MilestoneSettled, Refunded, RemainingMilestonesAborted),
 ///   3. on-chain escrow state (status, stake counters, withdrawable balances).
 /// The ledger is not a fuzz target; only the actor handlers are.
@@ -20,6 +21,10 @@ contract EscrowLedger is Test {
     bytes32 internal constant REFUNDED_SIG = keccak256("Refunded(uint256,uint256)");
     bytes32 internal constant ABORTED_SIG = keccak256("RemainingMilestonesAborted(uint8,uint256)");
     bytes32 internal constant BACKUP_SIG = keccak256("BackupActivated(address,address,uint64)");
+    bytes32 internal constant FUNDED_SIG = keccak256("EscrowFunded(address,uint256)");
+    bytes32 internal constant STAKE_DEP_SIG = keccak256("WorkerStakeDeposited(address,uint256)");
+    bytes32 internal constant VSTAKE_DEP_SIG = keccak256("QuorumVerifierStakeDeposited(address,uint256)");
+    bytes32 internal constant VSTAKE_WD_SIG = keccak256("QuorumVerifierStakeWithdrawn(address,uint256)");
 
     struct Ghost {
         // Settlement events
@@ -39,6 +44,12 @@ contract EscrowLedger is Test {
         bool terminalOutflow; // funds left a terminal escrow other than through withdrawStake
         bool treasuryMismatch; // treasury delta != fee events for a call
         bool strayFlow; // a non-payee (arbitrator, owner, rotated treasury) received or lost funds
+        bool recipientMismatch; // a party's ETH/token delta != the amount events assign that party
+    }
+
+    struct DualSnap {
+        uint256 eth;
+        uint256 tok;
     }
 
     address[] public escrowList;
@@ -66,9 +77,24 @@ contract EscrowLedger is Test {
         uint256 sumWithdrawable;
         uint8 quorumStakeCount;
         uint8 status;
+        bool workerStaked;
+        uint256 workerStakeAmt;
     }
 
     Snap internal _snap;
+    DualSnap internal _buyerSnap;
+    DualSnap internal _workerSnap;
+    DualSnap internal _backupSnap;
+    DualSnap[] internal _verifierSnaps;
+
+    // Expected balance deltas for the call in progress, in the escrow's denomination.
+    // Positive means the party should have received funds; negative means they should have paid in.
+    int256 internal _expBuyer;
+    int256 internal _expWorker;
+    int256 internal _expBackup;
+    int256[] internal _expVerifiers;
+    uint256 internal _stakeReturned; // Settled.workerStakeReturned summed over this call
+    uint256 internal _refundedStake; // Refunded.workerStakeForfeited summed over this call
 
     constructor(
         address _buyer,
@@ -130,6 +156,21 @@ contract EscrowLedger is Test {
         return balanceOf(tok, arbitrator) + balanceOf(tok, owner) + balanceOf(tok, treasury2);
     }
 
+    function _dual(address tok, address who) internal view returns (DualSnap memory) {
+        return DualSnap({eth: who.balance, tok: tok == address(0) ? 0 : IERC20(tok).balanceOf(who)});
+    }
+
+    /// @dev Worker stake still sitting in the escrow. Terminal (and pre-fund) states hold none,
+    /// even if `workerStaked` was left set by a settlement path that does not clear the flag.
+    function _stakeHeld(uint8 status, bool staked, uint256 stake) internal pure returns (uint256) {
+        if (!staked) return 0;
+        if (
+            status == uint8(TaskEscrow.Status.Funded) || status == uint8(TaskEscrow.Status.Submitted)
+                || status == uint8(TaskEscrow.Status.Disputed)
+        ) return stake;
+        return 0;
+    }
+
     // ── Bracketing ──
 
     function begin(TaskEscrow e) external {
@@ -141,8 +182,17 @@ contract EscrowLedger is Test {
             strayBal: _strayBalance(tok),
             sumWithdrawable: sumWithdrawable(e),
             quorumStakeCount: e.quorumStakeCount(),
-            status: uint8(e.status())
+            status: uint8(e.status()),
+            workerStaked: e.workerStaked(),
+            workerStakeAmt: e.workerStake()
         });
+        _buyerSnap = _dual(tok, buyer);
+        _workerSnap = _dual(tok, worker);
+        _backupSnap = _dual(tok, backup);
+        _verifierSnaps = new DualSnap[](verifiers.length);
+        for (uint256 i; i < verifiers.length; i++) {
+            _verifierSnaps[i] = _dual(tok, verifiers[i]);
+        }
         vm.recordLogs();
     }
 
@@ -152,6 +202,7 @@ contract EscrowLedger is Test {
         address tok = e.token();
         if (ok) successes[action]++;
 
+        _resetExpectations();
         // vm.recordLogs also captures logs emitted inside calls that later revert, so drain the buffer
         // unconditionally but only account for events from calls that actually took effect.
         _recordEvents(e, g, ok);
@@ -185,21 +236,65 @@ contract EscrowLedger is Test {
             if (bal + withdrawnNow != _snap.escrowBal) g.terminalOutflow = true;
         }
 
+        // Stake that left the escrow but is not named by Settled/Refunded is the forfeited
+        // portion (backup activation, dispute split, milestone stake settlement) and is paid to the buyer.
+        if (ok) _creditUnreportedStake(e, g);
+        _checkParties(e, g);
+
         _snap.escrow = address(0);
+    }
+
+    function _resetExpectations() internal {
+        _expBuyer = 0;
+        _expWorker = 0;
+        _expBackup = 0;
+        _stakeReturned = 0;
+        _refundedStake = 0;
+        _expVerifiers = new int256[](verifiers.length);
+    }
+
+    /// @dev Worker-awarded principal and returned stake are paid to `activeWorker`, which is the
+    /// backup after activation. Attributing them to `worker()` would let a payout to the original
+    /// worker pass unnoticed.
+    function _workerPayee(TaskEscrow e) internal view returns (address) {
+        return e.activeWorker();
+    }
+
+    function _credit(address who, int256 amt) internal {
+        if (amt == 0 || who == address(0)) return;
+        if (who == buyer) {
+            _expBuyer += amt;
+        } else if (who == worker) {
+            _expWorker += amt;
+        } else if (who == backup) {
+            _expBackup += amt;
+        } else {
+            for (uint256 i; i < verifiers.length; i++) {
+                if (verifiers[i] == who) {
+                    _expVerifiers[i] += amt;
+                    return;
+                }
+            }
+        }
     }
 
     function _recordEvents(TaskEscrow e, Ghost storage g, bool ok) internal {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         uint256 callFees;
+        address payee = _workerPayee(e);
         for (uint256 i; ok && i < logs.length; i++) {
             if (logs[i].emitter != address(e)) continue;
             bytes32 sig = logs[i].topics[0];
             if (sig == SETTLED_SIG) {
-                (uint256 wn, uint256 br, uint256 fee,) = abi.decode(logs[i].data, (uint256, uint256, uint256, uint256));
+                (uint256 wn, uint256 br, uint256 fee, uint256 sr) =
+                    abi.decode(logs[i].data, (uint256, uint256, uint256, uint256));
                 g.principalReleased += wn + br + fee;
                 g.workerGross += wn + fee;
                 g.fees += fee;
                 callFees += fee;
+                _credit(payee, _signed(wn + sr));
+                _credit(buyer, _signed(br));
+                _stakeReturned += sr;
             } else if (sig == MS_SETTLED_SIG) {
                 (uint256 wn, uint256 br, uint256 fee) = abi.decode(logs[i].data, (uint256, uint256, uint256));
                 g.principalReleased += wn + br + fee;
@@ -207,19 +302,80 @@ contract EscrowLedger is Test {
                 g.msWorkerGross += wn + fee;
                 g.fees += fee;
                 callFees += fee;
+                _credit(payee, _signed(wn));
+                _credit(buyer, _signed(br));
             } else if (sig == REFUNDED_SIG) {
-                (uint256 amt,) = abi.decode(logs[i].data, (uint256, uint256));
+                (uint256 amt, uint256 sf) = abi.decode(logs[i].data, (uint256, uint256));
                 g.principalReleased += amt;
+                _credit(buyer, _signed(amt + sf));
+                _refundedStake += sf;
             } else if (sig == ABORTED_SIG) {
                 (, uint256 refund) = abi.decode(logs[i].data, (uint8, uint256));
                 g.principalReleased += refund;
+                _credit(buyer, _signed(refund));
             } else if (sig == BACKUP_SIG) {
                 g.backupActivations++;
+            } else if (sig == FUNDED_SIG) {
+                _credit(_topicAddr(logs[i]), -_signed(abi.decode(logs[i].data, (uint256))));
+            } else if (sig == STAKE_DEP_SIG || sig == VSTAKE_DEP_SIG) {
+                _credit(_topicAddr(logs[i]), -_signed(abi.decode(logs[i].data, (uint256))));
+            } else if (sig == VSTAKE_WD_SIG) {
+                _credit(_topicAddr(logs[i]), _signed(abi.decode(logs[i].data, (uint256))));
             }
         }
         // Per-call: treasury delta must equal exactly the fees this call reported.
         address tok = e.token();
         uint256 tNow = balanceOf(tok, treasury);
         if (tNow >= _snap.treasuryBal && tNow - _snap.treasuryBal != callFees) g.treasuryMismatch = true;
+    }
+
+    /// @dev Stake that left the escrow beyond what Settled/Refunded already assigned is forfeited to the buyer
+    /// (backup activation sends the whole stake; dispute and milestone settlement send the non-returned part).
+    function _creditUnreportedStake(TaskEscrow e, Ghost storage g) internal {
+        uint256 heldBefore = _stakeHeld(_snap.status, _snap.workerStaked, _snap.workerStakeAmt);
+        uint256 heldAfter = _stakeHeld(uint8(e.status()), e.workerStaked(), e.workerStake());
+        uint256 reported = _stakeReturned + _refundedStake;
+        if (heldBefore > heldAfter) {
+            uint256 stakeOut = heldBefore - heldAfter;
+            if (reported > stakeOut) g.recipientMismatch = true;
+            else _credit(buyer, _signed(stakeOut - reported));
+        } else if (reported != 0) {
+            g.recipientMismatch = true;
+        }
+    }
+
+    function _checkParties(TaskEscrow e, Ghost storage g) internal {
+        address tok = e.token();
+        _checkParty(g, tok, buyer, _buyerSnap, _expBuyer);
+        _checkParty(g, tok, worker, _workerSnap, _expWorker);
+        _checkParty(g, tok, backup, _backupSnap, _expBackup);
+        for (uint256 i; i < verifiers.length; i++) {
+            _checkParty(g, tok, verifiers[i], _verifierSnaps[i], _expVerifiers[i]);
+        }
+    }
+
+    /// @dev The escrow's own denomination must move by exactly `expected`. The other currency must not move:
+    /// an ETH payout on an ERC20 escrow (or the reverse) is a misdirected transfer.
+    function _checkParty(Ghost storage g, address tok, address who, DualSnap memory before, int256 expected) internal {
+        int256 ethDelta = _signedDelta(before.eth, who.balance);
+        if (tok == address(0)) {
+            if (ethDelta != expected) g.recipientMismatch = true;
+            return;
+        }
+        int256 tokDelta = _signedDelta(before.tok, IERC20(tok).balanceOf(who));
+        if (tokDelta != expected || ethDelta != 0) g.recipientMismatch = true;
+    }
+
+    function _topicAddr(Vm.Log memory log) internal pure returns (address) {
+        return address(uint160(uint256(log.topics[1])));
+    }
+
+    function _signed(uint256 v) internal pure returns (int256) {
+        return int256(v);
+    }
+
+    function _signedDelta(uint256 beforeBal, uint256 afterBal) internal pure returns (int256) {
+        if (afterBal >= beforeBal) return int256(afterBal - beforeBal);
+        return -int256(beforeBal - afterBal);
     }
 }

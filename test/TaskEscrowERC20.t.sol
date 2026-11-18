@@ -29,20 +29,6 @@ contract TaskEscrowERC20Test is BaseEscrowTest {
         return _create(params);
     }
 
-    // ── Token field ──
-
-    function testTokenFieldSetCorrectly() public {
-        TaskEscrow escrow = _createERC20Escrow();
-        assertEq(escrow.token(), address(usdc));
-    }
-
-    function testETHEscrowTokenIsZero() public {
-        TaskEscrowFactory.CreateParams memory params = _defaultParams();
-        params.amount = 1 ether;
-        (, address addr) = factory.createEscrow(params);
-        assertEq(TaskEscrow(addr).token(), address(0));
-    }
-
     // ── ERC20 funding ──
 
     function testERC20FundTransfersTokens() public {

@@ -20,44 +20,11 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/decomposition"
 	escrowservice "github.com/eddiefleurent/agent-escrow/go-server/internal/escrow"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
-	"github.com/eddiefleurent/agent-escrow/go-server/internal/numconv"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	ucppkg "github.com/eddiefleurent/agent-escrow/go-server/internal/ucp"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
-
-type milestoneArg struct {
-	Amount             FlexibleString `json:"amount" jsonschema:"Milestone amount in wei or smallest unit"`
-	SubmissionDeadline FlexibleString `json:"submission_deadline" jsonschema:"Unix timestamp for milestone submission deadline"`
-}
-
-type createEscrowArgs struct {
-	Title                    string         `json:"title" jsonschema:"Task title"`
-	Description              string         `json:"description" jsonschema:"Task description"`
-	Buyer                    string         `json:"buyer" jsonschema:"Buyer address (0x...)"`
-	Worker                   string         `json:"worker" jsonschema:"Worker address (0x...). Must be distinct from buyer, verifier panel members, and arbitrator."`
-	VerifierPanel            []string       `json:"verifier_panel" jsonschema:"Verifier panel addresses (1-7 entries). Members must be distinct and must not overlap other roles."`
-	QuorumThreshold          FlexibleString `json:"quorum_threshold" jsonschema:"Votes required to finalize verifier decision (1..quorum_verifier_count)."`
-	QuorumVerifierCount      FlexibleString `json:"quorum_verifier_count" jsonschema:"Number of active verifier panel entries (1..7). verifier_panel must have at least this many entries."`
-	VerifierStakePerVerifier FlexibleString `json:"verifier_stake_per_verifier,omitempty" jsonschema:"Optional Schelling stake each verifier must deposit before voting; omit or 0 for no verifier stake."`
-	Arbitrator               string         `json:"arbitrator" jsonschema:"Arbitrator address (0x...). Must be distinct from buyer, worker, and all verifier panel members."`
-	Amount                   FlexibleString `json:"amount" jsonschema:"Total amount in wei (ETH) or smallest unit (ERC20)"`
-	WorkerStake              FlexibleString `json:"worker_stake,omitempty" jsonschema:"Worker anti-Sybil stake in wei or smallest unit; omit or 0 for no stake"`
-	SubmissionDeadline       FlexibleString `json:"submission_deadline" jsonschema:"Unix timestamp for submission deadline"`
-	ReviewPeriodSeconds      FlexibleString `json:"review_period_seconds" jsonschema:"Review period in seconds"`
-	DisputePeriodSeconds     FlexibleString `json:"dispute_period_seconds" jsonschema:"Dispute period in seconds"`
-	ArbitratorTimeoutSeconds FlexibleString `json:"arbitrator_timeout_seconds" jsonschema:"Arbitrator timeout in seconds"`
-	Token                    string         `json:"token,omitempty" jsonschema:"Omit or leave empty for ETH. ERC20 token address otherwise."`
-	ServiceTier              FlexibleString `json:"service_tier,omitempty" jsonschema:"0 = low_assurance (optimistic, default), 1 = high_assurance (verifier approval required). Paper §5.3."`
-	Milestones               []milestoneArg `json:"milestones,omitempty" jsonschema:"Optional array of milestones; omit for single-milestone (V1) escrow"`
-	BackupWorker             string         `json:"backup_worker,omitempty" jsonschema:"Optional backup worker address; omit for no backup agent"`
-	BackupDeadlineExtension  FlexibleString `json:"backup_deadline_extension,omitempty" jsonschema:"Seconds to extend deadline when backup activates; omit or 0 for no extension"`
-	ZKVerifier               string         `json:"zk_verifier,omitempty" jsonschema:"Optional on-chain ZK verifier contract address; required with circuit_id"`
-	CircuitID                string         `json:"circuit_id,omitempty" jsonschema:"Optional 0x-prefixed bytes32 circuit identifier; required with zk_verifier"`
-	ParentEscrowID           FlexibleString `json:"parent_escrow_id,omitempty" jsonschema:"Optional parent escrow ID for sub-delegation. Buyer must match the parent's active worker."`
-}
 
 type escrowIDArgs struct {
 	EscrowID FlexibleString `json:"escrow_id" jsonschema:"Numeric database escrow ID (from create_escrow response), or on-chain escrow address (0x...)"`
@@ -480,10 +447,6 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Name:        "revoke_dct",
 		Description: "Revoke a DCT by token_id.",
 	}, s.handleRevokeDCT)
-	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "list_dct_audit",
-		Description: "List DCT authorization audit log entries.",
-	}, s.handleListDCTAudit)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "create_rfq",
@@ -555,7 +518,13 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Description: "Fund an escrow via an AP2 mandate with EIP-3009 gasless authorization. Paper §6: AP2 stake-on-bid + conditional settlement.",
 	}, s.handleFundViaMandate)
 
-	if s.cfg.EmergencyEnabled {
+	// MCP is served over local stdio, with its own operator opt-in.
+	if s.cfg.MCPEmergencyEnabled {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name:        "list_dct_audit",
+			Description: "List DCT authorization audit log entries.",
+		}, s.handleListDCTAudit)
+
 		mcp.AddTool(srv, &mcp.Tool{
 			Name:        "emergency_override_dct",
 			Description: "Emergency override for DCT operations (factory owner only). Bypasses normal authorization.",
@@ -619,297 +588,12 @@ func (s *Server) resolveEscrowID(ctx context.Context, raw string) (*storage.Escr
 	return s.escrowService().ResolveEscrowID(ctx, raw)
 }
 
-func (s *Server) handleCreateEscrow(ctx context.Context, req *mcp.CallToolRequest, args createEscrowArgs) (*mcp.CallToolResult, any, error) {
-	if !common.IsHexAddress(args.Buyer) {
-		return textResult("invalid buyer address"), nil, nil
-	}
-	if !common.IsHexAddress(args.Worker) {
-		return textResult("invalid worker address"), nil, nil
-	}
-	if !common.IsHexAddress(args.Arbitrator) {
-		return textResult("invalid arbitrator address"), nil, nil
-	}
-	buyerAddr := common.HexToAddress(args.Buyer)
-	workerAddr := common.HexToAddress(args.Worker)
-	arbitratorAddr := common.HexToAddress(args.Arbitrator)
-	if buyerAddr == (common.Address{}) {
-		return textResult("zero buyer address"), nil, nil
-	}
-	if workerAddr == (common.Address{}) {
-		return textResult("zero worker address"), nil, nil
-	}
-	if arbitratorAddr == (common.Address{}) {
-		return textResult("zero arbitrator address"), nil, nil
-	}
-	if buyerAddr == workerAddr {
-		return textResult("buyer and worker must be distinct"), nil, nil
-	}
-	if buyerAddr == arbitratorAddr {
-		return textResult("buyer and arbitrator must be distinct"), nil, nil
-	}
-	if workerAddr == arbitratorAddr {
-		return textResult("worker and arbitrator must be distinct"), nil, nil
-	}
-	amount, ok := new(big.Int).SetString(args.Amount.String(), 10)
-	if !ok {
-		return textResult("invalid amount"), nil, nil
-	}
-	if err := chain.ValidateComplexityFloor(amount, s.cfg.ComplexityFloor); err != nil {
-		return textResult(err.Error()), nil, nil
-	}
-	deadline, err := strconv.ParseUint(args.SubmissionDeadline.String(), 10, 64)
-	if err != nil {
-		return textResult(fmt.Sprintf("invalid submission_deadline: %v", err)), nil, nil
-	}
-	review, err := strconv.ParseUint(args.ReviewPeriodSeconds.String(), 10, 64)
-	if err != nil {
-		return textResult(fmt.Sprintf("invalid review_period_seconds: %v", err)), nil, nil
-	}
-	dispute, err := strconv.ParseUint(args.DisputePeriodSeconds.String(), 10, 64)
-	if err != nil {
-		return textResult(fmt.Sprintf("invalid dispute_period_seconds: %v", err)), nil, nil
-	}
-	arbTimeout, err := strconv.ParseUint(args.ArbitratorTimeoutSeconds.String(), 10, 64)
-	if err != nil {
-		return textResult(fmt.Sprintf("invalid arbitrator_timeout_seconds: %v", err)), nil, nil
-	}
-
-	workerStakeVal := big.NewInt(0)
-	if args.WorkerStake.String() != "" {
-		ws, ok := new(big.Int).SetString(args.WorkerStake.String(), 10)
-		if !ok {
-			return textResult("invalid worker_stake"), nil, nil
-		}
-		if ws.Sign() < 0 {
-			return textResult("invalid worker_stake: must not be negative"), nil, nil
-		}
-		workerStakeVal = ws
-	}
-	verifierStakePerVerifierVal := big.NewInt(0)
-	if args.VerifierStakePerVerifier.String() != "" {
-		vsv, ok := new(big.Int).SetString(args.VerifierStakePerVerifier.String(), 10)
-		if !ok {
-			return textResult("invalid verifier_stake_per_verifier"), nil, nil
-		}
-		if vsv.Sign() < 0 {
-			return textResult("invalid verifier_stake_per_verifier: must not be negative"), nil, nil
-		}
-		verifierStakePerVerifierVal = vsv
-	}
-
-	if len(args.VerifierPanel) == 0 || len(args.VerifierPanel) > 7 {
-		return textResult("verifier_panel must include between 1 and 7 addresses"), nil, nil
-	}
-	quorumVerifierCount, parseErr := strconv.ParseUint(args.QuorumVerifierCount.String(), 10, 8)
-	if parseErr != nil {
-		return textResult(fmt.Sprintf("invalid quorum_verifier_count: %v", parseErr)), nil, nil
-	}
-	if quorumVerifierCount == 0 || quorumVerifierCount > 7 {
-		return textResult("invalid quorum_verifier_count: must be 1..7"), nil, nil
-	}
-	quorumThreshold, parseErr := strconv.ParseUint(args.QuorumThreshold.String(), 10, 8)
-	if parseErr != nil {
-		return textResult(fmt.Sprintf("invalid quorum_threshold: %v", parseErr)), nil, nil
-	}
-	if quorumThreshold == 0 || quorumThreshold > quorumVerifierCount {
-		return textResult("invalid quorum_threshold: must be 1..quorum_verifier_count"), nil, nil
-	}
-	if len(args.VerifierPanel) < int(quorumVerifierCount) {
-		return textResult("verifier_panel length must be at least quorum_verifier_count"), nil, nil
-	}
-	seen := make(map[common.Address]bool)
-	for i := 0; i < int(quorumVerifierCount); i++ {
-		if !common.IsHexAddress(args.VerifierPanel[i]) {
-			return textResult(fmt.Sprintf("invalid verifier_panel[%d] address", i)), nil, nil
-		}
-		addr := common.HexToAddress(args.VerifierPanel[i])
-		if addr == (common.Address{}) {
-			return textResult(fmt.Sprintf("invalid verifier_panel[%d]: zero address", i)), nil, nil
-		}
-		if seen[addr] {
-			return textResult(fmt.Sprintf("invalid verifier_panel[%d]: duplicate address", i)), nil, nil
-		}
-		if addr == buyerAddr || addr == workerAddr || addr == arbitratorAddr {
-			return textResult(fmt.Sprintf("invalid verifier_panel[%d]: overlaps with buyer, worker, or arbitrator", i)), nil, nil
-		}
-		seen[addr] = true
-	}
-
-	specHash := crypto.Keccak256Hash([]byte(args.Title + args.Description))
-
-	var tokenAddr common.Address
-	if args.Token != "" {
-		if !common.IsHexAddress(args.Token) {
-			return textResult("invalid token address"), nil, nil
-		}
-		tokenAddr = common.HexToAddress(args.Token)
-	}
-
-	var milestones []chain.MilestoneParam
-	for _, m := range args.Milestones {
-		msAmount, ok := new(big.Int).SetString(m.Amount.String(), 10)
-		if !ok || msAmount.Sign() < 0 {
-			return textResult("invalid milestone amount: " + m.Amount.String()), nil, nil
-		}
-		msDeadline, err := strconv.ParseUint(m.SubmissionDeadline.String(), 10, 64)
-		if err != nil {
-			return textResult(fmt.Sprintf("invalid milestone submission_deadline: %v", err)), nil, nil
-		}
-		milestones = append(milestones, chain.MilestoneParam{
-			Amount:             msAmount,
-			SubmissionDeadline: msDeadline,
-		})
-	}
-
-	var backupWorkerAddr common.Address
-	if args.BackupWorker != "" {
-		if !common.IsHexAddress(args.BackupWorker) {
-			return textResult("invalid backup_worker address"), nil, nil
-		}
-		backupWorkerAddr = common.HexToAddress(args.BackupWorker)
-	}
-	var backupDeadlineExt uint64
-	if args.BackupDeadlineExtension.String() != "" {
-		bde, err := strconv.ParseUint(args.BackupDeadlineExtension.String(), 10, 64)
-		if err != nil {
-			return textResult(fmt.Sprintf("invalid backup_deadline_extension: %v", err)), nil, nil
-		}
-		backupDeadlineExt = bde
-	}
-	if backupDeadlineExt > 0 && (args.BackupWorker == "" || common.HexToAddress(args.BackupWorker) == (common.Address{})) {
-		return textResult("backup_deadline_extension set but no backup_worker provided"), nil, nil
-	}
-
-	var zkVerifier common.Address
-	if args.ZKVerifier != "" {
-		if !common.IsHexAddress(args.ZKVerifier) {
-			return textResult("invalid zk_verifier address"), nil, nil
-		}
-		zkVerifier = common.HexToAddress(args.ZKVerifier)
-	}
-	circuitID, err := numconv.ParseOptionalBytes32Hex(args.CircuitID)
-	if err != nil {
-		return textResult(fmt.Sprintf("invalid circuit_id: %v", err)), nil, nil
-	}
-	if (zkVerifier == common.Address{}) != (args.CircuitID == "") {
-		return textResult("zk_verifier and circuit_id must either both be set or both omitted"), nil, nil
-	}
-
-	var serviceTier uint8
-	if s := args.ServiceTier.String(); s != "" {
-		if s != "0" && s != "1" {
-			return textResult("invalid service_tier: must be 0 (low_assurance) or 1 (high_assurance)"), nil, nil
-		}
-		if s == "1" {
-			serviceTier = 1
-		}
-	}
-
-	var parentEscrowID *int64
-	var parentEscrowAddr common.Address
-	if raw := args.ParentEscrowID.String(); raw != "" {
-		pid, pidErr := strconv.ParseInt(raw, 10, 64)
-		if pidErr != nil {
-			return textResult(fmt.Sprintf("invalid parent_escrow_id: %v", pidErr)), nil, nil
-		}
-		parentEscrowID = &pid
-		parentEscrow, err := s.db.GetEscrow(ctx, pid)
-		if err != nil {
-			return textResult(fmt.Sprintf("invalid parent_escrow_id: %v", err)), nil, nil
-		}
-		if !common.IsHexAddress(parentEscrow.EscrowAddress) {
-			return textResult(fmt.Sprintf("parent escrow %d has invalid on-chain address", pid)), nil, nil
-		}
-		if parentEscrow.ChainID != s.cfg.ChainID || common.HexToAddress(parentEscrow.FactoryAddress) != common.HexToAddress(s.cfg.FactoryAddress) {
-			return textResult(fmt.Sprintf("parent escrow %d is from different chain/factory", pid)), nil, nil
-		}
-		activeWorker := parentEscrow.ActiveWorker
-		if activeWorker == "" {
-			activeWorker = parentEscrow.Worker
-		}
-		if !strings.EqualFold(common.HexToAddress(args.Buyer).Hex(), common.HexToAddress(activeWorker).Hex()) {
-			return textResult(fmt.Sprintf(
-				"sub-delegation buyer (%s) must be active worker of parent escrow %d (%s)",
-				args.Buyer, pid, activeWorker,
-			)), nil, nil
-		}
-		parentEscrowAddr = common.HexToAddress(parentEscrow.EscrowAddress)
-	}
-
-	// Validate all uint64→int64 conversions before any on-chain or DB side effects.
-	submissionDeadline, err := numconv.Uint64ToInt64(deadline, "submission_deadline")
+func (s *Server) handleCreateEscrow(ctx context.Context, _ *mcp.CallToolRequest, args escrowservice.CreateRequest[FlexibleString, FlexibleString, FlexibleString]) (*mcp.CallToolResult, any, error) {
+	input, err := escrowservice.ParseCreateRequest(ctx, args, s.db, s.cfg)
 	if err != nil {
 		return textResult(err.Error()), nil, nil
 	}
-	reviewPeriod, err := numconv.Uint64ToInt64(review, "review_period_seconds")
-	if err != nil {
-		return textResult(err.Error()), nil, nil
-	}
-	disputePeriod, err := numconv.Uint64ToInt64(dispute, "dispute_period_seconds")
-	if err != nil {
-		return textResult(err.Error()), nil, nil
-	}
-	arbitratorTimeout, err := numconv.Uint64ToInt64(arbTimeout, "arbitrator_timeout_seconds")
-	if err != nil {
-		return textResult(err.Error()), nil, nil
-	}
-	backupDeadline, err := numconv.Uint64ToInt64(backupDeadlineExt, "backup_deadline_extension")
-	if err != nil {
-		return textResult(err.Error()), nil, nil
-	}
-
-	msDeadlinesInt64 := make([]int64, len(milestones))
-	for i, m := range milestones {
-		msDeadlinesInt64[i], err = numconv.Uint64ToInt64(m.SubmissionDeadline, fmt.Sprintf("milestones[%d].submission_deadline", i))
-		if err != nil {
-			return textResult(err.Error()), nil, nil
-		}
-	}
-
-	result, err := s.escrowService().CreateEscrow(ctx, escrowservice.CreateEscrowInput{
-		Title:       args.Title,
-		Description: args.Description,
-
-		Buyer:         args.Buyer,
-		Worker:        args.Worker,
-		Arbitrator:    args.Arbitrator,
-		VerifierPanel: args.VerifierPanel,
-
-		QuorumThreshold:          uint8(quorumThreshold),
-		QuorumVerifierCount:      uint8(quorumVerifierCount),
-		VerifierStakePerVerifier: verifierStakePerVerifierVal,
-
-		Amount:      amount,
-		WorkerStake: workerStakeVal,
-
-		SubmissionDeadline:       deadline,
-		ReviewPeriodSeconds:      review,
-		DisputePeriodSeconds:     dispute,
-		ArbitratorTimeoutSeconds: arbTimeout,
-
-		SubmissionDeadlineDB:       submissionDeadline,
-		ReviewPeriodSecondsDB:      reviewPeriod,
-		DisputePeriodSecondsDB:     disputePeriod,
-		ArbitratorTimeoutSecondsDB: arbitratorTimeout,
-
-		Token:       tokenAddr,
-		ServiceTier: serviceTier,
-
-		Milestones:         milestones,
-		MilestoneDeadlines: msDeadlinesInt64,
-
-		BackupWorker:            backupWorkerAddr,
-		BackupDeadlineExtension: backupDeadlineExt,
-		BackupDeadlineDB:        backupDeadline,
-
-		ZKVerifier: zkVerifier,
-		CircuitID:  circuitID,
-
-		ParentEscrowID: parentEscrowID,
-		ParentEscrow:   parentEscrowAddr,
-
-		TaskSpecHash: specHash,
-	})
+	result, err := s.escrowService().CreateEscrow(ctx, input)
 	if err != nil {
 		return textResult(fmt.Sprintf("create escrow error: %v", err)), nil, nil
 	}

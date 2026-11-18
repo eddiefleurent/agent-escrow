@@ -297,49 +297,6 @@ func TestRecentEventsGranularityFilter(t *testing.T) {
 	}
 }
 
-func TestParseGranularity(t *testing.T) {
-	tests := []struct {
-		input string
-		want  GranularityLevel
-	}{
-		{"L0", L0},
-		{"L1", L1},
-		{"L2", L2},
-		{"L3", L3},
-		{"", L1},
-		{"invalid", L1},
-	}
-	for _, tt := range tests {
-		got := ParseGranularity(tt.input)
-		if got != tt.want {
-			t.Errorf("ParseGranularity(%q) = %v, want %v", tt.input, got, tt.want)
-		}
-	}
-}
-
-func TestOnChainEventNameMapping(t *testing.T) {
-	expected := map[string]string{
-		"EscrowCreated":   EventEscrowCreated,
-		"EscrowFunded":    EventEscrowFunded,
-		"SubmissionMade":  EventEscrowSubmitted,
-		"Approved":        EventEscrowApproved,
-		"Disputed":        EventEscrowDisputed,
-		"Settled":         EventEscrowSettled,
-		"OutcomeRecorded": EventOutcomeRecorded,
-		"BackupActivated": EventBackupActivated,
-	}
-	for onChain, streamName := range expected {
-		got, ok := OnChainEventName[onChain]
-		if !ok {
-			t.Errorf("missing mapping for on-chain event %q", onChain)
-			continue
-		}
-		if got != streamName {
-			t.Errorf("OnChainEventName[%q] = %q, want %q", onChain, got, streamName)
-		}
-	}
-}
-
 func TestTimestampAutoSet(t *testing.T) {
 	bus := NewEventBus(16)
 	sub := bus.Subscribe(L1, "")

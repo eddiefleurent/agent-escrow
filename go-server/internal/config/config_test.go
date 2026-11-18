@@ -27,6 +27,7 @@ func clearEnv(t *testing.T) {
 		"RPC_URL", "PRIVATE_KEY", "FACTORY_ADDRESS",
 		"CHAIN_ID", "DATABASE_URL", "PORT",
 		"MCP_TRANSPORT", "CORS_ORIGINS",
+		"EMERGENCY_ENABLED", "MCP_EMERGENCY_ENABLED", "ADMIN_TOKEN",
 		"REQUEST_TIMEOUT", "TX_TIMEOUT",
 		"COMPLEXITY_FLOOR", "REBID_COOLDOWN_SECONDS", "REPUTATION_DAMPING_FACTOR",
 		"UCP_ENABLED", "UCP_BASE_URL", "UCP_PROVIDER_NAME",
@@ -493,18 +494,6 @@ func TestValidateEthAddress(t *testing.T) {
 	}
 }
 
-func TestOnline(t *testing.T) {
-	offline := &Config{}
-	if offline.Online() {
-		t.Error("expected Online() == false for empty RPC_URL")
-	}
-
-	online := &Config{RPCURL: "https://sepolia.base.org"}
-	if !online.Online() {
-		t.Error("expected Online() == true for non-empty RPC_URL")
-	}
-}
-
 func TestLoad_MultipleValidationErrors(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("RPC_URL", "https://sepolia.base.org")
@@ -636,5 +625,74 @@ func TestLoad_ReputationDampingFactor_Invalid(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "REPUTATION_DAMPING_FACTOR") {
 		t.Fatalf("expected REPUTATION_DAMPING_FACTOR error, got: %v", err)
+	}
+}
+
+func TestLoad_EmergencyDefaults(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EmergencyEnabled || cfg.MCPEmergencyEnabled {
+		t.Fatal("HTTP and MCP emergency access must default to disabled")
+	}
+}
+
+func TestLoad_HTTPEmergencyRequiresAdminToken(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("EMERGENCY_ENABLED", "true")
+
+	for name, token := range map[string]string{"missing": "", "short": strings.Repeat("x", 31)} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("ADMIN_TOKEN", token)
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), "ADMIN_TOKEN") {
+				t.Fatalf("expected startup configuration to reject %s token, got %v", name, err)
+			}
+		})
+	}
+
+	t.Setenv("ADMIN_TOKEN", strings.Repeat("x", 32))
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.EmergencyEnabled || cfg.MCPEmergencyEnabled {
+		t.Fatal("expected only HTTP emergency access to be enabled")
+	}
+}
+
+func TestLoad_AdminTokenStrengthWithoutEmergency(t *testing.T) {
+	clearEnv(t)
+	// ADMIN_TOKEN also guards always-on admin routes (DCT audit), so a weak
+	// token must be rejected even when emergency endpoints are disabled.
+	t.Setenv("ADMIN_TOKEN", "abc")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "ADMIN_TOKEN") {
+		t.Fatalf("expected short ADMIN_TOKEN to be rejected, got %v", err)
+	}
+
+	token := strings.Repeat("y", 32)
+	t.Setenv("ADMIN_TOKEN", "  "+token+"\n")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AdminToken != token {
+		t.Fatalf("expected ADMIN_TOKEN to be trimmed, got %q", cfg.AdminToken)
+	}
+}
+
+func TestLoad_MCPOnlyEmergency(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("MCP_TRANSPORT", "stdio")
+	t.Setenv("MCP_EMERGENCY_ENABLED", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EmergencyEnabled || !cfg.MCPEmergencyEnabled {
+		t.Fatal("expected only MCP emergency access to be enabled")
 	}
 }

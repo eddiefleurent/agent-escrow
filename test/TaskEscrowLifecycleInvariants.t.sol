@@ -206,11 +206,21 @@ contract TaskEscrowLifecycleInvariantsTest is StdInvariant, BaseEscrowTest {
         return uint256(e.quorumStakeCount()) * e.verifierStakePerVerifier();
     }
 
+    /// Each participant's ETH and token delta for a call must equal the amount settlement events
+    /// (and unreported stake forfeiture) assign to that participant. Catches a payout sent to the
+    /// original worker after the backup has become `activeWorker`.
+    function _assertPartyRecipients() internal view {
+        for (uint256 i; i < escrows.length; i++) {
+            assertFalse(ledger.ghost(address(escrows[i])).recipientMismatch, "party delta != expected recipient");
+        }
+    }
+
     // ── Invariants ──
 
     /// SPEC §6.1 balance conservation: escrow balance == undistributed principal + held worker stake
     /// + held verifier stakes + withdrawable balances. Exact equality, ETH and ERC20.
     function invariant_valueConservation() public view {
+        _assertPartyRecipients();
         for (uint256 i; i < escrows.length; i++) {
             TaskEscrow e = escrows[i];
             uint256 expected =
@@ -221,6 +231,7 @@ contract TaskEscrowLifecycleInvariantsTest is StdInvariant, BaseEscrowTest {
 
     /// Closed system: no value is created or leaks to an address outside the participant set.
     function invariant_closedSystemConservation() public view {
+        _assertPartyRecipients();
         assertEq(_systemTotal(address(0)), initialEthTotal, "ETH created or leaked");
         assertEq(_systemTotal(address(usdc)), initialTokenTotal, "ERC20 created or leaked");
     }
@@ -228,6 +239,7 @@ contract TaskEscrowLifecycleInvariantsTest is StdInvariant, BaseEscrowTest {
     /// After a terminal state nothing is stranded: only explicitly withdrawable balances remain and
     /// no verifier stake is still marked as deposited.
     function invariant_terminalNothingStranded() public view {
+        _assertPartyRecipients();
         for (uint256 i; i < escrows.length; i++) {
             TaskEscrow e = escrows[i];
             if (!_isTerminal(e)) continue;
@@ -238,6 +250,7 @@ contract TaskEscrowLifecycleInvariantsTest is StdInvariant, BaseEscrowTest {
 
     /// SPEC §6.2 terminal exclusivity: Settled/Refunded/Cancelled are absorbing; funds only leave via withdrawStake.
     function invariant_terminalStatesAbsorbing() public view {
+        _assertPartyRecipients();
         for (uint256 i; i < escrows.length; i++) {
             EscrowLedger.Ghost memory g = ledger.ghost(address(escrows[i]));
             assertFalse(g.terminalLeft, "terminal state was left");
@@ -248,6 +261,7 @@ contract TaskEscrowLifecycleInvariantsTest is StdInvariant, BaseEscrowTest {
     /// SPEC §6.3 / §6.8 fund conservation: principal released (per settlement events) never exceeds `amount`
     /// and always equals `amount - owed` once funded.
     function invariant_principalAccounting() public view {
+        _assertPartyRecipients();
         for (uint256 i; i < escrows.length; i++) {
             TaskEscrow e = escrows[i];
             EscrowLedger.Ghost memory g = ledger.ghost(address(e));
@@ -264,6 +278,7 @@ contract TaskEscrowLifecycleInvariantsTest is StdInvariant, BaseEscrowTest {
     /// Milestone payouts (worker net + fee) sum to at most the total funded, and the worker-awarded part never
     /// exceeds what was released.
     function invariant_milestonePayoutsBounded() public view {
+        _assertPartyRecipients();
         for (uint256 i; i < escrows.length; i++) {
             TaskEscrow e = escrows[i];
             EscrowLedger.Ghost memory g = ledger.ghost(address(e));
@@ -275,6 +290,7 @@ contract TaskEscrowLifecycleInvariantsTest is StdInvariant, BaseEscrowTest {
     /// SPEC §6.9: each verifier stake settles exactly once per review cycle. Deposits == credited + still held,
     /// the stake counter matches per-verifier flags, and nobody withdraws more than was credited.
     function invariant_verifierStakeSettlesOnce() public view {
+        _assertPartyRecipients();
         for (uint256 i; i < escrows.length; i++) {
             TaskEscrow e = escrows[i];
             EscrowLedger.Ghost memory g = ledger.ghost(address(e));
@@ -293,6 +309,7 @@ contract TaskEscrowLifecycleInvariantsTest is StdInvariant, BaseEscrowTest {
     /// SPEC §6.4 / §9: fees go only to the snapshotted treasury, equal reported fees exactly, never exceed the
     /// snapshotted bps of the worker gross award, and the snapshot never changes after creation.
     function invariant_feesBoundedAndOnlyToTreasury() public view {
+        _assertPartyRecipients();
         for (uint256 i; i < escrows.length; i++) {
             TaskEscrow e = escrows[i];
             EscrowLedger.Ghost memory g = ledger.ghost(address(e));
@@ -311,6 +328,7 @@ contract TaskEscrowLifecycleInvariantsTest is StdInvariant, BaseEscrowTest {
     /// SPEC §6.7 milestone ordering: everything before `currentMilestone` is terminal; while the escrow is live,
     /// the current milestone is not terminal and later ones are untouched (Pending) or aborted (Cancelled).
     function invariant_milestoneOrdering() public view {
+        _assertPartyRecipients();
         for (uint256 i; i < escrows.length; i++) {
             TaskEscrow e = escrows[i];
             uint8 mc = e.milestoneCount();
@@ -335,6 +353,7 @@ contract TaskEscrowLifecycleInvariantsTest is StdInvariant, BaseEscrowTest {
     /// A completed milestone escrow (Settled/Refunded) has no milestone left in flight: every milestone is
     /// Approved, Resolved, or Cancelled. (Cancelled escrows never funded, so their milestones stay Pending.)
     function invariant_completedMilestoneEscrowHasNoLiveMilestone() public view {
+        _assertPartyRecipients();
         for (uint256 i; i < escrows.length; i++) {
             TaskEscrow e = escrows[i];
             TaskEscrow.Status s = e.status();
@@ -349,6 +368,7 @@ contract TaskEscrowLifecycleInvariantsTest is StdInvariant, BaseEscrowTest {
 
     /// SPEC §6.6 backup exclusivity: activation happens at most once and `activeWorker` reflects it.
     function invariant_backupExclusivity() public view {
+        _assertPartyRecipients();
         for (uint256 i; i < escrows.length; i++) {
             TaskEscrow e = escrows[i];
             EscrowLedger.Ghost memory g = ledger.ghost(address(e));

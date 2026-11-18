@@ -2,12 +2,16 @@ package api
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"log/slog"
 	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/authz"
 )
 
 // isStreamingEndpoint returns true for SSE and WebSocket event stream paths
@@ -53,11 +57,32 @@ func recoveryMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// requireAdmin authenticates the operator before invoking a privileged handler.
+func requireAdmin(adminToken, ownerAddress string, next http.HandlerFunc) http.HandlerFunc {
+	expected := sha256.Sum256([]byte(adminToken))
+	return func(w http.ResponseWriter, r *http.Request) {
+		scheme, token, separated := strings.Cut(r.Header.Get("Authorization"), " ")
+		provided := sha256.Sum256([]byte(token))
+		if adminToken == "" || !separated || !strings.EqualFold(scheme, "Bearer") ||
+			subtle.ConstantTimeCompare(provided[:], expected[:]) != 1 {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		// DCT emergency overrides authorize against the configured factory owner.
+		ctx := authz.WithCaller(r.Context(), authz.Principal{
+			Address:       ownerAddress,
+			Authenticated: ownerAddress != "",
+		})
+		next.ServeHTTP(w, r.WithContext(ctx))
+	}
+}
+
 // corsMiddleware checks the request Origin against allowedOrigins.
-// If allowedOrigins is empty or contains "*", all origins are permitted.
+// Only an explicit "*" permits all origins.
 func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
 	allowed := make(map[string]bool, len(allowedOrigins))
-	allowAll := len(allowedOrigins) == 0
+	allowAll := false
 	for _, o := range allowedOrigins {
 		if o == "*" {
 			allowAll = true
@@ -70,9 +95,11 @@ func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
 
 		if allowAll {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
-		} else if allowed[origin] {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Vary", "Origin")
+		} else if len(allowed) > 0 {
+			w.Header().Add("Vary", "Origin")
+			if allowed[origin] {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+			}
 		}
 
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")

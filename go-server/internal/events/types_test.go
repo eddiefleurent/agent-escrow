@@ -5,40 +5,88 @@ import "testing"
 func TestGranularityStringAndParse(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
+	parseCases := []struct {
 		in   string
 		want GranularityLevel
 	}{
-		{"L0", L0},
-		{"L1", L1},
-		{"L2", L2},
-		{"L3", L3},
-		{"unknown", L1},
+		{in: "L0", want: L0},
+		{in: "L1", want: L1},
+		{in: "L2", want: L2},
+		{in: "L3", want: L3},
+		{in: "", want: L1},
+		{in: "invalid", want: L1},
+		{in: "unknown", want: L1},
 	}
-	for _, tc := range cases {
+	for _, tc := range parseCases {
 		if got := ParseGranularity(tc.in); got != tc.want {
-			t.Fatalf("parse %q: expected %v, got %v", tc.in, tc.want, got)
+			t.Errorf("ParseGranularity(%q) = %v, want %v", tc.in, got, tc.want)
 		}
 	}
 
-	if L0.String() != "L0" || L1.String() != "L1" || L2.String() != "L2" || L3.String() != "L3" {
-		t.Fatal("expected canonical granularity labels")
+	stringCases := []struct {
+		level GranularityLevel
+		want  string
+	}{
+		{level: L0, want: "L0"},
+		{level: L1, want: "L1"},
+		{level: L2, want: "L2"},
+		{level: L3, want: "L3"},
+		{level: GranularityLevel(99), want: "unknown"},
 	}
-	if got := GranularityLevel(99).String(); got != "unknown" {
-		t.Fatalf("expected unknown label for unsupported level, got %q", got)
+	for _, tc := range stringCases {
+		if got := tc.level.String(); got != tc.want {
+			t.Errorf("GranularityLevel(%d).String() = %q, want %q", tc.level, got, tc.want)
+		}
 	}
 }
 
 func TestOnChainEventNameMappings(t *testing.T) {
 	t.Parallel()
 
-	if OnChainEventName["EscrowCreated"] != EventEscrowCreated {
-		t.Fatalf("expected EscrowCreated mapping to %q", EventEscrowCreated)
+	want := map[string]string{
+		"EscrowCreated":              EventEscrowCreated,
+		"EscrowFunded":               EventEscrowFunded,
+		"SubmissionMade":             EventEscrowSubmitted,
+		"Approved":                   EventEscrowApproved,
+		"Rejected":                   EventEscrowRejected,
+		"Disputed":                   EventEscrowDisputed,
+		"SilenceEscalated":           EventSilenceEscalated,
+		"DisputeResolved":            EventDisputeResolved,
+		"Settled":                    EventEscrowSettled,
+		"Refunded":                   EventEscrowRefunded,
+		"Cancelled":                  EventEscrowCancelled,
+		"BackupActivated":            EventBackupActivated,
+		"MilestoneSubmitted":         EventMilestoneSubmitted,
+		"MilestoneApproved":          EventMilestoneApproved,
+		"MilestoneDisputed":          EventMilestoneDisputed,
+		"MilestoneDisputeResolved":   EventMilestoneDisResolved,
+		"MilestoneSettled":           EventMilestoneSettled,
+		"MilestoneCancelled":         EventMilestoneCancelled,
+		"RemainingMilestonesAborted": EventMilestoneAborted,
+		"OutcomeRecorded":            EventOutcomeRecorded,
+		"MarketStabilityFeeApplied":  EventMarketStabilityFeeApplied,
+		"WorkerStakeDeposited":       EventWorkerStakeDeposited,
+		"ArbitratorTimeoutClaimed":   EventEscrowRefunded,
+		"AddressFrozen":              EventAddressFrozen,
+		"AddressUnfrozen":            EventAddressUnfrozen,
+		"EscrowFrozen":               EventEscrowEmergFrozen,
+		"EscrowUnfrozen":             EventEscrowEmergUnfrozen,
+		"EmergencyResolved":          EventEmergencyResolved,
+		"EmergencyFrozen":            EventEscrowEmergFrozen,
+		"EmergencyUnfrozen":          EventEscrowEmergUnfrozen,
 	}
-	if OnChainEventName["EmergencyResolved"] != EventEmergencyResolved {
-		t.Fatalf("expected EmergencyResolved mapping to %q", EventEmergencyResolved)
+
+	if len(OnChainEventName) != len(want) {
+		t.Fatalf("OnChainEventName has %d keys, want %d", len(OnChainEventName), len(want))
 	}
-	if OnChainEventName["EmergencyFrozen"] != EventEscrowEmergFrozen {
-		t.Fatalf("expected EmergencyFrozen mapping to %q", EventEscrowEmergFrozen)
+	for key, streamName := range want {
+		got, ok := OnChainEventName[key]
+		if !ok {
+			t.Errorf("missing mapping for on-chain event %q", key)
+			continue
+		}
+		if got != streamName {
+			t.Errorf("OnChainEventName[%q] = %q, want %q", key, got, streamName)
+		}
 	}
 }

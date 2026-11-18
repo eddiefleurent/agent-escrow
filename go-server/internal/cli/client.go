@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -96,8 +97,22 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 	}
 	req.Header.Set("Accept", "application/json")
 
+	httpClient := c.httpClient
+	if strings.HasPrefix(normalizedPath, "/api/v1/emergency/") ||
+		normalizedPath == "/api/v1/dcts/audit" || normalizedPath == "/api/v1/dcts/emergency-override" {
+		if token := os.Getenv("ESCROW_ADMIN_TOKEN"); token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+			// Limit this credential to the configured endpoint, even across redirects.
+			directClient := *httpClient
+			directClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			}
+			httpClient = &directClient
+		}
+	}
+
 	// #nosec G704 -- This CLI intentionally connects to a user-configured API base URL.
-	resp, err := c.httpClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}

@@ -148,9 +148,9 @@ The paper identifies delegation as the primary systems problem once raw capabili
 | Adaptive execution | Timeouts, milestones, backup worker, checkpoint/resume, market-stability controls |
 | Structural transparency | Event log, hash commitments, milestone checkpoints, attestation chains, verifier quorum, optional ZK path |
 | Scalable market coordination | Reputation seed, complexity floor, credentials, sealed bidding, protocol adapters |
-| Systemic resilience | Role gates, reentrancy protection, emergency controls, stake mechanisms, DCT attenuation, principal authz |
+| Systemic resilience | Role gates, reentrancy protection, emergency controls, stake mechanisms, DCT attenuation, default-deny authz (authenticated only for admin-token routes today; see `H8` in the roadmap) |
 
-The exact implementation status of each paper feature lives in `docs/paper-feature-map.json`. The roadmap owns sequencing and future items; this document focuses on how the implemented pieces fit together.
+The exact implementation status of each paper feature lives in `docs/paper-feature-map.json`. The roadmap owns sequencing and future items; this document focuses on how the implemented pieces fit together. Where a pillar is only partly built (for example adaptive execution is manual, and off-chain caller identity is self-asserted), the feature map says so and this table names the mechanisms that exist, not the paper's full scope.
 
 ## Protocol Strategy
 
@@ -275,7 +275,7 @@ The code is organized around responsibility boundaries rather than transport bou
 - `go-server/internal/bidding/` covers RFQ, bid, credential, and negotiation logic.
 - `go-server/internal/attestation/` performs completion-attestation validation and chain checks.
 - `go-server/internal/dct/` handles Delegation Capability Token issuance, attenuation, validation, and lifecycle.
-- `go-server/internal/authz/` enforces principal authorization for DCT operations with audited decisions.
+- `go-server/internal/authz/` applies default-deny role checks to DCT operations with audited decisions. It trusts the principal it is handed: only the admin-token routes authenticate that principal today (roadmap `H8`).
 - `go-server/internal/indexer/` reconciles on-chain events.
 - `go-server/internal/events/` provides in-process event fan-out.
 - `go-server/internal/api/` and `go-server/internal/mcpserver/` are transport adapters over shared logic.
@@ -353,9 +353,9 @@ Several off-chain subsystems are central to the architecture because they add de
 
 - **Bidding** keeps price discovery, capability matching, and credential verification off-chain until a winning bid is formalized as an escrow. In sealed mode, the server applies deterministic post-reveal finalization and bidder cooldowns for commit-without-reveal behavior.
 - **Contract-first decomposition** validates that task breakdowns remain settlement-compatible before leaf tasks become RFQs.
-- **Attestation chains** add transitive accountability for sub-delegation while remaining off-chain evidence rather than on-chain consensus.
+- **Attestation chains** add provenance evidence across sub-delegation while remaining off-chain evidence rather than on-chain consensus. They do not transfer liability: `parentEscrow` only drives the re-delegation fee surcharge, and a child escrow's outcome never affects its parent.
 - **Checkpoint/resume** adds restartable work handoff for adaptive delegation without changing escrow custody rules.
-- **DCT authorization** enforces delegated capability scope off-chain with auditability and strict attenuation.
+- **DCT authorization** enforces delegated capability scope off-chain with auditability and strict attenuation. DCTs are a standalone capability ledger: no escrow action requires one, and caller authentication for mint, delegate, and revoke is incomplete (roadmap `H8`).
 
 These systems are intentionally layered beside the escrow contract, not inside it.
 
@@ -363,8 +363,8 @@ These systems are intentionally layered beside the escrow contract, not inside i
 
 Adapter modules translate external protocols into shared escrow semantics:
 
-- **A2A** exposes settlement capability to A2A agents with escrow-specific metadata.
-- **AP2/x402** provides gasless or payment-rail-assisted funding flows into escrow.
+- **A2A** exposes settlement capability to A2A agents with escrow-specific metadata. It records tasks only; it does not yet create or link escrows.
+- **AP2** provides gasless funding into escrow through EIP-3009 `fundWithAuthorization`, submitted by the server signer. Mandate signature verification is in flight (roadmap `H1`). The **x402** facilitator client is wired into the AP2 service but has no production callers.
 - **UCP** projects commerce-oriented checkout flows onto escrow lifecycle semantics.
 
 The architectural rule is that adapters may reshape transport semantics, but they may not bypass verification, dispute, refund, or settlement invariants.
@@ -373,7 +373,7 @@ The architectural rule is that adapters may reshape transport semantics, but the
 
 A few operational mechanisms deserve mention because they affect system shape:
 
-- emergency controls span on-chain owner actions plus off-chain auditability;
+- emergency controls span on-chain owner actions plus off-chain auditability. HTTP admin routes require the operator bearer token, and local stdio MCP admin tools have a separate opt-in;
 - event streaming supports L0/L1 today, with deeper monitoring levels staged;
 - configuration gates optional surfaces such as A2A, UCP, x402, and emergency endpoints.
 
