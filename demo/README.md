@@ -41,7 +41,7 @@ The publicly documented, current live demos are the ETH, USDC, and AP2 flows abo
    - `WORKER_KEY`, `BACKUP_KEY` — required for `cast send` in demos
    - `VERIFIER_ADDR`, `ARBITRATOR_ADDR` — public addresses used when creating demo escrows
    - `BACKUP_WORKER_KEY` is still accepted as a legacy alias for `BACKUP_KEY`
-   - `FACTORY_ADDRESS` — deployed factory on Base Sepolia
+   - `FACTORY_ADDRESS` — deployed factory on Base Sepolia (also the `verifyingContract` of the AP2 mandate EIP-712 domain signed by `ap2_demo.py`)
 
 3. **Tooling installed**: `cast` (Foundry), `curl`, `jq`, `python3`, `uv`
 

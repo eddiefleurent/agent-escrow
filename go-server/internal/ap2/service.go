@@ -1,8 +1,9 @@
 package ap2
 
 import (
+	"bytes"
 	"context"
-	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,7 +18,16 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/x402"
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/types"
+)
+
+const (
+	mandateStatusPending = "pending"
+	mandateStatusFunded  = "funded"
+	mandateStatusFailed  = "failed"
 )
 
 // ErrInvalidMandate indicates invalid user-provided AP2 mandate input.
@@ -26,6 +36,10 @@ var ErrInvalidMandate = errors.New("invalid mandate")
 // ErrBindValidation indicates user-provided bind inputs failed escrow validation checks.
 var ErrBindValidation = errors.New("bind validation failed")
 
+// ErrFundingPending means a previous broadcast has no receipt yet. The row
+// stays pending with its tx hash; a retry checks that receipt before sending again.
+var ErrFundingPending = errors.New("mandate funding is pending confirmation")
+
 // Service implements the AP2 mandate-to-escrow bridge.
 type Service struct {
 	DB    *storage.DB
@@ -33,238 +47,247 @@ type Service struct {
 	Idx   *indexer.Indexer
 	Cfg   *config.Config
 	X402  *x402.Client
+	// Now overrides the clock used for mandate validity checks; nil means time.Now.
+	Now func() time.Time
 }
 
-// ValidateMandate checks that a mandate envelope is well-formed and has valid constraints.
-func (s *Service) ValidateMandate(_ context.Context, env MandateEnvelope) error {
-	if env.Type == "" {
-		return errors.New("mandate type is required")
-	}
-	if env.Type != MandateTypeIntent && env.Type != MandateTypeCart && env.Type != MandateTypePayment {
-		return fmt.Errorf("unsupported mandate type: %s", env.Type)
-	}
-	if env.SignerAddress == "" {
-		return errors.New("signer_address is required")
-	}
-	if !common.IsHexAddress(env.SignerAddress) {
-		return fmt.Errorf("invalid signer_address: %s", env.SignerAddress)
-	}
-	if env.Signature == "" {
-		return errors.New("signature is required")
-	}
-	if env.Authorization.From == "" {
-		return errors.New("authorization.from is required")
-	}
-	if !common.IsHexAddress(env.Authorization.From) {
-		return fmt.Errorf("invalid authorization.from: %s", env.Authorization.From)
-	}
+// ValidateMandate checks that a mandate envelope is well-formed, carries a valid
+// EIP-712 signature from signer_address, that its EIP-3009 signature matches the
+// signed tuple, and that it is inside its validity window.
+func (s *Service) ValidateMandate(ctx context.Context, env MandateEnvelope) error {
+	_, err := s.verifyMandate(ctx, env)
+	return err
+}
 
-	signerNorm := strings.ToLower(common.HexToAddress(env.SignerAddress).Hex())
-	fromNorm := strings.ToLower(common.HexToAddress(env.Authorization.From).Hex())
-	if signerNorm != fromNorm {
-		return errors.New("signer_address and authorization.from must match")
-	}
-
-	if env.Authorization.Value == "" {
-		return errors.New("authorization.value is required")
-	}
-	if _, ok := new(big.Int).SetString(env.Authorization.Value, 10); !ok {
-		return fmt.Errorf("invalid authorization.value: %s", env.Authorization.Value)
-	}
-
-	// Validate ValidAfter / ValidBefore are parseable non-negative integers
-	// and that ValidBefore >= ValidAfter. These are used by FundViaMandate
-	// for the EIP-3009 transferWithAuthorization call.
-	validAfter := new(big.Int)
-	if env.Authorization.ValidAfter != "" {
-		va, ok := validAfter.SetString(env.Authorization.ValidAfter, 10)
-		if !ok || va.Sign() < 0 {
-			return fmt.Errorf("invalid authorization.valid_after: %s", env.Authorization.ValidAfter)
+// FundViaMandate verifies the mandate and its EIP-3009 authorization, then
+// relays fundWithAuthorization. Verification finishes before any row is written
+// and before the funding transaction is sent. DOMAIN_SEPARATOR() is a read.
+func (s *Service) FundViaMandate(ctx context.Context, escrowID int64, env MandateEnvelope) (*FundViaMandateResponse, error) {
+	vm, err := s.verifyMandate(ctx, env)
+	if err != nil {
+		if errors.Is(err, errChainRead) {
+			return nil, err
 		}
-	}
-	if env.Authorization.ValidBefore == "" {
-		return errors.New("authorization.valid_before is required")
-	}
-	validBefore, ok := new(big.Int).SetString(env.Authorization.ValidBefore, 10)
-	if !ok || validBefore.Sign() < 0 {
-		return fmt.Errorf("invalid authorization.valid_before: %s", env.Authorization.ValidBefore)
-	}
-	if validBefore.Cmp(validAfter) < 0 {
-		return fmt.Errorf("authorization.valid_before (%s) must be >= valid_after (%s)", validBefore, validAfter)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidMandate, err)
 	}
 
-	if env.Authorization.Nonce == "" {
-		return errors.New("authorization.nonce is required")
-	}
-	if _, err := hexToBytes32(env.Authorization.Nonce); err != nil {
-		return fmt.Errorf("invalid authorization.nonce: %w", err)
-	}
-	if env.Authorization.R == "" {
-		return errors.New("authorization.r is required")
-	}
-	if _, err := hexToBytes32(env.Authorization.R); err != nil {
-		return fmt.Errorf("invalid authorization.r: %w", err)
-	}
-	if env.Authorization.S == "" {
-		return errors.New("authorization.s is required")
-	}
-	if _, err := hexToBytes32(env.Authorization.S); err != nil {
-		return fmt.Errorf("invalid authorization.s: %w", err)
-	}
-
-	return nil
-}
-
-// BindToEscrow links a validated mandate to an escrow, verifying amount constraints.
-func (s *Service) BindToEscrow(ctx context.Context, env MandateEnvelope, escrowID int64) (*EscrowBinding, error) {
 	escrow, err := s.DB.GetEscrow(ctx, escrowID)
 	if err != nil {
 		return nil, fmt.Errorf("get escrow: %w", err)
 	}
-
-	signerNorm := strings.ToLower(common.HexToAddress(env.SignerAddress).Hex())
-	buyerNorm := strings.ToLower(common.HexToAddress(escrow.Buyer).Hex())
-	if signerNorm != buyerNorm {
-		return nil, fmt.Errorf("%w: mandate signer must be the escrow buyer", ErrBindValidation)
-	}
-
-	// EIP-3009 authorization recipient must match the escrow contract address
-	authToNorm := strings.ToLower(common.HexToAddress(env.Authorization.To).Hex())
-	escrowAddrNorm := strings.ToLower(common.HexToAddress(escrow.EscrowAddress).Hex())
-	if authToNorm != escrowAddrNorm {
-		return nil, fmt.Errorf("%w: authorization.to (%s) does not match escrow address (%s)", ErrBindValidation, authToNorm, escrowAddrNorm)
-	}
-
-	authValue, ok := new(big.Int).SetString(env.Authorization.Value, 10)
-	if !ok {
-		return nil, fmt.Errorf("%w: invalid authorization value", ErrBindValidation)
-	}
-	escrowAmount, ok := new(big.Int).SetString(escrow.Amount, 10)
-	if !ok {
-		return nil, errors.New("invalid escrow amount")
-	}
-	if authValue.Cmp(escrowAmount) < 0 {
-		return nil, fmt.Errorf("%w: authorization value (%s) is less than escrow amount (%s)", ErrBindValidation, authValue, escrowAmount)
-	}
-
-	mandateHash, err := hashMandate(env)
-	if err != nil {
-		return nil, err
-	}
-	mandateID := mandateHash[:16]
-
-	payloadJSON, err := json.Marshal(env.Payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal payload: %w", err)
-	}
-
-	var budgetAmount, budgetCurrency string
-	if env.Type == MandateTypeIntent {
-		if v, ok := env.Payload["budget_amount"].(string); ok {
-			budgetAmount = v
-		}
-		if v, ok := env.Payload["budget_currency"].(string); ok {
-			budgetCurrency = v
-		}
-	}
-
-	var expiresAt *string
-	if env.Type == MandateTypeIntent {
-		if ttl, ok := env.Payload["ttl_seconds"].(float64); ok && ttl > 0 {
-			t := time.Now().Add(time.Duration(ttl) * time.Second).UTC().Format(time.RFC3339)
-			expiresAt = &t
-		}
-	}
-
-	err = s.DB.CreateAP2Mandate(ctx, mandateID, string(env.Type), mandateHash, signerNorm,
-		budgetAmount, budgetCurrency, expiresAt, &escrowID, string(payloadJSON))
-	if err != nil {
-		return nil, fmt.Errorf("store mandate: %w", err)
-	}
-
-	return &EscrowBinding{
-		MandateID:   mandateID,
-		MandateHash: mandateHash,
-		EscrowID:    escrowID,
-		Status:      "bound",
-	}, nil
-}
-
-// FundViaMandate orchestrates the full flow: validate -> bind -> fund on-chain.
-func (s *Service) FundViaMandate(ctx context.Context, escrowID int64, env MandateEnvelope) (*FundViaMandateResponse, error) {
-	if err := s.ValidateMandate(ctx, env); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidMandate, err)
-	}
-
-	binding, err := s.BindToEscrow(ctx, env, escrowID)
-	if err != nil {
+	if err := validateEscrowBinding(s.Cfg, vm, escrow); err != nil {
 		if errors.Is(err, ErrBindValidation) {
 			return nil, fmt.Errorf("%w: %w", ErrInvalidMandate, err)
 		}
 		return nil, err
 	}
 
-	escrow, err := s.DB.GetEscrow(ctx, escrowID)
+	claim, err := s.claimMandate(ctx, vm, escrow)
 	if err != nil {
-		return nil, fmt.Errorf("get escrow: %w", err)
+		return nil, err
+	}
+	if claim.funded != nil {
+		return &FundViaMandateResponse{
+			TxHash:    claim.funded.FundingTxHash,
+			EscrowID:  escrowID,
+			MandateID: claim.funded.ID,
+			Status:    mandateStatusFunded,
+		}, nil
 	}
 
-	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
-	from := common.HexToAddress(env.Authorization.From)
+	return s.broadcastFunding(ctx, vm, claim.id, escrowID)
+}
 
-	validAfter, _ := new(big.Int).SetString(env.Authorization.ValidAfter, 10)
-	if validAfter == nil {
-		validAfter = big.NewInt(0)
-	}
-	validBefore, _ := new(big.Int).SetString(env.Authorization.ValidBefore, 10)
-	if validBefore == nil {
-		return nil, errors.New("invalid authorization.valid_before")
-	}
+type mandateClaim struct {
+	id     string
+	funded *storage.AP2Mandate
+}
 
-	nonceBytes, err := hexToBytes32(env.Authorization.Nonce)
+func (s *Service) claimMandate(ctx context.Context, vm *verifiedMandate, escrow *storage.Escrow) (mandateClaim, error) {
+	rec, err := mandateInsert(vm, escrow)
 	if err != nil {
-		return nil, fmt.Errorf("invalid authorization.nonce: %w", err)
+		return mandateClaim{}, err
 	}
+	existing, err := s.DB.GetAP2MandateByAuthorization(ctx, rec.ChainID, rec.Token, rec.Authorizer, rec.AuthorizationNonce)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return mandateClaim{}, err
+		}
+		if err := s.DB.CreateAP2Mandate(ctx, rec); err != nil {
+			if !isUniqueConstraint(err) {
+				return mandateClaim{}, fmt.Errorf("store mandate: %w", err)
+			}
+			existing, err = s.DB.GetAP2MandateByAuthorization(ctx, rec.ChainID, rec.Token, rec.Authorizer, rec.AuthorizationNonce)
+			if err != nil {
+				return mandateClaim{}, err
+			}
+		} else {
+			return mandateClaim{id: rec.ID}, nil
+		}
+	}
+	return s.reconcileMandate(ctx, existing, rec)
+}
 
-	rBytes, err := hexToBytes32(env.Authorization.R)
-	if err != nil {
-		return nil, fmt.Errorf("invalid authorization.r: %w", err)
+func (s *Service) reconcileMandate(ctx context.Context, existing *storage.AP2Mandate, rec storage.AP2MandateInsert) (mandateClaim, error) {
+	switch existing.Status {
+	case mandateStatusFunded:
+		return mandateClaim{funded: existing}, nil
+	case mandateStatusPending:
+		if existing.FundingTxHash == "" {
+			ok, err := s.DB.RefreshPendingAP2Mandate(ctx, existing.ID, rec)
+			if err != nil {
+				return mandateClaim{}, err
+			}
+			if !ok {
+				return mandateClaim{}, ErrFundingPending
+			}
+			return mandateClaim{id: existing.ID}, nil
+		}
+		return s.reconcilePendingTx(ctx, existing, rec)
+	case mandateStatusFailed:
+		ok, err := s.DB.ReopenFailedAP2Mandate(ctx, existing.ID, rec)
+		if err != nil {
+			return mandateClaim{}, err
+		}
+		if !ok {
+			again, err := s.DB.GetAP2Mandate(ctx, existing.ID)
+			if err != nil {
+				return mandateClaim{}, err
+			}
+			return s.reconcileMandate(ctx, again, rec)
+		}
+		return mandateClaim{id: existing.ID}, nil
+	default:
+		return mandateClaim{}, fmt.Errorf("mandate %s has status %q and cannot be funded", existing.ID, existing.Status)
 	}
-	sBytes, err := hexToBytes32(env.Authorization.S)
-	if err != nil {
-		return nil, fmt.Errorf("invalid authorization.s: %w", err)
-	}
+}
 
-	tx, err := s.Chain.FundWithAuthorization(ctx, escrowAddr, from, validAfter, validBefore, nonceBytes, env.Authorization.V, rBytes, sBytes)
+func (s *Service) reconcilePendingTx(ctx context.Context, existing *storage.AP2Mandate, rec storage.AP2MandateInsert) (mandateClaim, error) {
+	hash := common.HexToHash(existing.FundingTxHash)
+	receipt, err := s.Chain.TransactionReceipt(ctx, hash)
 	if err != nil {
+		if errors.Is(err, ethereum.NotFound) {
+			return mandateClaim{}, fmt.Errorf("%w: tx %s", ErrFundingPending, existing.FundingTxHash)
+		}
+		return mandateClaim{}, fmt.Errorf("check funding receipt %s: %w", existing.FundingTxHash, err)
+	}
+	if receipt.Status == types.ReceiptStatusSuccessful {
+		if err := s.DB.MarkAP2MandateFunded(ctx, existing.ID, existing.FundingTxHash); err != nil {
+			return mandateClaim{}, err
+		}
+		existing.Status = mandateStatusFunded
+		return mandateClaim{funded: existing}, nil
+	}
+	if err := s.DB.MarkAP2MandateFailed(ctx, existing.ID); err != nil {
+		return mandateClaim{}, err
+	}
+	ok, err := s.DB.ReopenFailedAP2Mandate(ctx, existing.ID, rec)
+	if err != nil {
+		return mandateClaim{}, err
+	}
+	if !ok {
+		return mandateClaim{}, ErrFundingPending
+	}
+	return mandateClaim{id: existing.ID}, nil
+}
+
+func (s *Service) broadcastFunding(ctx context.Context, vm *verifiedMandate, mandateID string, escrowID int64) (*FundViaMandateResponse, error) {
+	a := vm.Auth
+	tx, err := s.Chain.FundWithAuthorization(ctx, a.To, a.From, a.ValidAfter, a.ValidBefore, a.Nonce, a.V, a.R, a.S)
+	if err != nil {
+		if markErr := s.DB.MarkAP2MandateFailed(ctx, mandateID); markErr != nil {
+			slog.Warn("failed to mark mandate failed after chain error", "mandate_id", mandateID, "error", markErr)
+		}
 		return nil, fmt.Errorf("fund with authorization: %w", err)
 	}
-
 	txHash := tx.Hash().Hex()
-
-	if err := s.DB.UpdateAP2MandateFunding(ctx, binding.MandateID, txHash); err != nil {
-		slog.Warn("failed to update mandate funding status", "mandate_id", binding.MandateID, "error", err)
+	if err := s.DB.SetAP2MandatePendingTx(ctx, mandateID, txHash); err != nil {
+		return nil, fmt.Errorf("record funding tx: %w", err)
 	}
 
-	if err := s.Idx.RunOnce(ctx); err != nil {
-		slog.Warn("post-fund indexer run failed", "escrow_id", escrowID, "error", err)
+	receipt, err := chain.WaitMined(ctx, s.Chain, tx.Hash())
+	if err != nil {
+		slog.Warn("funding receipt not available; mandate stays pending", "mandate_id", mandateID, "tx_hash", txHash, "error", err)
+		return nil, fmt.Errorf("%w: tx %s: %w", ErrFundingPending, txHash, err)
 	}
-
+	if receipt.Status != types.ReceiptStatusSuccessful {
+		if markErr := s.DB.MarkAP2MandateFailed(ctx, mandateID); markErr != nil {
+			slog.Warn("failed to mark reverted mandate failed", "mandate_id", mandateID, "error", markErr)
+		}
+		return nil, fmt.Errorf("fund with authorization reverted (status %d)", receipt.Status)
+	}
+	if err := s.DB.MarkAP2MandateFunded(ctx, mandateID, txHash); err != nil {
+		return nil, fmt.Errorf("record funded mandate: %w", err)
+	}
+	if s.Idx != nil {
+		if err := s.Idx.RunOnce(ctx); err != nil {
+			slog.Warn("post-fund indexer run failed", "escrow_id", escrowID, "error", err)
+		}
+	}
 	return &FundViaMandateResponse{
 		TxHash:    txHash,
 		EscrowID:  escrowID,
-		MandateID: binding.MandateID,
-		Status:    "funded",
+		MandateID: mandateID,
+		Status:    mandateStatusFunded,
 	}, nil
 }
 
-func hashMandate(env MandateEnvelope) (string, error) {
-	data, err := json.Marshal(env)
-	if err != nil {
-		return "", fmt.Errorf("marshal mandate for hashing: %w", err)
+// validateEscrowBinding checks the signed authorization against the escrow.
+// fundWithAuthorization pulls the escrow's amount of the escrow's token, so
+// both must match the signed tuple exactly.
+func validateEscrowBinding(cfg *config.Config, vm *verifiedMandate, escrow *storage.Escrow) error {
+	if cfg == nil || escrow.ChainID != cfg.ChainID {
+		return fmt.Errorf("%w: escrow chain_id does not match the server chain", ErrBindValidation)
 	}
-	h := sha256.Sum256(data)
-	return hex.EncodeToString(h[:]), nil
+	if !common.IsHexAddress(escrow.Buyer) || vm.Signer != common.HexToAddress(escrow.Buyer) {
+		return fmt.Errorf("%w: mandate signer must be the escrow buyer", ErrBindValidation)
+	}
+	if !common.IsHexAddress(escrow.EscrowAddress) || vm.Auth.To != common.HexToAddress(escrow.EscrowAddress) {
+		return fmt.Errorf("%w: authorization.to (%s) does not match escrow address (%s)", ErrBindValidation, vm.Auth.To.Hex(), escrow.EscrowAddress)
+	}
+	if !common.IsHexAddress(escrow.Token) || common.HexToAddress(escrow.Token) == (common.Address{}) {
+		return fmt.Errorf("%w: escrow is not funded with an ERC-20 token", ErrBindValidation)
+	}
+	if vm.Auth.Token != common.HexToAddress(escrow.Token) {
+		return fmt.Errorf("%w: authorization.token (%s) does not match escrow token (%s)", ErrBindValidation, vm.Auth.Token.Hex(), escrow.Token)
+	}
+	escrowAmount, ok := new(big.Int).SetString(escrow.Amount, 10)
+	if !ok {
+		return errors.New("invalid escrow amount")
+	}
+	if vm.Auth.Value.Cmp(escrowAmount) != 0 {
+		return fmt.Errorf("%w: authorization value (%s) must equal escrow amount (%s)", ErrBindValidation, vm.Auth.Value, escrowAmount)
+	}
+	return nil
+}
+
+func mandateInsert(vm *verifiedMandate, escrow *storage.Escrow) (storage.AP2MandateInsert, error) {
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, vm.RawPayload); err != nil {
+		return storage.AP2MandateInsert{}, fmt.Errorf("compact payload: %w", err)
+	}
+	payload := compact.String()
+	expiresAt := vm.ExpiresAt.UTC().Format(time.RFC3339)
+	mandateHash := hex.EncodeToString(vm.Digest.Bytes())
+	return storage.AP2MandateInsert{
+		ID:                 mandateHash[:16],
+		MandateType:        string(vm.Type),
+		MandateHash:        mandateHash,
+		SignerAddress:      strings.ToLower(vm.Signer.Hex()),
+		BudgetAmount:       vm.BudgetAmount,
+		BudgetCurrency:     vm.BudgetCurrency,
+		ExpiresAt:          &expiresAt,
+		EscrowID:           &escrow.ID,
+		RawPayload:         payload,
+		ChainID:            escrow.ChainID,
+		Token:              strings.ToLower(common.HexToAddress(escrow.Token).Hex()),
+		Authorizer:         strings.ToLower(vm.Signer.Hex()),
+		AuthorizationNonce: hexutil.Encode(vm.Auth.Nonce[:]),
+	}, nil
+}
+
+func isUniqueConstraint(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
 func hexToBytes32(s string) ([32]byte, error) {

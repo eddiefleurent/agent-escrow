@@ -26,7 +26,7 @@ Implementation roadmap for the ["Intelligent AI Delegation"](https://arxiv.org/a
   - **Principal authentication** (`13b`, P4.7): HTTP/CLI DCT mint, delegate, and revoke are always denied; MCP trusts caller strings. Only the SH1 admin-token routes authenticate.
   - **Adaptive coordination** (P4.4): backup activation and checkpoints exist; trigger detection and automatic re-allocation do not.
   - **Verifiable completion** (P4.8): ZK proof is not bound to the task, the quorum game rewards no one, attestation roots are not anchored on-chain.
-  - **Protocol adapters:** A2A (`8`) never creates or links escrows, AP2 (`9`) does not verify the mandate signature, and the x402 client has no production callers.
+  - **Protocol adapters:** A2A (`8`) never creates or links escrows, AP2 (`9`) verifies the mandate and the paired EIP-3009 signature before funding, and the x402 client has no production callers.
   - **Transitive liability** is not implemented; `parentEscrow` only drives the re-delegation fee surcharge.
 - **V3 status:** items `12`-`22` shipped, with the corrections above applied to `13b`, `16`, `18`, and `19` notes.
 - **Previously under-tracked paper requirements now explicit:** social intelligence (`29`) and user training (`30`).
@@ -34,11 +34,11 @@ Implementation roadmap for the ["Intelligent AI Delegation"](https://arxiv.org/a
 - **Monitoring depth:** L0/L1 production; L2/L3 remains staged.
 - **R1 status:** complete. Sealed bidding now applies non-reveal cooldowns, deterministic revealed-bid finalization, and consistent transport semantics.
 - **SH1 status:** done (PR #55). HTTP emergency and DCT admin routes require a bearer token; HTTP and local MCP emergency access are separate opt-ins; CORS defaults to deny.
-- **Hardening queue (Phase 2b):** `H1`-`H15` track the audit findings. In flight: `H1` AP2 signature fix, `H2` indexer correctness, `H3` Solidity test base and invariants, `H4` CreateEscrow unification. Owner-blocked: `H8`-`H15` and `SH5`.
+- **Hardening queue (Phase 2b):** `H1`-`H15` track the audit findings. `H1` (AP2 signature verification) is done. In flight: `H2` indexer correctness, `H3` Solidity test base and invariants, `H4` CreateEscrow unification. Owner-blocked: `H8`-`H15` and `SH5`.
 - **Contract change budget:** `TaskEscrow` runtime is 23,992 B against the 24,576 B limit (about 584 B headroom), so contract fixes ship as one bundled v2 redeploy rather than piecemeal.
 - **Opinionated implementations worth revisiting now:** items `15` (anchoring without Solidity), `20` (guardrails only), and `21` (after `H8`).
 
-Recommended near-term order (completed R1 and SH1 omitted): `H2 -> H3 -> H4 -> SH2 -> SH3 -> SH4 -> H1 -> H5 -> H6 -> H7 -> R2 -> R3`, then the owner-blocked group `H8 -> SH5 -> H9 .. H15`, then `R4 -> 25 -> 29 -> 30 -> 23 -> 24 -> 26 -> 28 -> 27`. `H2`-`H4` and `H1` are already in flight, so the first unstarted item is `SH2`-`SH4` (one HTTP-hardening change).
+Recommended near-term order (completed R1, SH1, and H1 omitted): `H2 -> H3 -> H4 -> SH2 -> SH3 -> SH4 -> H5 -> H6 -> H7 -> R2 -> R3`, then the owner-blocked group `H8 -> SH5 -> H9 .. H15`, then `R4 -> 25 -> 29 -> 30 -> 23 -> 24 -> 26 -> 28 -> 27`. `H2`-`H4` are already in flight, so the first unstarted item is `SH2`-`SH4` (one HTTP-hardening change).
 
 ---
 
@@ -65,7 +65,7 @@ Recommended near-term order (completed R1 and SH1 omitted): `H2 -> H3 -> H4 -> S
 | 6 | Complexity floor parameter | done | 4.3 | opinionated | Single configurable floor enforced on-chain/off-chain instead of dynamic per-task optimizer. The floor is one raw integer compared across tokens, so it is unit-unsafe for ETH vs USDC (`H11`). |
 | 7 | Task_RFQ + Bid_Object bidding protocol | done | 4.2, 6.1 | direct | Off-chain negotiation with on-chain formalization only when bid is accepted. |
 | 8 | A2A settlement adapter | partial | 6, 6.1 | direct | Added escrow-specific task metadata while keeping A2A transport compatibility. Tasks are recorded only: `escrow_trigger` is stored but never acted on, the adapter never creates or links an escrow, and `UpdateA2ATaskEscrow` has no callers. |
-| 9 | AP2 mandate-to-escrow bridge | partial | 6, 6.1 | direct | AP2 mandates validated, bound to an escrow, and funded via `fundWithAuthorization()` using the server signer. The mandate signature is never verified (`H1`, fix in flight), funding does not route through x402, and the x402 client has no production callers. |
+| 9 | AP2 mandate-to-escrow bridge | partial | 6, 6.1 | direct | AP2 mandates are EIP-712 signed and bound to an escrow, and the paired EIP-3009 `ReceiveWithAuthorization` signature is checked against the token `DOMAIN_SEPARATOR()` before funding via `fundWithAuthorization()` (`H1`). Funding does not route through x402, and the x402 client has no production callers. |
 | 10 | Real-time event subscriptions | done | 4.5, 6.1 | opinionated | Delivered L0/L1 first; deferred L2/L3 for staged rollout and privacy/control concerns. |
 | 11 | Emergency response protocol | done | 4.9 | opinionated | Owner-governed freeze/unfreeze/emergency resolve as initial incident-response baseline. |
 
@@ -103,7 +103,7 @@ Findings from an independent code audit. Contract items `H7` and `H9`-`H13` ship
 
 | ID | Item | Status | Alignment | Notes |
 |---|---|---|---|---|
-| H1 | AP2 mandate signature verification | in_progress | gap_fill | Verify the mandate signature and bind the signer to `authorization.from` before funding. Fix PR in flight separately; today the signature is only checked for non-emptiness (`go-server/internal/ap2/service.go:52`). |
+| H1 | AP2 mandate signature verification | done | gap_fill | EIP-712 mandate signatures recover to `signer_address` and `authorization.from`. The signed authorization includes the token, must equal the escrow amount and token, and its EIP-3009 signature is checked against the token `DOMAIN_SEPARATOR()` before any row write or relay. |
 | H2 | Indexer correctness | in_progress | gap_fill | Single-flight `RunOnce`, transactional cursor, confirmation depth. Today logs are marked processed before the handler succeeds and concurrent runs can move the cursor backwards. |
 | H3 | Solidity test base and expanded invariants | in_progress | gap_fill | Shared test base and mocks plus invariants across milestones, verifier stakes, ERC20, backup, and emergency. Today's invariant suite covers only single-shot ETH. Must land before `H7`. |
 | H4 | CreateEscrow request unification | in_progress | gap_fill | One shared request DTO and parser replaces three duplicated copies (HTTP, MCP, UCP); floor and panel validation move into the service. Prerequisite for `H5` and `H6`. |
@@ -116,7 +116,7 @@ Findings from an independent code audit. Contract items `H7` and `H9`-`H13` ship
 | H11 | Per-token complexity floor | blocked | gap_fill | Key the floor per token, or move it off-chain in USD terms. |
 | H12 | ZK public-input binding | blocked | gap_fill | Bind verifier public inputs to escrow, milestone, `taskSpecHash`, `submissionHash`, and worker, or document the slot as panel-gated evidence only. |
 | H13 | Quorum incentive design | blocked | gap_fill | Decide whether majority verifiers are paid and whether Tier-1 buyers may `dispute()` mid-quorum. |
-| H14 | SQLite migration squash | blocked | gap_fill | Squash 27 migrations into one baseline; forces a re-index of existing testnet databases. |
+| H14 | SQLite migration squash | blocked | gap_fill | Squash 28 migrations into one baseline; forces a re-index of existing testnet databases. |
 | H15 | Remove dead `owner` request-body field | blocked | gap_fill | Hard cutoff for body fields as authority, sequenced with `H8`. |
 
 ### V4 -- Ethical Safeguards and Ecosystem Maturity (ordered by planned implementation sequence)
@@ -229,9 +229,9 @@ Blocked on the owner's off-chain trust-model decision. Coupled with `H8` (princi
 
 #### H1: AP2 mandate signature verification
 
-- [ ] Verify the mandate signature over the mandate payload and require the recovered signer to match `signer_address` and `authorization.from`.
-- [ ] Reject unsigned or mismatched mandates in `ValidateMandate`, covering the HTTP, MCP, and CLI paths.
-- [ ] Tests with a real signed mandate and a tampered one.
+- [x] Verify the mandate signature over the mandate payload and require the recovered signer to match `signer_address` and `authorization.from`.
+- [x] Reject unsigned or mismatched mandates in `ValidateMandate`, covering the HTTP, MCP, and CLI paths.
+- [x] Tests with a real signed mandate and a tampered one. The signed authorization includes the token, must match the escrow amount and token exactly, and the EIP-3009 signature is verified against the token `DOMAIN_SEPARATOR()` before a row is written.
 
 #### H2: Indexer correctness
 

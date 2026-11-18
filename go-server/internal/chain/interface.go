@@ -17,6 +17,8 @@ type ChainClient interface {
 	FilterLogs(ctx context.Context, addresses []common.Address, topics [][]common.Hash, fromBlock, toBlock uint64) ([]types.Log, error)
 	SendTx(ctx context.Context, to common.Address, data []byte, value *big.Int) (*types.Transaction, error)
 	CallContract(ctx context.Context, to common.Address, data []byte) ([]byte, error)
+	// DomainSeparator reads DOMAIN_SEPARATOR() from an EIP-712 token.
+	DomainSeparator(ctx context.Context, token common.Address) (common.Hash, error)
 	TransactionReceipt(ctx context.Context, txHash common.Hash) (*types.Receipt, error)
 
 	// High-level escrow operations (V1 single-milestone)
