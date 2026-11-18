@@ -130,7 +130,7 @@ All AP2 requests wrap their payload in a `mandate_envelope`:
   "mandate_envelope": {
     "type": "payment",
     "payload": { ... },
-    "signature": "0x...",
+    "signature": "0x<65-byte EIP-712 mandate signature>",
     "signer_address": "0xBuyerAddress",
     "authorization": {
       "from": "0xBuyerAddress",
@@ -156,6 +156,7 @@ All AP2 requests wrap their payload in a `mandate_envelope`:
   "budget_amount": "5000000",
   "budget_currency": "USDC",
   "ttl_seconds": 3600,
+  "issued_at": 1740000000,
   "description": "optional"
 }
 ```
@@ -167,8 +168,9 @@ All AP2 requests wrap their payload in a `mandate_envelope`:
   "merchant": "0x...",
   "amount": "1000000",
   "currency": "USDC",
-  "items_hash": "0x...",
-  "ttl_seconds": 300
+  "items_hash": "0x<32-byte hex>",
+  "ttl_seconds": 300,
+  "issued_at": 1740000000
 }
 ```
 
@@ -179,9 +181,43 @@ All AP2 requests wrap their payload in a `mandate_envelope`:
   "amount": "1000000",
   "currency": "USDC",
   "recipient": "0x...",
-  "nonce": "0x..."
+  "nonce": "0x<32-byte hex>"
 }
 ```
+
+Payload rules: unknown fields are rejected; `signer` must equal `signer_address`;
+amounts are base-10 strings without leading zeros. Payment: `amount` must equal
+`authorization.value` and `recipient` must equal `authorization.to`. Cart: `amount`
+must equal `authorization.value`. Intent: `authorization.value` must not exceed
+`budget_amount`.
+
+### Mandate Signature (EIP-712)
+
+`signature` is a 65-byte `r || s || v` secp256k1 signature (0x hex, low-s, `v` in
+27/28 or 0/1) by `signer_address` over EIP-712 typed data. Unsigned, malformed, or
+wrong-signer mandates are rejected.
+
+Domain:
+
+```json
+{"name": "agent-escrow AP2", "version": "1", "chainId": <server CHAIN_ID>, "verifyingContract": <server FACTORY_ADDRESS>}
+```
+
+Types (the primary type is chosen by `type`; JSON `snake_case` fields map to the
+`camelCase` names below):
+
+```text
+Authorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)
+IntentMandate(address signer,uint256 budgetAmount,string budgetCurrency,uint256 ttlSeconds,uint256 issuedAt,string description,Authorization authorization)
+CartMandate(address signer,address merchant,uint256 amount,string currency,bytes32 itemsHash,uint256 ttlSeconds,uint256 issuedAt,Authorization authorization)
+PaymentMandate(address signer,uint256 amount,string currency,address recipient,bytes32 nonce,Authorization authorization)
+```
+
+`authorization` in the typed message is the envelope's EIP-3009 authorization
+(without `v`/`r`/`s`), so a mandate signature cannot be paired with a different
+transfer. Validity window: `valid_after < now < valid_before`, and for intent/cart
+mandates also `now < issued_at + ttl_seconds` (`issued_at` may be at most 5 minutes
+in the future). See `demo/ap2_demo.py` for a signing example with `eth_account`.
 
 ### `ap2 validate` (body required)
 

@@ -99,8 +99,12 @@ escrow-cli emergency actions --limit 50 --offset 0
 Enables buyers to fund escrows via EIP-3009 signed authorization (x402 payment
 rail) without holding ETH for gas. The server acts as the relayer.
 
-The core payload is a `mandate_envelope` containing the mandate type/payload, a
-cryptographic signature, and an EIP-3009 authorization for the token transfer.
+The core payload is a `mandate_envelope` containing the mandate type/payload, the
+buyer's EIP-712 mandate signature, and an EIP-3009 authorization for the token
+transfer. The mandate signature is required and must recover to `signer_address`;
+it covers the payload and the authorization, and is bound to the server's chain ID
+and factory address. Expired or not-yet-valid mandates are rejected. See
+`references/REFERENCE.md` for the typed-data definition.
 
 ```bash
 # 1. Dry-run validation before committing
@@ -114,7 +118,7 @@ escrow-cli ap2 validate --output json --data '{
       "recipient": "0xEscrowAddress",
       "nonce": "0xAbcDef..."
     },
-    "signature": "0x...",
+    "signature": "0x<65-byte EIP-712 mandate signature by the buyer>",
     "signer_address": "0xBuyerAddress",
     "authorization": {
       "from": "0xBuyerAddress",

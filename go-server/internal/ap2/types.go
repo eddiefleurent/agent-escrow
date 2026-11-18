@@ -1,6 +1,9 @@
 package ap2
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // MandateType identifies the AP2 mandate variant.
 type MandateType string
@@ -17,6 +20,7 @@ type IntentMandate struct {
 	BudgetAmount   string `json:"budget_amount"`
 	BudgetCurrency string `json:"budget_currency"`
 	TTLSeconds     int64  `json:"ttl_seconds"`
+	IssuedAt       int64  `json:"issued_at"`
 	Description    string `json:"description,omitempty"`
 }
 
@@ -28,6 +32,7 @@ type CartMandate struct {
 	Currency   string `json:"currency"`
 	ItemsHash  string `json:"items_hash"`
 	TTLSeconds int64  `json:"ttl_seconds"`
+	IssuedAt   int64  `json:"issued_at"`
 }
 
 // PaymentMandate is a compact credential for payment ecosystem visibility.
@@ -53,9 +58,14 @@ type EIP3009Authorization struct {
 }
 
 // MandateEnvelope wraps a mandate with its type, raw payload, and cryptographic signature.
+//
+// Payload is the JSON object for the mandate type (IntentMandate, CartMandate,
+// or PaymentMandate); unknown fields are rejected. Signature is the signer's
+// 65-byte EIP-712 signature over the typed mandate, which embeds Authorization.
+// See signature.go for the domain and type definitions.
 type MandateEnvelope struct {
 	Type          MandateType          `json:"type"`
-	Payload       map[string]any       `json:"payload"`
+	Payload       json.RawMessage      `json:"payload"`
 	Signature     string               `json:"signature"`
 	SignerAddress string               `json:"signer_address"`
 	Authorization EIP3009Authorization `json:"authorization"`

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """AP2 Mandate Bridge Demo — EIP-3009 gasless escrow funding on Base Sepolia.
 
-Signs an EIP-712 ReceiveWithAuthorization off-chain and funds a USDC escrow
-via POST /api/v1/ap2/fund, then completes the escrow lifecycle.
+Signs an EIP-712 ReceiveWithAuthorization off-chain, signs the AP2 payment
+mandate (EIP-712, domain "agent-escrow AP2" v1 bound to the chain and factory),
+funds a USDC escrow via POST /api/v1/ap2/fund, then completes the escrow lifecycle.
 """
 
 import json
@@ -41,6 +42,29 @@ RECEIVE_WITH_AUTH_TYPES = {
         {"name": "validAfter", "type": "uint256"},
         {"name": "validBefore", "type": "uint256"},
         {"name": "nonce", "type": "bytes32"},
+    ],
+}
+
+# AP2 mandate EIP-712 types. Must match go-server/internal/ap2/signature.go.
+AP2_DOMAIN_NAME = "agent-escrow AP2"
+AP2_DOMAIN_VERSION = "1"
+AP2_AUTHORIZATION_TYPE = [
+    {"name": "from", "type": "address"},
+    {"name": "to", "type": "address"},
+    {"name": "value", "type": "uint256"},
+    {"name": "validAfter", "type": "uint256"},
+    {"name": "validBefore", "type": "uint256"},
+    {"name": "nonce", "type": "bytes32"},
+]
+PAYMENT_MANDATE_TYPES = {
+    "Authorization": AP2_AUTHORIZATION_TYPE,
+    "PaymentMandate": [
+        {"name": "signer", "type": "address"},
+        {"name": "amount", "type": "uint256"},
+        {"name": "currency", "type": "string"},
+        {"name": "recipient", "type": "address"},
+        {"name": "nonce", "type": "bytes32"},
+        {"name": "authorization", "type": "Authorization"},
     ],
 }
 
@@ -195,6 +219,8 @@ def main():
     BASE_URL = os.getenv("BASE_URL", DEFAULT_BASE_URL).strip() or DEFAULT_BASE_URL
 
     buyer_key = require_env("PRIVATE_KEY")
+    # The AP2 mandate EIP-712 domain is bound to the server's factory deployment.
+    factory_addr = require_address_env("FACTORY_ADDRESS")
     worker_key = require_env("WORKER_KEY")
     verifier_addr = require_address_env("VERIFIER_ADDR")
     arbitrator_addr = require_address_env("ARBITRATOR_ADDR")
@@ -293,8 +319,33 @@ def main():
     print(f"    Valid before: {valid_before}")
     print(f"    v={v} r={r[:10]}... s={s[:10]}...")
 
-    # Step 3: Construct mandate envelope and call AP2 fund
-    print("  → Step 3: Fund via AP2 mandate bridge")
+    # Step 3: Sign the AP2 payment mandate. The mandate commits to the payload
+    # and to the exact EIP-3009 authorization above; the server rejects
+    # unsigned or mismatched mandates before relaying the authorization.
+    print("  → Step 3: Sign AP2 payment mandate (EIP-712)")
+    mandate_signable = encode_typed_data(
+        domain_data={
+            "name": AP2_DOMAIN_NAME,
+            "version": AP2_DOMAIN_VERSION,
+            "chainId": CHAIN_ID,
+            "verifyingContract": factory_addr,
+        },
+        message_types=PAYMENT_MANDATE_TYPES,
+        message_data={
+            "signer": buyer_addr,
+            "amount": int(ESCROW_AMOUNT),
+            "currency": "USDC",
+            "recipient": escrow_addr,
+            "nonce": nonce,
+            "authorization": message,
+        },
+    )
+    mandate_signed = Account.sign_message(mandate_signable, private_key=buyer_key)
+    mandate_signature = "0x" + mandate_signed.signature.hex()
+    print(f"    Mandate signature: {mandate_signature[:18]}...")
+
+    # Step 4: Construct mandate envelope and call AP2 fund
+    print("  → Step 4: Fund via AP2 mandate bridge")
     mandate_payload = {
         "escrow_id": escrow_id,
         "mandate_envelope": {
@@ -306,7 +357,7 @@ def main():
                 "recipient": escrow_addr,
                 "nonce": nonce_hex,
             },
-            "signature": f"0x{signed.signature.hex()}",
+            "signature": mandate_signature,
             "signer_address": buyer_addr,
             "authorization": {
                 "from": buyer_addr,
@@ -345,20 +396,20 @@ def main():
         print(f"    Fund tx failed: {fund_receipt}", file=sys.stderr)
         sys.exit(1)
 
-    # Step 4: Verify escrow is funded
-    print("  → Step 4: Verify escrow status")
+    # Step 5: Verify escrow is funded
+    print("  → Step 5: Verify escrow status")
     escrow_status = api_get(f"/api/v1/escrows/{escrow_id}")
     escrow_data = escrow_status.get("escrow", escrow_status)
     print(f"    Escrow status: {escrow_data.get('Status', escrow_data.get('status', '?'))}")
 
-    # Step 5: Check mandate record
-    print("  → Step 5: Check mandate record")
+    # Step 6: Check mandate record
+    print("  → Step 6: Check mandate record")
     mandate_resp = api_get(f"/api/v1/ap2/mandates/{mandate_id}")
     print(f"    Mandate status: {mandate_resp.get('status', '?')}")
     print(f"    Funding tx: {mandate_resp.get('funding_tx_hash', '?')}")
 
-    # Step 6: Complete lifecycle — worker submits
-    print("  → Step 6: Worker submits work")
+    # Step 7: Complete lifecycle — worker submits
+    print("  → Step 7: Worker submits work")
     sub_hash = subprocess.run(
         ["cast", "keccak", "ipfs://QmAP2_demo_submission"],
         capture_output=True, text=True, timeout=10,
@@ -374,8 +425,8 @@ def main():
         print(f"    Submit tx failed: {submit_receipt}", file=sys.stderr)
         sys.exit(1)
 
-    # Step 7: Buyer approves
-    print("  → Step 7: Buyer approves")
+    # Step 8: Buyer approves
+    print("  → Step 8: Buyer approves")
     approve_resp = api_post(f"/api/v1/escrows/{escrow_id}/approve", {"role": "buyer"})
     tx_approve = approve_resp["tx_hash"]
     print(f"    Approve tx: {tx_approve}")
@@ -384,8 +435,8 @@ def main():
         print(f"    Approve tx failed: {approve_receipt}", file=sys.stderr)
         sys.exit(1)
 
-    # Step 8: Final status
-    print("  → Step 8: Verify final state")
+    # Step 9: Final status
+    print("  → Step 9: Verify final state")
     final_status = api_get(f"/api/v1/escrows/{escrow_id}")
     final_data = final_status.get("escrow", final_status)
     print(f"    Final status: {final_data.get('Status', final_data.get('status', '?'))}")

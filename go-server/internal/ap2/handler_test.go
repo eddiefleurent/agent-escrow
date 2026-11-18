@@ -118,3 +118,43 @@ func TestGetMandateNotFound(t *testing.T) {
 		t.Fatalf("expected mandate not found error, got %q", body["error"])
 	}
 }
+
+func TestValidateMandateHTTP_SignatureEnforced(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := setupTestService(t)
+	h := NewHandler(svc)
+	buyer := newTestSigner(t)
+	attacker := newTestSigner(t)
+
+	cases := map[string]struct {
+		env   MandateEnvelope
+		valid bool
+	}{
+		"signed by buyer":    {signedPayment(t, svc, buyer, testEscrowAddr, "1000000"), true},
+		"signed by attacker": {sign(t, svc, attacker.key, paymentEnvelope(t, buyer.addr, testEscrowAddr, "1000000")), false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			body, err := json.Marshal(ValidateMandateRequest{MandateEnvelope: tc.env})
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/ap2/validate", bytes.NewReader(body))
+			rr := httptest.NewRecorder()
+
+			h.ValidateMandate(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", rr.Code)
+			}
+			var resp ValidateMandateResponse
+			if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if resp.Valid != tc.valid {
+				t.Fatalf("expected valid=%v, got %+v", tc.valid, resp)
+			}
+		})
+	}
+}

@@ -1,8 +1,8 @@
 package ap2
 
 import (
+	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -33,151 +33,57 @@ type Service struct {
 	Idx   *indexer.Indexer
 	Cfg   *config.Config
 	X402  *x402.Client
+	// Now overrides the clock used for mandate validity checks; nil means time.Now.
+	Now func() time.Time
 }
 
-// ValidateMandate checks that a mandate envelope is well-formed and has valid constraints.
+// ValidateMandate checks that a mandate envelope is well-formed, carries a valid
+// EIP-712 signature from signer_address, and is inside its validity window.
 func (s *Service) ValidateMandate(_ context.Context, env MandateEnvelope) error {
-	if env.Type == "" {
-		return errors.New("mandate type is required")
-	}
-	if env.Type != MandateTypeIntent && env.Type != MandateTypeCart && env.Type != MandateTypePayment {
-		return fmt.Errorf("unsupported mandate type: %s", env.Type)
-	}
-	if env.SignerAddress == "" {
-		return errors.New("signer_address is required")
-	}
-	if !common.IsHexAddress(env.SignerAddress) {
-		return fmt.Errorf("invalid signer_address: %s", env.SignerAddress)
-	}
-	if env.Signature == "" {
-		return errors.New("signature is required")
-	}
-	if env.Authorization.From == "" {
-		return errors.New("authorization.from is required")
-	}
-	if !common.IsHexAddress(env.Authorization.From) {
-		return fmt.Errorf("invalid authorization.from: %s", env.Authorization.From)
-	}
-
-	signerNorm := strings.ToLower(common.HexToAddress(env.SignerAddress).Hex())
-	fromNorm := strings.ToLower(common.HexToAddress(env.Authorization.From).Hex())
-	if signerNorm != fromNorm {
-		return errors.New("signer_address and authorization.from must match")
-	}
-
-	if env.Authorization.Value == "" {
-		return errors.New("authorization.value is required")
-	}
-	if _, ok := new(big.Int).SetString(env.Authorization.Value, 10); !ok {
-		return fmt.Errorf("invalid authorization.value: %s", env.Authorization.Value)
-	}
-
-	// Validate ValidAfter / ValidBefore are parseable non-negative integers
-	// and that ValidBefore >= ValidAfter. These are used by FundViaMandate
-	// for the EIP-3009 transferWithAuthorization call.
-	validAfter := new(big.Int)
-	if env.Authorization.ValidAfter != "" {
-		va, ok := validAfter.SetString(env.Authorization.ValidAfter, 10)
-		if !ok || va.Sign() < 0 {
-			return fmt.Errorf("invalid authorization.valid_after: %s", env.Authorization.ValidAfter)
-		}
-	}
-	if env.Authorization.ValidBefore == "" {
-		return errors.New("authorization.valid_before is required")
-	}
-	validBefore, ok := new(big.Int).SetString(env.Authorization.ValidBefore, 10)
-	if !ok || validBefore.Sign() < 0 {
-		return fmt.Errorf("invalid authorization.valid_before: %s", env.Authorization.ValidBefore)
-	}
-	if validBefore.Cmp(validAfter) < 0 {
-		return fmt.Errorf("authorization.valid_before (%s) must be >= valid_after (%s)", validBefore, validAfter)
-	}
-
-	if env.Authorization.Nonce == "" {
-		return errors.New("authorization.nonce is required")
-	}
-	if _, err := hexToBytes32(env.Authorization.Nonce); err != nil {
-		return fmt.Errorf("invalid authorization.nonce: %w", err)
-	}
-	if env.Authorization.R == "" {
-		return errors.New("authorization.r is required")
-	}
-	if _, err := hexToBytes32(env.Authorization.R); err != nil {
-		return fmt.Errorf("invalid authorization.r: %w", err)
-	}
-	if env.Authorization.S == "" {
-		return errors.New("authorization.s is required")
-	}
-	if _, err := hexToBytes32(env.Authorization.S); err != nil {
-		return fmt.Errorf("invalid authorization.s: %w", err)
-	}
-
-	return nil
+	_, err := s.verifyMandate(env)
+	return err
 }
 
-// BindToEscrow links a validated mandate to an escrow, verifying amount constraints.
-func (s *Service) BindToEscrow(ctx context.Context, env MandateEnvelope, escrowID int64) (*EscrowBinding, error) {
+// bindToEscrow links a verified mandate to an escrow, checking it against the
+// escrow's buyer, address, and amount. It takes a *verifiedMandate so that an
+// unverified envelope can never be bound.
+func (s *Service) bindToEscrow(ctx context.Context, vm *verifiedMandate, escrowID int64) (*EscrowBinding, error) {
 	escrow, err := s.DB.GetEscrow(ctx, escrowID)
 	if err != nil {
 		return nil, fmt.Errorf("get escrow: %w", err)
 	}
 
-	signerNorm := strings.ToLower(common.HexToAddress(env.SignerAddress).Hex())
-	buyerNorm := strings.ToLower(common.HexToAddress(escrow.Buyer).Hex())
-	if signerNorm != buyerNorm {
+	if !common.IsHexAddress(escrow.Buyer) || vm.Signer != common.HexToAddress(escrow.Buyer) {
 		return nil, fmt.Errorf("%w: mandate signer must be the escrow buyer", ErrBindValidation)
 	}
 
 	// EIP-3009 authorization recipient must match the escrow contract address
-	authToNorm := strings.ToLower(common.HexToAddress(env.Authorization.To).Hex())
-	escrowAddrNorm := strings.ToLower(common.HexToAddress(escrow.EscrowAddress).Hex())
-	if authToNorm != escrowAddrNorm {
-		return nil, fmt.Errorf("%w: authorization.to (%s) does not match escrow address (%s)", ErrBindValidation, authToNorm, escrowAddrNorm)
+	if !common.IsHexAddress(escrow.EscrowAddress) || vm.Auth.To != common.HexToAddress(escrow.EscrowAddress) {
+		return nil, fmt.Errorf("%w: authorization.to (%s) does not match escrow address (%s)", ErrBindValidation, vm.Auth.To.Hex(), escrow.EscrowAddress)
 	}
 
-	authValue, ok := new(big.Int).SetString(env.Authorization.Value, 10)
-	if !ok {
-		return nil, fmt.Errorf("%w: invalid authorization value", ErrBindValidation)
-	}
 	escrowAmount, ok := new(big.Int).SetString(escrow.Amount, 10)
 	if !ok {
 		return nil, errors.New("invalid escrow amount")
 	}
-	if authValue.Cmp(escrowAmount) < 0 {
-		return nil, fmt.Errorf("%w: authorization value (%s) is less than escrow amount (%s)", ErrBindValidation, authValue, escrowAmount)
+	if vm.Auth.Value.Cmp(escrowAmount) < 0 {
+		return nil, fmt.Errorf("%w: authorization value (%s) is less than escrow amount (%s)", ErrBindValidation, vm.Auth.Value, escrowAmount)
 	}
 
-	mandateHash, err := hashMandate(env)
-	if err != nil {
-		return nil, err
-	}
+	// The mandate hash is the EIP-712 digest the signer signed, so anyone can
+	// recompute it from the mandate contents.
+	mandateHash := hex.EncodeToString(vm.Digest.Bytes())
 	mandateID := mandateHash[:16]
 
-	payloadJSON, err := json.Marshal(env.Payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal payload: %w", err)
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, vm.RawPayload); err != nil {
+		return nil, fmt.Errorf("compact payload: %w", err)
 	}
 
-	var budgetAmount, budgetCurrency string
-	if env.Type == MandateTypeIntent {
-		if v, ok := env.Payload["budget_amount"].(string); ok {
-			budgetAmount = v
-		}
-		if v, ok := env.Payload["budget_currency"].(string); ok {
-			budgetCurrency = v
-		}
-	}
-
-	var expiresAt *string
-	if env.Type == MandateTypeIntent {
-		if ttl, ok := env.Payload["ttl_seconds"].(float64); ok && ttl > 0 {
-			t := time.Now().Add(time.Duration(ttl) * time.Second).UTC().Format(time.RFC3339)
-			expiresAt = &t
-		}
-	}
-
-	err = s.DB.CreateAP2Mandate(ctx, mandateID, string(env.Type), mandateHash, signerNorm,
-		budgetAmount, budgetCurrency, expiresAt, &escrowID, string(payloadJSON))
+	expiresAt := vm.ExpiresAt.UTC().Format(time.RFC3339)
+	signerNorm := strings.ToLower(vm.Signer.Hex())
+	err = s.DB.CreateAP2Mandate(ctx, mandateID, string(vm.Type), mandateHash, signerNorm,
+		vm.BudgetAmount, vm.BudgetCurrency, &expiresAt, &escrowID, compact.String())
 	if err != nil {
 		return nil, fmt.Errorf("store mandate: %w", err)
 	}
@@ -192,11 +98,12 @@ func (s *Service) BindToEscrow(ctx context.Context, env MandateEnvelope, escrowI
 
 // FundViaMandate orchestrates the full flow: validate -> bind -> fund on-chain.
 func (s *Service) FundViaMandate(ctx context.Context, escrowID int64, env MandateEnvelope) (*FundViaMandateResponse, error) {
-	if err := s.ValidateMandate(ctx, env); err != nil {
+	vm, err := s.verifyMandate(env)
+	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidMandate, err)
 	}
 
-	binding, err := s.BindToEscrow(ctx, env, escrowID)
+	binding, err := s.bindToEscrow(ctx, vm, escrowID)
 	if err != nil {
 		if errors.Is(err, ErrBindValidation) {
 			return nil, fmt.Errorf("%w: %w", ErrInvalidMandate, err)
@@ -204,38 +111,9 @@ func (s *Service) FundViaMandate(ctx context.Context, escrowID int64, env Mandat
 		return nil, err
 	}
 
-	escrow, err := s.DB.GetEscrow(ctx, escrowID)
-	if err != nil {
-		return nil, fmt.Errorf("get escrow: %w", err)
-	}
-
-	escrowAddr := common.HexToAddress(escrow.EscrowAddress)
-	from := common.HexToAddress(env.Authorization.From)
-
-	validAfter, _ := new(big.Int).SetString(env.Authorization.ValidAfter, 10)
-	if validAfter == nil {
-		validAfter = big.NewInt(0)
-	}
-	validBefore, _ := new(big.Int).SetString(env.Authorization.ValidBefore, 10)
-	if validBefore == nil {
-		return nil, errors.New("invalid authorization.valid_before")
-	}
-
-	nonceBytes, err := hexToBytes32(env.Authorization.Nonce)
-	if err != nil {
-		return nil, fmt.Errorf("invalid authorization.nonce: %w", err)
-	}
-
-	rBytes, err := hexToBytes32(env.Authorization.R)
-	if err != nil {
-		return nil, fmt.Errorf("invalid authorization.r: %w", err)
-	}
-	sBytes, err := hexToBytes32(env.Authorization.S)
-	if err != nil {
-		return nil, fmt.Errorf("invalid authorization.s: %w", err)
-	}
-
-	tx, err := s.Chain.FundWithAuthorization(ctx, escrowAddr, from, validAfter, validBefore, nonceBytes, env.Authorization.V, rBytes, sBytes)
+	escrowAddr := vm.Auth.To
+	a := vm.Auth
+	tx, err := s.Chain.FundWithAuthorization(ctx, escrowAddr, a.From, a.ValidAfter, a.ValidBefore, a.Nonce, a.V, a.R, a.S)
 	if err != nil {
 		return nil, fmt.Errorf("fund with authorization: %w", err)
 	}
@@ -256,15 +134,6 @@ func (s *Service) FundViaMandate(ctx context.Context, escrowID int64, env Mandat
 		MandateID: binding.MandateID,
 		Status:    "funded",
 	}, nil
-}
-
-func hashMandate(env MandateEnvelope) (string, error) {
-	data, err := json.Marshal(env)
-	if err != nil {
-		return "", fmt.Errorf("marshal mandate for hashing: %w", err)
-	}
-	h := sha256.Sum256(data)
-	return hex.EncodeToString(h[:]), nil
 }
 
 func hexToBytes32(s string) ([32]byte, error) {

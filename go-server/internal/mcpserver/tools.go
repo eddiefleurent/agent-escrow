@@ -303,8 +303,8 @@ type fundViaMandateArgs struct {
 	EscrowID        FlexibleString `json:"escrow_id" jsonschema:"Database escrow ID to fund"`
 	MandateType     string         `json:"mandate_type" jsonschema:"AP2 mandate type: intent, cart, or payment"`
 	SignerAddress   string         `json:"signer_address" jsonschema:"Mandate signer address (must be escrow buyer)"`
-	Signature       string         `json:"signature" jsonschema:"Cryptographic signature of the mandate"`
-	Payload         string         `json:"payload,omitempty" jsonschema:"JSON string of mandate payload (budget, items, etc.)"`
+	Signature       string         `json:"signature" jsonschema:"65-byte EIP-712 signature (0x hex) by signer_address over the typed mandate (domain: name 'agent-escrow AP2', version '1', server chainId, verifyingContract = factory); covers the payload and the EIP-3009 authorization"`
+	Payload         string         `json:"payload" jsonschema:"JSON string of the mandate payload for mandate_type (intent/cart require issued_at and ttl_seconds); unknown fields are rejected"`
 	AuthFrom        string         `json:"auth_from" jsonschema:"EIP-3009 authorization from address"`
 	AuthTo          string         `json:"auth_to" jsonschema:"EIP-3009 authorization to address (must match escrow address)"`
 	AuthValue       string         `json:"auth_value" jsonschema:"EIP-3009 authorization value"`
@@ -2121,12 +2121,10 @@ func (s *Server) handleFundViaMandate(ctx context.Context, req *mcp.CallToolRequ
 		return textResult(fmt.Sprintf("invalid auth_v: %v", err)), nil, nil
 	}
 
-	payload := map[string]any{}
-	if args.Payload != "" {
-		if err := json.Unmarshal([]byte(args.Payload), &payload); err != nil {
-			return textResult(fmt.Sprintf("invalid payload JSON: %v", err)), nil, nil
-		}
+	if !json.Valid([]byte(args.Payload)) {
+		return textResult("invalid payload JSON: payload must be a JSON object"), nil, nil
 	}
+	payload := json.RawMessage(args.Payload)
 
 	authTo := args.AuthTo
 	if authTo == "" {
