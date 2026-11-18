@@ -1,29 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.34;
 
-import {Test} from "forge-std/Test.sol";
+import {BaseEscrowTest} from "./BaseEscrowTest.sol";
 import {TaskEscrowFactory} from "../src/TaskEscrowFactory.sol";
 import {TaskEscrow} from "../src/TaskEscrow.sol";
 
-contract TaskEscrowMilestoneTest is Test {
-    TaskEscrowFactory internal factory;
-
-    address internal owner = makeAddr("owner");
-    address internal buyer = makeAddr("buyer");
-    address internal worker = makeAddr("worker");
-    address internal verifier = makeAddr("verifier");
-    address internal arbitrator = makeAddr("arbitrator");
-    address internal treasury = makeAddr("treasury");
-
+contract TaskEscrowMilestoneTest is BaseEscrowTest {
     uint256 internal constant TOTAL = 3 ether;
-    uint256 internal constant STAKE = 0.3 ether;
-    uint16 internal constant FEE_BPS = 100; // 1%
-    uint64 internal constant REVIEW = 86_400;
-    uint64 internal constant DISPUTE = 172_800;
-    uint64 internal constant ARB_TIMEOUT = 7 days;
+    uint256 internal constant MS_STAKE = 0.3 ether;
 
-    function setUp() public {
-        factory = new TaskEscrowFactory(FEE_BPS, FEE_BPS, treasury, owner);
+    function setUp() public override {
+        super.setUp();
         vm.deal(buyer, 100 ether);
         vm.deal(worker, 10 ether);
     }
@@ -46,38 +33,12 @@ contract TaskEscrowMilestoneTest is Test {
     }
 
     function _create3MilestoneEscrowWithStake(uint256 stake) internal returns (TaskEscrow) {
-        (, address addr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: TOTAL,
-                workerStake: stake,
-                submissionDeadline: uint64(block.timestamp + 21 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec-ms"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: _milestoneParams3()
-            })
-        );
-        return TaskEscrow(addr);
-    }
-
-    function _fundEscrow(TaskEscrow e) internal {
-        vm.prank(buyer);
-        e.fund{value: TOTAL}();
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.amount = TOTAL;
+        params.workerStake = stake;
+        params.submissionDeadline = uint64(block.timestamp + 21 days);
+        params.milestones = _milestoneParams3();
+        return _create(params);
     }
 
     function _submitMilestone(TaskEscrow e, uint8 idx) internal {
@@ -97,7 +58,7 @@ contract TaskEscrowMilestoneTest is Test {
 
     function testMilestoneHappyPath3Approved() public {
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
 
         uint256 workerBefore = worker.balance;
         uint256 treasuryBefore = treasury.balance;
@@ -118,7 +79,7 @@ contract TaskEscrowMilestoneTest is Test {
 
     function testMilestonePartialCompletionAbort() public {
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
 
         // Approve milestones 0 and 1
         _submitMilestone(e, 0);
@@ -141,7 +102,7 @@ contract TaskEscrowMilestoneTest is Test {
 
     function testMilestoneDisputeResolveAbort() public {
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
 
         // Approve milestone 0
         _submitMilestone(e, 0);
@@ -168,7 +129,7 @@ contract TaskEscrowMilestoneTest is Test {
 
     function testMilestoneTimeoutAbortRemaining() public {
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
 
         // Milestone 0 times out
         vm.warp(block.timestamp + 8 days);
@@ -187,7 +148,7 @@ contract TaskEscrowMilestoneTest is Test {
 
     function testMilestoneArbitratorTimeoutAbort() public {
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
 
         _submitMilestone(e, 0);
         vm.prank(buyer);
@@ -209,7 +170,7 @@ contract TaskEscrowMilestoneTest is Test {
 
     function testMilestoneSubmitOnlyWorker() public {
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
 
         vm.expectRevert(TaskEscrow.Unauthorized.selector);
         vm.prank(buyer);
@@ -218,7 +179,7 @@ contract TaskEscrowMilestoneTest is Test {
 
     function testMilestoneApproveOnlyBuyerOrVerifier() public {
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
         _submitMilestone(e, 0);
 
         vm.expectRevert(TaskEscrow.Unauthorized.selector);
@@ -228,7 +189,7 @@ contract TaskEscrowMilestoneTest is Test {
 
     function testMilestoneDisputeOnlyBuyer() public {
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
         _submitMilestone(e, 0);
 
         vm.expectRevert(TaskEscrow.Unauthorized.selector);
@@ -238,7 +199,7 @@ contract TaskEscrowMilestoneTest is Test {
 
     function testMilestoneResolveOnlyArbitrator() public {
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
         _submitMilestone(e, 0);
         vm.prank(buyer);
         e.disputeMilestone(0, "ipfs://reason");
@@ -250,7 +211,7 @@ contract TaskEscrowMilestoneTest is Test {
 
     function testMilestoneAbortOnlyBuyer() public {
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
         _submitMilestone(e, 0);
         vm.prank(buyer);
         e.disputeMilestone(0, "ipfs://reason");
@@ -266,7 +227,7 @@ contract TaskEscrowMilestoneTest is Test {
 
     function testMilestoneWrongIndexReverts() public {
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
 
         vm.expectRevert(TaskEscrow.InvalidMilestoneIndex.selector);
         vm.prank(worker);
@@ -277,7 +238,7 @@ contract TaskEscrowMilestoneTest is Test {
 
     function testMilestoneV1SubmitReverts() public {
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
 
         // Multi-milestone escrows must use submitMilestone(). V1 submit()
         // is restricted to single-milestone mode.
@@ -290,7 +251,7 @@ contract TaskEscrowMilestoneTest is Test {
 
     function testMilestoneAbortRequiresTerminalState() public {
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
 
         // Current milestone is Pending, abort should fail
         vm.expectRevert(TaskEscrow.InvalidState.selector);
@@ -300,7 +261,7 @@ contract TaskEscrowMilestoneTest is Test {
 
     function testMilestoneAbortRequiresTerminalStateSubmitted() public {
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
         _submitMilestone(e, 0);
 
         // Current milestone is Submitted, abort should fail
@@ -312,11 +273,11 @@ contract TaskEscrowMilestoneTest is Test {
     // ── Worker stake settlement across mixed milestone outcomes ──
 
     function testMilestoneWorkerStakeMixedOutcomes() public {
-        TaskEscrow e = _create3MilestoneEscrowWithStake(STAKE);
+        TaskEscrow e = _create3MilestoneEscrowWithStake(MS_STAKE);
 
-        _fundEscrow(e);
+        _fund(e);
         vm.prank(worker);
-        e.depositStake{value: STAKE}();
+        e.depositStake{value: MS_STAKE}();
 
         uint256 buyerBefore = buyer.balance;
         uint256 workerBefore = worker.balance;
@@ -340,10 +301,10 @@ contract TaskEscrowMilestoneTest is Test {
         assertEq(uint256(e.status()), uint256(TaskEscrow.Status.Refunded));
 
         // Stake proportional to approved amounts: 1/3 of total was approved
-        // stakeReturn = STAKE * 1/3 = 0.1 ether
+        // stakeReturn = MS_STAKE * 1/3 = 0.1 ether
         uint256 totalOut =
             (worker.balance - workerBefore) + (buyer.balance - buyerBefore) + (treasury.balance - treasuryBefore);
-        assertEq(totalOut, TOTAL + STAKE);
+        assertEq(totalOut, TOTAL + MS_STAKE);
         assertEq(address(e).balance, 0);
     }
 
@@ -354,34 +315,11 @@ contract TaskEscrowMilestoneTest is Test {
         ms[0] = TaskEscrowFactory.CreateMilestoneParams({
             amount: 1 ether, submissionDeadline: uint64(block.timestamp + 7 days)
         });
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.amount = 1 ether;
+        params.milestones = ms;
 
-        (, address addr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: 1 ether,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec-single"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: ms
-            })
-        );
-        TaskEscrow e = TaskEscrow(addr);
+        TaskEscrow e = _create(params);
 
         assertEq(e.milestoneCount(), 1);
 
@@ -410,7 +348,7 @@ contract TaskEscrowMilestoneTest is Test {
 
     function testMilestoneFeeCalculation() public {
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
 
         uint256 workerBefore = worker.balance;
         uint256 treasuryBefore = treasury.balance;
@@ -428,7 +366,7 @@ contract TaskEscrowMilestoneTest is Test {
 
     function testMilestoneApproveByVerifier() public {
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
         _submitMilestone(e, 0);
 
         vm.prank(verifier);
@@ -440,7 +378,7 @@ contract TaskEscrowMilestoneTest is Test {
 
     function testMilestoneRejectByVerifier() public {
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
         _submitMilestone(e, 0);
 
         vm.prank(verifier);
@@ -454,7 +392,7 @@ contract TaskEscrowMilestoneTest is Test {
 
     function testMilestoneSilenceEscalation() public {
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
         _submitMilestone(e, 0);
 
         vm.warp(block.timestamp + REVIEW + 1);
@@ -475,33 +413,12 @@ contract TaskEscrowMilestoneTest is Test {
             });
         }
 
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.amount = 17 ether;
+        params.submissionDeadline = uint64(block.timestamp + 17 days);
+        params.milestones = ms;
         vm.expectRevert(TaskEscrow.TooManyMilestones.selector);
-        factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: 17 ether,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 17 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: ms
-            })
-        );
+        factory.createEscrow(params);
     }
 
     function testMilestoneAmountMismatchReverts() public {
@@ -513,33 +430,14 @@ contract TaskEscrowMilestoneTest is Test {
             amount: 1 ether, submissionDeadline: uint64(block.timestamp + 14 days)
         });
 
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.amount = 3 ether;
+        params // Doesn't match 2 ether total
+        .workerStake = 0;
+        params.submissionDeadline = uint64(block.timestamp + 14 days);
+        params.milestones = ms;
         vm.expectRevert(TaskEscrow.MilestoneAmountMismatch.selector);
-        factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: 3 ether, // Doesn't match 2 ether total
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 14 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: ms
-            })
-        );
+        factory.createEscrow(params);
     }
 
     function testMilestoneDeadlineOrderReverts() public {
@@ -552,33 +450,12 @@ contract TaskEscrowMilestoneTest is Test {
             submissionDeadline: uint64(block.timestamp + 7 days) // Before ms[0]
         });
 
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.amount = 2 ether;
+        params.submissionDeadline = uint64(block.timestamp + 14 days);
+        params.milestones = ms;
         vm.expectRevert(TaskEscrow.InvalidMilestoneDeadlineOrder.selector);
-        factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: 2 ether,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 14 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: ms
-            })
-        );
+        factory.createEscrow(params);
     }
 
     // ── Fuzz: conservation of funds across milestones ──
@@ -588,7 +465,7 @@ contract TaskEscrowMilestoneTest is Test {
         vm.assume(bps1 <= 10_000);
 
         TaskEscrow e = _create3MilestoneEscrow();
-        _fundEscrow(e);
+        _fund(e);
 
         uint256 buyerBefore = buyer.balance;
         uint256 workerBefore = worker.balance;
@@ -627,45 +504,23 @@ contract TaskEscrowMilestoneTest is Test {
                 amount: 0.1 ether, submissionDeadline: uint64(block.timestamp + (i + 1) * 1 days)
             });
         }
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.amount = 1.6 ether;
+        params.submissionDeadline = uint64(block.timestamp + 16 days);
+        params.milestones = ms;
 
-        (, address addr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: 1.6 ether,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 16 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec-16"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: ms
-            })
-        );
-        TaskEscrow e = TaskEscrow(addr);
+        TaskEscrow e = _create(params);
         assertEq(e.milestoneCount(), 16);
     }
 
     // ── Worker stake with all milestones approved ──
 
     function testMilestoneWorkerStakeAllApproved() public {
-        TaskEscrow e = _create3MilestoneEscrowWithStake(STAKE);
-        _fundEscrow(e);
+        TaskEscrow e = _create3MilestoneEscrowWithStake(MS_STAKE);
+        _fund(e);
 
         vm.prank(worker);
-        e.depositStake{value: STAKE}();
+        e.depositStake{value: MS_STAKE}();
 
         uint256 workerBefore = worker.balance;
 
@@ -677,7 +532,7 @@ contract TaskEscrowMilestoneTest is Test {
         assertEq(uint256(e.status()), uint256(TaskEscrow.Status.Settled));
         // Worker should get full stake back
         uint256 totalFee = (TOTAL * FEE_BPS) / 10_000;
-        assertEq(worker.balance, workerBefore + TOTAL - totalFee + STAKE);
+        assertEq(worker.balance, workerBefore + TOTAL - totalFee + MS_STAKE);
         assertEq(address(e).balance, 0);
     }
 }

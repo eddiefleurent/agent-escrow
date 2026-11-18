@@ -19,7 +19,7 @@ test-unit:
 	forge test --match-path "test/TaskEscrow*.t.sol" -vv
 
 test-invariant:
-	forge test --match-contract TaskEscrowInvariantsTest -vv
+	forge test --match-contract "Invariants" -vv
 
 fmt:
 	forge fmt
