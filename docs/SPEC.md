@@ -254,8 +254,9 @@ These must hold for every escrow at all times:
 
 1. **Balance conservation**:
    - At terminal completion, all escrow principal and worker stake has been distributed. Verifier-stake refunds and slashes are pull-based (`withdrawable`), so the contract balance then equals the sum of unclaimed `withdrawable` credits and reaches `0` only once every credit is withdrawn.
-   - Before terminal completion, escrow balance equals remaining undistributed escrow principal plus any still-held worker stake.
-   - For single-shot escrows, this is `amount` (or `amount + workerStake` when staked).
+   - Before funding (`Created`), the escrow balance is `0`.
+   - Once funded and before terminal completion, escrow balance equals remaining undistributed escrow principal + any still-held worker stake + active verifier stakes (`quorumStakeCount * verifierStakePerVerifier`) + unclaimed `withdrawable` credits (e.g. verifier stakes released by `dispute`, `escalateSilence`, or `expireNoQuorum`).
+   - For funded single-shot escrows, the remaining undistributed escrow principal is `amount`.
    - For milestone escrows, each approved/resolved partial payout, each milestone timeout refund, and each `abortRemainingMilestones` refund reduces the remaining undistributed escrow principal before terminal completion.
 2. **Terminal exclusivity**: Settled, Refunded, and Cancelled are mutually exclusive. No function can transition from a terminal state to a non-terminal state.
 3. **Fund conservation**: total funds distributed from the escrow principal and worker stake never exceeds `amount + workerStake`. Verifier stake flows are governed separately by invariant 9.

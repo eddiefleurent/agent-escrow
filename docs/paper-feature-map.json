@@ -221,7 +221,7 @@
       {
         "id": "S6-MCP",
         "status": "implemented",
-        "notes": "Escrow lifecycle and extension tooling integrated (50 tools registered in go-server/internal/mcpserver: 35 core, 15 behind UCP, A2A, and emergency opt-ins); deeper monitoring semantics remain future work. Caller identity is a tool argument and is not authenticated (see P4.7).",
+        "notes": "Escrow lifecycle and extension tooling integrated (50 tools registered in go-server/internal/mcpserver: 36 enabled by default (including the opt-out events and A2A tools), 14 behind the UCP and emergency opt-ins); deeper monitoring semantics remain future work. Caller identity is a tool argument and is not authenticated (see P4.7).",
         "roadmap_items": [
           "10",
           "13",
@@ -399,7 +399,7 @@
         "4.9"
       ],
       "decision_vs_paper": "Used owner-governed freeze/unfreeze and emergency resolve controls as immediate incident-response baseline.",
-      "residual_gap": "Decentralized emergency governance remains open. The server key is the factory owner on the recorded deployment; HTTP and MCP emergency surfaces are opt-in and token-gated since SH1 (PR #55)."
+      "residual_gap": "Decentralized emergency governance remains open. The server key is the factory owner on the recorded deployment; Since SH1 (PR #55), HTTP emergency routes are opt-in and bearer-token-gated; MCP emergency tools are a separate local-stdio opt-in (`MCP_EMERGENCY_ENABLED`) with no token, and grant the attached client owner rights."
     },
     {
       "item_id": "12",
