@@ -110,7 +110,10 @@ func (sh *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request)
 	upgrader := websocket.Upgrader{}
 	if len(sh.allowedOrigins) > 0 {
 		upgrader.CheckOrigin = func(r *http.Request) bool {
-			return sh.allowAllOrigins || sh.allowedOrigins[r.Header.Get("Origin")]
+			// Non-browser clients send no Origin and are not a CSRF vector;
+			// match gorilla's default and allow them.
+			origin := r.Header.Get("Origin")
+			return origin == "" || sh.allowAllOrigins || sh.allowedOrigins[origin]
 		}
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)

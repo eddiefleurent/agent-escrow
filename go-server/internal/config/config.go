@@ -323,7 +323,7 @@ func Load() (*Config, error) {
 		EventsHeartbeatInterval: eventsHeartbeatInterval,
 		EmergencyEnabled:        emergencyEnabled,
 		MCPEmergencyEnabled:     mcpEmergencyEnabled,
-		AdminToken:              os.Getenv("ADMIN_TOKEN"),
+		AdminToken:              strings.TrimSpace(os.Getenv("ADMIN_TOKEN")),
 		OwnerAddress:            strings.ToLower(strings.TrimSpace(os.Getenv("OWNER_ADDRESS"))),
 	}
 
@@ -406,8 +406,10 @@ func (c *Config) Validate() ValidationResult {
 		}
 	}
 
-	if c.EmergencyEnabled && utf8.RuneCountInString(strings.TrimSpace(c.AdminToken)) < 32 {
-		r.Errors = append(r.Errors, "ADMIN_TOKEN must be at least 32 characters when EMERGENCY_ENABLED is true")
+	// ADMIN_TOKEN also guards always-registered admin routes (e.g. DCT audit),
+	// so the minimum applies whenever it is set, not only with emergency on.
+	if (c.EmergencyEnabled || c.AdminToken != "") && utf8.RuneCountInString(c.AdminToken) < 32 {
+		r.Errors = append(r.Errors, "ADMIN_TOKEN must be at least 32 characters (required when EMERGENCY_ENABLED is true)")
 	}
 
 	if (c.EmergencyEnabled || c.MCPEmergencyEnabled) && strings.TrimSpace(c.OwnerAddress) == "" {

@@ -340,6 +340,8 @@ func TestWebSocketRouterOriginPolicy(t *testing.T) {
 		{name: "explicit wildcard", allowlist: []string{"*"}, origin: crossOrigin, want: http.StatusSwitchingProtocols},
 		{name: "same-origin browser", sameHost: true, want: http.StatusSwitchingProtocols},
 		{name: "non-browser client", want: http.StatusSwitchingProtocols},
+		{name: "non-browser client with allowlist", allowlist: []string{crossOrigin}, want: http.StatusSwitchingProtocols},
+		{name: "origin outside allowlist", allowlist: []string{crossOrigin}, origin: "https://evil.example", want: http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := baseRouterConfig()

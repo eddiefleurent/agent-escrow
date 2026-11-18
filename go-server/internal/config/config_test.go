@@ -675,6 +675,26 @@ func TestLoad_HTTPEmergencyRequiresAdminToken(t *testing.T) {
 	}
 }
 
+func TestLoad_AdminTokenStrengthWithoutEmergency(t *testing.T) {
+	clearEnv(t)
+	// ADMIN_TOKEN also guards always-on admin routes (DCT audit), so a weak
+	// token must be rejected even when emergency endpoints are disabled.
+	t.Setenv("ADMIN_TOKEN", "abc")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "ADMIN_TOKEN") {
+		t.Fatalf("expected short ADMIN_TOKEN to be rejected, got %v", err)
+	}
+
+	token := strings.Repeat("y", 32)
+	t.Setenv("ADMIN_TOKEN", "  "+token+"\n")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AdminToken != token {
+		t.Fatalf("expected ADMIN_TOKEN to be trimmed, got %q", cfg.AdminToken)
+	}
+}
+
 func TestLoad_MCPOnlyEmergency(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("MCP_TRANSPORT", "stdio")
