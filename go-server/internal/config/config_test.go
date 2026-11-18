@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"net"
 	"os"
 	"strings"
 	"testing"
@@ -29,6 +30,7 @@ func clearEnv(t *testing.T) {
 		"MCP_TRANSPORT", "CORS_ORIGINS",
 		"EMERGENCY_ENABLED", "MCP_EMERGENCY_ENABLED", "ADMIN_TOKEN",
 		"REQUEST_TIMEOUT", "TX_TIMEOUT",
+		"MAX_BODY_BYTES", "RATE_LIMIT_RPS", "RATE_LIMIT_BURST", "TRUSTED_PROXIES",
 		"COMPLEXITY_FLOOR", "REBID_COOLDOWN_SECONDS", "REPUTATION_DAMPING_FACTOR",
 		"UCP_ENABLED", "UCP_BASE_URL", "UCP_PROVIDER_NAME",
 	} {
@@ -222,6 +224,18 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if cfg.UCPBaseURL != "http://localhost:8080" {
 		t.Errorf("expected default UCP base URL http://localhost:8080, got %q", cfg.UCPBaseURL)
+	}
+	if cfg.MaxBodyBytes != DefaultMaxBodyBytes {
+		t.Errorf("expected default max body %d, got %d", DefaultMaxBodyBytes, cfg.MaxBodyBytes)
+	}
+	if cfg.RateLimitRPS != DefaultRateLimitRPS {
+		t.Errorf("expected default rate %v, got %v", DefaultRateLimitRPS, cfg.RateLimitRPS)
+	}
+	if cfg.RateLimitBurst != DefaultRateLimitBurst {
+		t.Errorf("expected default burst %d, got %d", DefaultRateLimitBurst, cfg.RateLimitBurst)
+	}
+	if len(cfg.TrustedProxies) != 0 {
+		t.Errorf("expected no trusted proxies by default, got %d", len(cfg.TrustedProxies))
 	}
 }
 
@@ -680,6 +694,89 @@ func TestLoad_AdminTokenStrengthWithoutEmergency(t *testing.T) {
 	}
 	if cfg.AdminToken != token {
 		t.Fatalf("expected ADMIN_TOKEN to be trimmed, got %q", cfg.AdminToken)
+	}
+}
+
+func TestLoad_HTTPEdgeLimits(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("MAX_BODY_BYTES", "4096")
+	t.Setenv("RATE_LIMIT_RPS", "2.5")
+	t.Setenv("RATE_LIMIT_BURST", "7")
+	t.Setenv("TRUSTED_PROXIES", "10.0.0.0/8, 192.168.1.0/24,")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MaxBodyBytes != 4096 {
+		t.Fatalf("expected max body 4096, got %d", cfg.MaxBodyBytes)
+	}
+	if cfg.RateLimitRPS != 2.5 || cfg.RateLimitBurst != 7 {
+		t.Fatalf("expected 2.5 rps burst 7, got %v burst %d", cfg.RateLimitRPS, cfg.RateLimitBurst)
+	}
+	if len(cfg.TrustedProxies) != 2 {
+		t.Fatalf("expected 2 trusted networks, got %d", len(cfg.TrustedProxies))
+	}
+	if !cfg.TrustedProxies[0].Contains(net.ParseIP("10.1.2.3")) {
+		t.Fatal("expected 10.0.0.0/8 to contain 10.1.2.3")
+	}
+}
+
+func TestLoad_RateLimitDisabled(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("RATE_LIMIT_RPS", "0")
+	t.Setenv("RATE_LIMIT_BURST", "0")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RateLimitRPS != 0 || cfg.RateLimitBurst != 0 {
+		t.Fatalf("expected the limiter to be disabled, got rps %v burst %d", cfg.RateLimitRPS, cfg.RateLimitBurst)
+	}
+}
+
+func TestLoad_InvalidHTTPEdge(t *testing.T) {
+	cases := []struct {
+		name string
+		key  string
+		val  string
+	}{
+		{name: "body", key: "MAX_BODY_BYTES", val: "0"},
+		{name: "body-neg", key: "MAX_BODY_BYTES", val: "-1"},
+		{name: "rps", key: "RATE_LIMIT_RPS", val: "-1"},
+		{name: "rps-nan", key: "RATE_LIMIT_RPS", val: "NaN"},
+		{name: "burst", key: "RATE_LIMIT_BURST", val: "-5"},
+		{name: "proxy", key: "TRUSTED_PROXIES", val: "10.0.0.1"},
+		{name: "proxy-bad", key: "TRUSTED_PROXIES", val: "10.0.0.0/8, nope"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv(tc.key, tc.val)
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), tc.key) {
+				t.Fatalf("expected %s to be rejected, got %v", tc.key, err)
+			}
+		})
+	}
+}
+
+func TestValidate_NegativeEdgeLimits(t *testing.T) {
+	cfg := &Config{
+		Port:                    8080,
+		RequestTimeout:          10 * time.Second,
+		TxTimeout:               90 * time.Second,
+		ReputationDampingFactor: 0.9,
+		MaxBodyBytes:            -1,
+		RateLimitRPS:            -1,
+		RateLimitBurst:          -1,
+	}
+	r := cfg.Validate()
+	joined := strings.Join(r.Errors, "\n")
+	for _, want := range []string{"MAX_BODY_BYTES", "RATE_LIMIT_RPS", "RATE_LIMIT_BURST"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("expected validation error mentioning %s, got %v", want, r.Errors)
+		}
 	}
 }
 

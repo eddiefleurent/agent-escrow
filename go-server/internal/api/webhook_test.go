@@ -544,3 +544,33 @@ func TestVerifyCDPSignature_MalformedHeader(t *testing.T) {
 		})
 	}
 }
+
+// The router cap (MAX_BODY_BYTES) is the only body limit. A webhook above
+// the old private 1 MiB reader must be verified over its full bytes rather
+// than silently truncated into a signature failure.
+func TestWebhook_BodyAboveOneMiBUnderRouterCap(t *testing.T) {
+	env := setupWebhookTest(t)
+	env.cfg.MaxBodyBytes = 2 << 20
+	env.mux = NewRouter(env.db, env.mock, env.idx, env.cfg, nil)
+
+	body := makeCDPPayload(t, "EscrowCreated", env.cfg.FactoryAddress,
+		"0xabc123def457",
+		map[string]string{
+			"escrowId":     "8",
+			"escrow":       "0xABCDEF1234567890ABCDEF1234567890ABCDEF13",
+			"buyer":        "0x1000000000000000000000000000000000000001",
+			"worker":       "0x2000000000000000000000000000000000000002",
+			"verifier":     "0x3000000000000000000000000000000000000003",
+			"arbitrator":   "0x4000000000000000000000000000000000000004",
+			"taskSpecHash": "0x0100000000000000000000000000000000000000000000000000000000000000",
+			"token":        "0x0000000000000000000000000000000000000000",
+		},
+	)
+	// Trailing whitespace keeps the JSON valid while crossing 1 MiB.
+	body += strings.Repeat(" ", (1<<20)+1024)
+
+	rr := sendWebhook(t, env, body, testWebhookSecret)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a signed body under the router cap, got %d: %s", rr.Code, rr.Body.String())
+	}
+}

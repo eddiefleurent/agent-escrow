@@ -122,7 +122,7 @@ func (s *Service) HandleTaskSend(ctx context.Context, params TaskSendParams) (*T
 		return s.createNewTask(ctx, taskID, sessionID, params)
 	}
 
-	return s.updateExistingTask(existing, params)
+	return s.updateExistingTask(ctx, existing, params)
 }
 
 func (s *Service) createNewTask(ctx context.Context, taskID, sessionID string, params TaskSendParams) (*Task, error) {
@@ -167,29 +167,29 @@ func (s *Service) createNewTask(ctx context.Context, taskID, sessionID string, p
 		return nil, fmt.Errorf("create a2a task: %w", err)
 	}
 
-	slog.Info("a2a task created",
+	slog.InfoContext(ctx, "a2a task created",
 		"a2a_task_id", taskID,
 		"session_id", sessionID,
 		"escrow_trigger", escrowTrigger,
 		"verification_mode", vp.Mode,
 	)
 
-	return buildTaskResponse(a2aTask, "Task accepted"), nil
+	return buildTaskResponse(ctx, a2aTask, "Task accepted"), nil
 }
 
-func (s *Service) updateExistingTask(existing *storage.A2ATask, params TaskSendParams) (*Task, error) {
+func (s *Service) updateExistingTask(ctx context.Context, existing *storage.A2ATask, params TaskSendParams) (*Task, error) {
 	if existing.A2AStatus == string(TaskStatusCompleted) ||
 		existing.A2AStatus == string(TaskStatusFailed) ||
 		existing.A2AStatus == string(TaskStatusCanceled) {
 		return nil, fmt.Errorf("task %s is in terminal state: %s", existing.A2ATaskID, existing.A2AStatus)
 	}
 
-	slog.Info("a2a task send idempotent",
+	slog.InfoContext(ctx, "a2a task send idempotent",
 		"a2a_task_id", existing.A2ATaskID,
 		"status", existing.A2AStatus,
 	)
 
-	return buildTaskResponse(existing, "Task already exists"), nil
+	return buildTaskResponse(ctx, existing, "Task already exists"), nil
 }
 
 // GetTaskStatus returns the current status of an A2A task.
@@ -208,7 +208,7 @@ func (s *Service) GetTaskStatus(ctx context.Context, taskID string) (*Task, erro
 		}
 	}
 
-	return buildTaskResponse(a2aTask, statusMsg), nil
+	return buildTaskResponse(ctx, a2aTask, statusMsg), nil
 }
 
 // CancelTask cancels an A2A task if it's not in a terminal state.
@@ -228,10 +228,10 @@ func (s *Service) CancelTask(ctx context.Context, taskID string) (*Task, error) 
 		return nil, fmt.Errorf("cancel task: %w", err)
 	}
 
-	slog.Info("a2a task canceled", "a2a_task_id", taskID)
+	slog.InfoContext(ctx, "a2a task canceled", "a2a_task_id", taskID)
 
 	a2aTask.A2AStatus = string(TaskStatusCanceled)
-	return buildTaskResponse(a2aTask, "Task canceled"), nil
+	return buildTaskResponse(ctx, a2aTask, "Task canceled"), nil
 }
 
 func validateVerificationPolicy(vp VerificationPolicy) error {
@@ -258,11 +258,11 @@ func validateVerificationPolicy(vp VerificationPolicy) error {
 	return nil
 }
 
-func buildTaskResponse(a2aTask *storage.A2ATask, message string) *Task {
+func buildTaskResponse(ctx context.Context, a2aTask *storage.A2ATask, message string) *Task {
 	metadata := make(map[string]string)
 	if a2aTask.MetadataJSON != "" {
 		if err := json.Unmarshal([]byte(a2aTask.MetadataJSON), &metadata); err != nil {
-			slog.Warn("failed to decode task metadata, using derived metadata only",
+			slog.WarnContext(ctx, "failed to decode task metadata, using derived metadata only",
 				"a2a_task_id", a2aTask.A2ATaskID,
 				"error", err,
 			)

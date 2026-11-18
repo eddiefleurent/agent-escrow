@@ -38,7 +38,7 @@ Implementation roadmap for the ["Intelligent AI Delegation"](https://arxiv.org/a
 - **Contract change budget:** `TaskEscrow` runtime is 23,992 B against the 24,576 B limit (about 584 B headroom), so contract fixes ship as one bundled v2 redeploy rather than piecemeal.
 - **Opinionated implementations worth revisiting now:** items `15` (anchoring without Solidity), `20` (guardrails only), and `21` (after `H8`).
 
-Recommended near-term order (completed R1 and SH1 omitted): `H2 -> H3 -> H4 -> SH2 -> SH3 -> SH4 -> H1 -> H5 -> H6 -> H7 -> R2 -> R3`, then the owner-blocked group `H8 -> SH5 -> H9 .. H15`, then `R4 -> 25 -> 29 -> 30 -> 23 -> 24 -> 26 -> 28 -> 27`. `H2`-`H4` and `H1` are already in flight, so the first unstarted item is `SH2`-`SH4` (one HTTP-hardening change).
+Recommended near-term order (completed R1, SH1, and SH2-SH4 omitted): `H2 -> H3 -> H4 -> H1 -> H5 -> H6 -> H7 -> R2 -> R3`, then the owner-blocked group `H8 -> SH5 -> H9 .. H15`, then `R4 -> 25 -> 29 -> 30 -> 23 -> 24 -> 26 -> 28 -> 27`. `H2`-`H4` and `H1` are already in flight.
 
 ---
 
@@ -92,9 +92,9 @@ Recommended near-term order (completed R1 and SH1 omitted): `H2 -> H3 -> H4 -> S
 | ID | Item | Status | Alignment | Notes |
 |---|---|---|---|---|
 | SH1 | Admin auth for emergency endpoints | done | gap_fill | HTTP emergency routes and DCT admin routes require a bearer token. HTTP and local MCP emergency access are independently opt-in, and HTTP CORS defaults to deny. |
-| SH2 | Per-IP rate limiting on POST endpoints | planned (queued next, with SH3 and SH4) | gap_fill | Token-bucket rate limiter on all POST routes. Prevents gas drain via transaction spam and RPC quota exhaustion. No ceiling currently exists. |
-| SH3 | Request body size cap | planned | gap_fill | `http.MaxBytesReader` before decode on all handlers. Prevents memory exhaustion from unbounded body reads. |
-| SH4 | Request ID tracing | planned | gap_fill | `X-Request-ID` header echoed in responses and included in all structured log entries. Required for operational traceability before real traffic hits. |
+| SH2 | Per-IP rate limiting on POST endpoints | done | gap_fill | Per-IP token bucket on POST/PUT/PATCH/DELETE (default 10 rps, burst 20; either 0 disables). Admin routes are limited on every method before auth. `X-Forwarded-For` is walked right to left past `TRUSTED_PROXIES`; IPv6 is bucketed by /64. |
+| SH3 | Request body size cap | done | gap_fill | `http.MaxBytesReader` caps every body at `MAX_BODY_BYTES` (default 1 MiB) and returns 413. |
+| SH4 | Request ID tracing | done | gap_fill | A validated `X-Request-ID` is echoed, stored with `authz.WithRequestID`, logged on the request line, and copied into JSON error bodies. |
 | SH5 | Agent-owned wallet / client-side signing | blocked | gap_fill | **Blocked on the owner's off-chain trust-model decision.** CLI and local per-agent MCP processes sign and broadcast transactions locally using the caller's `PRIVATE_KEY` + `RPC_URL`; MCP must not accept `signing_key` as a tool argument (keys would land in transcripts and logs). Server becomes a pure coordination and indexing layer; its `PRIVATE_KEY` is for operator/admin operations only (emergency, indexer gas). Blocks real multi-agent demos and any production deployment where buyer, worker, and verifier are different principals. |
 
 ### Phase 2b -- Hardening and Truth Pass (added 2026-11-17)
@@ -195,25 +195,25 @@ All five items below are **blocking gates**: V4 work does not start until all ar
 
 #### SH2: Per-IP rate limiting on POST endpoints
 
-- [ ] Implement token-bucket rate limiter in middleware (stdlib only; no external deps).
-- [ ] Apply to all POST routes; exempt GET and SSE/WebSocket endpoints.
-- [ ] Configurable via `RATE_LIMIT_RPS` and `RATE_LIMIT_BURST` env vars with sane defaults (e.g. 10 RPS, burst 20).
-- [ ] Return `429 Too Many Requests` with `Retry-After` header.
-- [ ] Add middleware unit tests for limit enforcement and recovery.
+- [x] Implement a stdlib token-bucket rate limiter in middleware. Buckets are dropped only once fully refilled, cleanup is bounded per request, and at capacity unseen clients share one overflow bucket, so memory stays bounded without discarding spent quota.
+- [x] Apply it to POST, PUT, PATCH, and DELETE before the body is read. Public GET routes (including SSE and WebSocket) are not limited; admin routes are limited on every method before authentication.
+- [x] Configure it with `RATE_LIMIT_RPS` and `RATE_LIMIT_BURST` (defaults 10 rps and burst 20). Either value set to 0 disables the limiter. Honor `X-Forwarded-For` only when `RemoteAddr` is inside `TRUSTED_PROXIES`, walking the chain right to left to the first untrusted hop.
+- [x] Return `429 Too Many Requests` with `Retry-After`.
+- [x] Cover burst exhaustion, refill, SSE exemption, and forwarded-header spoofing through the real router.
 
 #### SH3: Request body size cap
 
-- [ ] Wrap `r.Body` with `http.MaxBytesReader(w, r.Body, maxBytes)` in a middleware applied to all POST/PATCH routes.
-- [ ] Default cap: `65536` bytes (64 KB); configurable via `MAX_BODY_BYTES` env var.
-- [ ] Return `413 Request Entity Too Large` on exceeded limit.
-- [ ] Add test covering oversized body rejection.
+- [x] Wrap `r.Body` with `http.MaxBytesReader` before the handler runs.
+- [x] Default cap: `1048576` bytes (1 MiB), configurable via `MAX_BODY_BYTES`.
+- [x] Return `413 Request Entity Too Large` with the standard JSON error body.
+- [x] Test a body at the cap, a body above it, and a chunked body with no Content-Length.
 
 #### SH4: Request ID tracing
 
-- [ ] Generate `X-Request-ID` (UUID v4) in middleware if not provided by caller; echo it in the response header.
-- [ ] Thread request ID through all `slog` log entries for the request lifetime via `context`.
-- [ ] Include request ID in error response bodies for client-side correlation.
-- [ ] Add test verifying header round-trip and log field presence.
+- [x] Accept an inbound `X-Request-ID` of at most 128 characters from `[A-Za-z0-9-_.]`. Otherwise generate a UUID v4. Echo the id on the response and store it with `authz.WithRequestID`.
+- [x] Include `request_id` on the HTTP request log line. A context-aware slog handler adds it to every request-path log record.
+- [x] Include `request_id` in JSON error bodies (API, AP2, UCP), in A2A JSON-RPC error `data`, and on the WebSocket upgrade response.
+- [x] Test round-trip, generation, replacement of invalid ids, error-body correlation, and the log field.
 
 #### SH5: Agent-owned wallet / client-side signing
 

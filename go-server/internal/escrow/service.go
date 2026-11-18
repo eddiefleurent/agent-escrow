@@ -456,7 +456,7 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 			chainTx, chainErr := s.Chain.CreateEscrow(ctx, factory, params)
 			if chainErr != nil {
 				if resetErr := s.DB.UpdateEscrowStatus(ctx, escrowRecord.ID, escrowStatusPendingCreate); resetErr != nil {
-					slog.Warn("failed to reset pending escrow after createEscrow error", "escrow_id", escrowRecord.ID, "error", resetErr)
+					slog.WarnContext(ctx, "failed to reset pending escrow after createEscrow error", "escrow_id", escrowRecord.ID, "error", resetErr)
 				}
 				return nil, fmt.Errorf("chain create escrow: %w", chainErr)
 			}
@@ -466,7 +466,7 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 				const maxPersistAttempts = 3
 				lastErr := persistErr
 				for attempt := 2; attempt <= maxPersistAttempts; attempt++ {
-					slog.Warn(
+					slog.WarnContext(ctx,
 						"persist create tx hash failed; retrying",
 						"escrow_id", escrowRecord.ID,
 						"create_intent_id", createIntentID,
@@ -497,7 +497,7 @@ func (s *Service) CreateEscrow(ctx context.Context, input CreateEscrowInput) (*C
 					status := escrowStatusSubmittingCreateTx
 					latest, getErr := s.DB.GetEscrow(ctx, escrowRecord.ID)
 					if getErr != nil {
-						slog.Warn("failed to load escrow after tx-hash persistence failure", "escrow_id", escrowRecord.ID, "error", getErr)
+						slog.WarnContext(ctx, "failed to load escrow after tx-hash persistence failure", "escrow_id", escrowRecord.ID, "error", getErr)
 					} else if strings.TrimSpace(latest.Status) != "" {
 						status = latest.Status
 					}
@@ -1295,7 +1295,7 @@ func (s *Service) persistAttestationChain(ctx context.Context, escrowID int64, m
 func (s *Service) runIndexerOnce(ctx context.Context) {
 	if s.Idx != nil {
 		if err := s.Idx.RunOnce(ctx); err != nil {
-			slog.Warn("indexer RunOnce failed", "error", err)
+			slog.WarnContext(ctx, "indexer RunOnce failed", "error", err)
 		}
 	}
 }

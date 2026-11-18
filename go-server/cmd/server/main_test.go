@@ -1,9 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/authz"
 )
 
 func TestNewHTTPServerConfig(t *testing.T) {
@@ -26,5 +31,21 @@ func TestNewHTTPServerConfig(t *testing.T) {
 	}
 	if srv.IdleTimeout != 120*time.Second {
 		t.Fatalf("expected idle timeout 120s, got %s", srv.IdleTimeout)
+	}
+}
+
+func TestNewLoggerAddsRequestID(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	logger := newLogger(&buf)
+	logger.InfoContext(authz.WithRequestID(context.Background(), "main-logger-1"), "handled")
+
+	var rec map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+		t.Fatalf("decode log line %q: %v", buf.String(), err)
+	}
+	if rec["request_id"] != "main-logger-1" {
+		t.Fatalf("expected request_id on the production logger, got %v", rec)
 	}
 }

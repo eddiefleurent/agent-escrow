@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/authz"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
 	"github.com/gorilla/websocket"
 )
@@ -65,11 +66,11 @@ func (sh *StreamHandler) HandleSSE(w http.ResponseWriter, r *http.Request) {
 		"granularity": granularity.String(),
 	})
 	if err != nil {
-		slog.Error("sse: marshal connected event failed", "sub_id", sub.ID, "granularity", granularity.String(), "error", err)
+		slog.ErrorContext(r.Context(), "sse: marshal connected event failed", "sub_id", sub.ID, "granularity", granularity.String(), "error", err)
 		return
 	}
 	if _, err := fmt.Fprintf(w, "event: connected\ndata: %s\n\n", connData); err != nil {
-		slog.Error("sse: write connected event failed", "error", err)
+		slog.ErrorContext(r.Context(), "sse: write connected event failed", "error", err)
 		return
 	}
 	flusher.Flush()
@@ -85,11 +86,11 @@ func (sh *StreamHandler) HandleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 			data, err := json.Marshal(ssePayload(event))
 			if err != nil {
-				slog.Error("sse: marshal event", "error", err)
+				slog.ErrorContext(r.Context(), "sse: marshal event", "error", err)
 				continue
 			}
 			if _, err = fmt.Fprintf(w, "event: %s\nid: %s\ndata: %s\n\n", event.Name, event.ID, data); err != nil {
-				slog.Error("sse: write failed", "error", err)
+				slog.ErrorContext(r.Context(), "sse: write failed", "error", err)
 				return
 			}
 			flusher.Flush()
@@ -116,9 +117,16 @@ func (sh *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request)
 			return origin == "" || sh.allowAllOrigins || sh.allowedOrigins[origin]
 		}
 	}
-	conn, err := upgrader.Upgrade(w, r, nil)
+	// The upgrade response is written on the hijacked connection, so headers
+	// set on w by the middleware do not reach the client. Pass the request id
+	// explicitly.
+	var upgradeHeader http.Header
+	if id := authz.RequestIDFrom(r.Context()); id != "" {
+		upgradeHeader = http.Header{authz.RequestIDHeader: []string{id}}
+	}
+	conn, err := upgrader.Upgrade(w, r, upgradeHeader)
 	if err != nil {
-		slog.Error("ws: upgrade failed", "error", err)
+		slog.ErrorContext(r.Context(), "ws: upgrade failed", "error", err)
 		return
 	}
 	defer conn.Close()
@@ -126,12 +134,12 @@ func (sh *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request)
 	// Read subscription message
 	var msg wsSubscribeMsg
 	if err := conn.ReadJSON(&msg); err != nil {
-		slog.Warn("ws: failed to read subscription message", "error", err)
+		slog.WarnContext(r.Context(), "ws: failed to read subscription message", "error", err)
 		return
 	}
 	if msg.Action != "subscribe" {
 		if err := conn.WriteJSON(map[string]string{"error": "first message must be a subscribe action"}); err != nil {
-			slog.Warn("ws: failed to send invalid-action response", "error", err)
+			slog.WarnContext(r.Context(), "ws: failed to send invalid-action response", "error", err)
 		}
 		return
 	}
@@ -142,7 +150,7 @@ func (sh *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request)
 
 	// Send confirmation; abort if the client can't receive it.
 	if err := conn.WriteJSON(map[string]string{"status": "subscribed", "sub_id": sub.ID}); err != nil {
-		slog.Warn("ws: failed to send subscription confirmation", "sub_id", sub.ID, "error", err)
+		slog.WarnContext(r.Context(), "ws: failed to send subscription confirmation", "sub_id", sub.ID, "error", err)
 		return
 	}
 
@@ -171,7 +179,7 @@ func (sh *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request)
 			}
 			payload := wsPayload(event)
 			if err := conn.WriteJSON(payload); err != nil {
-				slog.Debug("ws: write failed", "error", err)
+				slog.DebugContext(r.Context(), "ws: write failed", "error", err)
 				return
 			}
 		}

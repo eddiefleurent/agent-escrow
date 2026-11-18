@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/authz"
 )
 
 type Handler struct {
@@ -33,7 +35,7 @@ func (h *Handler) CreateCheckout(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.Service.CreateCheckout(r.Context(), req)
 	if err != nil {
-		h.writeUCPError(w, err)
+		h.writeUCPError(w, r, err)
 		return
 	}
 	h.writeJSON(w, http.StatusCreated, resp)
@@ -47,7 +49,7 @@ func (h *Handler) GetCheckout(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.Service.GetCheckout(r.Context(), checkoutID)
 	if err != nil {
-		h.writeUCPError(w, err)
+		h.writeUCPError(w, r, err)
 		return
 	}
 	h.writeJSON(w, http.StatusOK, resp)
@@ -66,7 +68,7 @@ func (h *Handler) UpdateCheckout(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.Service.UpdateCheckout(r.Context(), checkoutID, req)
 	if err != nil {
-		h.writeUCPError(w, err)
+		h.writeUCPError(w, r, err)
 		return
 	}
 	h.writeJSON(w, http.StatusOK, resp)
@@ -85,7 +87,7 @@ func (h *Handler) CompleteCheckout(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.Service.CompleteCheckout(r.Context(), checkoutID, req)
 	if err != nil {
-		h.writeUCPError(w, err)
+		h.writeUCPError(w, r, err)
 		return
 	}
 	h.writeJSON(w, http.StatusOK, resp)
@@ -104,13 +106,13 @@ func (h *Handler) CancelCheckout(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.Service.CancelCheckout(r.Context(), checkoutID, req)
 	if err != nil {
-		h.writeUCPError(w, err)
+		h.writeUCPError(w, r, err)
 		return
 	}
 	h.writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *Handler) writeUCPError(w http.ResponseWriter, err error) {
+func (h *Handler) writeUCPError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidRequest):
 		h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -119,12 +121,15 @@ func (h *Handler) writeUCPError(w http.ResponseWriter, err error) {
 	case errors.Is(err, sql.ErrNoRows):
 		h.writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 	default:
-		slog.Error("ucp internal error", "error", err)
+		slog.ErrorContext(r.Context(), "ucp internal error", "error", err)
 		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}
 }
 
 func (h *Handler) writeJSON(w http.ResponseWriter, status int, v any) {
+	if status >= 400 {
+		v = authz.WithRequestIDField(w.Header(), v)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)

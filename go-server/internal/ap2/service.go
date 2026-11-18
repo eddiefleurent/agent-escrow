@@ -243,11 +243,11 @@ func (s *Service) FundViaMandate(ctx context.Context, escrowID int64, env Mandat
 	txHash := tx.Hash().Hex()
 
 	if err := s.DB.UpdateAP2MandateFunding(ctx, binding.MandateID, txHash); err != nil {
-		slog.Warn("failed to update mandate funding status", "mandate_id", binding.MandateID, "error", err)
+		slog.WarnContext(ctx, "failed to update mandate funding status", "mandate_id", binding.MandateID, "error", err)
 	}
 
 	if err := s.Idx.RunOnce(ctx); err != nil {
-		slog.Warn("post-fund indexer run failed", "escrow_id", escrowID, "error", err)
+		slog.WarnContext(ctx, "post-fund indexer run failed", "escrow_id", escrowID, "error", err)
 	}
 
 	return &FundViaMandateResponse{

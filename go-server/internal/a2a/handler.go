@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/authz"
 )
 
 // Handler provides HTTP handlers for the A2A settlement adapter.
@@ -24,7 +26,7 @@ func (h *Handler) ServeAgentCard(w http.ResponseWriter, r *http.Request) {
 	card := h.svc.BuildAgentCard()
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(card); err != nil {
-		slog.Error("failed to encode agent card", "error", err)
+		slog.ErrorContext(r.Context(), "failed to encode agent card", "error", err)
 	}
 }
 
@@ -161,7 +163,7 @@ func writeJSONRPCResult(w http.ResponseWriter, id any, result any) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		slog.Error("failed to encode JSON-RPC response", "error", err)
+		slog.Error("failed to encode JSON-RPC response", "error", err, "request_id", w.Header().Get(authz.RequestIDHeader))
 	}
 }
 
@@ -174,8 +176,13 @@ func writeJSONRPCError(w http.ResponseWriter, id any, code int, message string) 
 			Message: message,
 		},
 	}
+	// Carry the correlation id in the error's data member so JSON-RPC
+	// clients can quote it without reading HTTP headers.
+	if rid := w.Header().Get(authz.RequestIDHeader); rid != "" {
+		resp.Error.Data = map[string]string{"request_id": rid}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		slog.Error("failed to encode JSON-RPC error response", "error", err)
+		slog.Error("failed to encode JSON-RPC error response", "error", err, "request_id", w.Header().Get(authz.RequestIDHeader))
 	}
 }

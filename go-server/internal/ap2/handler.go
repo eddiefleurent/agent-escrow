@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/authz"
 )
 
 // Handler provides HTTP endpoints for the AP2 mandate-to-escrow bridge.
@@ -31,7 +33,7 @@ func (h *Handler) FundViaMandate(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid mandate or escrow binding"})
 			return
 		}
-		slog.Error("fund via mandate failed", "escrow_id", req.EscrowID, "error", err)
+		slog.ErrorContext(r.Context(), "fund via mandate failed", "escrow_id", req.EscrowID, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
@@ -74,9 +76,12 @@ func (h *Handler) GetMandate(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
+	if status >= 400 {
+		v = authz.WithRequestIDField(w.Header(), v)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Error("writeJSON encode failed", "status", status, "error", err)
+		slog.Error("writeJSON encode failed", "status", status, "error", err, "request_id", w.Header().Get(authz.RequestIDHeader))
 	}
 }

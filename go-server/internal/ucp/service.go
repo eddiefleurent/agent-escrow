@@ -221,7 +221,7 @@ func (s *Service) GetCheckout(ctx context.Context, checkoutID string) (*Checkout
 			session.LastRequestHash,
 			session.LastTxHash,
 		); err != nil {
-			slog.Error("failed to persist ucp status projection", "checkout_id", session.CheckoutID, "projected", projected, "error", err)
+			slog.ErrorContext(ctx, "failed to persist ucp status projection", "checkout_id", session.CheckoutID, "projected", projected, "error", err)
 		}
 	}
 	return composeCheckout(session, escrowRec), nil
