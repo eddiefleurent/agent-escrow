@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "generated_at": "2026-03-10T00:00:00Z",
+  "generated_at": "2026-11-17T00:00:00Z",
   "sources": [
     "docs/intelligent-ai-delegation.md",
     "docs/ROADMAP.md",
@@ -10,7 +10,9 @@
     "implemented": "Currently implemented and exposed through core interfaces where applicable.",
     "partial": "Partially implemented today; paper-prescribed scope is not complete.",
     "planned": "Not implemented yet, but explicitly planned on the roadmap.",
-    "not_planned": "Not implemented and not currently planned on the roadmap."
+    "not_planned": "Not implemented and not currently planned on the roadmap.",
+    "in_progress": "Currently being delivered (open PR or active branch); not yet merged to main.",
+    "blocked_on_owner": "Not a status value. Boolean field carried beside status `planned`: scoped, but cannot start until the project owner decides a policy or trust-model question."
   },
   "paper_system_features": {
     "technical_protocols": [
@@ -29,12 +31,13 @@
         "id": "P4.2",
         "section": "4.2",
         "name": "Task Assignment",
-        "status": "implemented",
-        "coverage_notes": "RFQ + bid + acceptance into escrow implemented across MCP, HTTP, and CLI.",
+        "status": "partial",
+        "coverage_notes": "RFQ + bid + acceptance into escrow is implemented across MCP, HTTP, and CLI. Identity is self-asserted: bidder addresses are only checked as hex and bid acceptance is authorized by a request-body `caller` string (go-server/internal/bidding/bidding.go:761,823,1131), so Sybil cooldowns key on freely rotatable addresses. No post-funding renegotiation or cancellation-compensation clauses. Implemented as a trust-the-operator marketplace until principal authentication (H8) lands.",
         "roadmap_items": [
           "7",
           "12",
-          "14"
+          "14",
+          "H8"
         ]
       },
       {
@@ -42,25 +45,27 @@
         "section": "4.3",
         "name": "Multi-objective Optimization",
         "status": "partial",
-        "coverage_notes": "Complexity floor and tiered service levels implemented; full dynamic Pareto optimization and trust-adaptive autonomy remain open.",
+        "coverage_notes": "Complexity floor and tiered service levels implemented; full dynamic Pareto optimization and trust-adaptive autonomy remain open. The on-chain floor is one raw integer compared against `amount` for every token, so it is unit-unsafe across 18-decimal ETH and 6-decimal USDC (src/TaskEscrowFactory.sol:174; tracked as H11).",
         "roadmap_items": [
           "6",
           "17",
           "20",
-          "28"
+          "28",
+          "H11"
         ]
       },
       {
         "id": "P4.4",
         "section": "4.4",
         "name": "Adaptive Coordination",
-        "status": "implemented",
-        "coverage_notes": "Milestones, backup worker, checkpoints, and stability controls are implemented.",
+        "status": "partial",
+        "coverage_notes": "Static pre-agreed clauses are implemented: milestones, a backup worker that the buyer activates manually after a missed deadline (src/TaskEscrow.sol:555), off-chain checkpoint storage, and stability knobs. The paper's adaptive loop (trigger detection, automatic re-allocation, spec or budget changes) is not implemented. Checkpoint authorship is a string compare against a caller-supplied `committed_by` (go-server/internal/api/handlers.go:1909). Backup activation has known defects: stake scoping, and only the current milestone's deadline is extended (tracked as H7).",
         "roadmap_items": [
           "3",
           "4",
           "16",
-          "20"
+          "20",
+          "H7"
         ]
       },
       {
@@ -68,12 +73,13 @@
         "section": "4.5",
         "name": "Monitoring",
         "status": "partial",
-        "coverage_notes": "Outcome and process checkpoints with L0/L1 streams are live; richer L2/L3 monitoring and policy negotiation are not complete.",
+        "coverage_notes": "Outcome and process checkpoints with L0/L1 streams are live; richer L2/L3 monitoring and policy negotiation are not complete. Indexer correctness hardening (single-flight, transactional cursor, confirmation depth) is in progress as H2.",
         "roadmap_items": [
           "3",
           "10",
           "15",
-          "16"
+          "16",
+          "H2"
         ]
       },
       {
@@ -81,12 +87,13 @@
         "section": "4.6",
         "name": "Trust and Reputation",
         "status": "partial",
-        "coverage_notes": "Immutable ledger seed, verifiable credentials, and damped metrics exist; DID-native trust portfolio and stronger human-facing trust tooling remain open.",
+        "coverage_notes": "Immutable ledger seed, verifiable credentials, and damped metrics exist; DID-native trust portfolio and stronger human-facing trust tooling remain open. The on-chain counters are ungated: `createEscrow` has no `msg.sender` binding, so any party can stamp outcomes on a named buyer or worker (tracked as H10). No signed completion receipt credential is issued.",
         "roadmap_items": [
           "5",
           "14",
           "20",
-          "26"
+          "26",
+          "H10"
         ]
       },
       {
@@ -94,26 +101,30 @@
         "section": "4.7",
         "name": "Permission Handling",
         "status": "partial",
-        "coverage_notes": "DCT attenuation and principal authz are implemented; deeper policy-as-code validation and adaptive revocation policies remain open.",
+        "coverage_notes": "DCT attenuation, scoping, and lifecycle are implemented. The principal authz layer is default-deny but not authenticated: HTTP/CLI mint, delegate, and revoke never set `Authenticated` and are always denied (go-server/internal/api/dct.go:116), while MCP marks any non-empty caller string as authenticated (go-server/internal/mcpserver/tools.go:1351). Only the admin-token-gated routes (audit, emergency override; SH1) authenticate. No escrow action requires or consumes a DCT; tokens are a standalone capability ledger. Tokens are DB-backed bearer secrets, not macaroons or biscuits.",
         "roadmap_items": [
           "13",
           "13a",
           "13b",
           "25",
-          "28"
+          "28",
+          "H8"
         ]
       },
       {
         "id": "P4.8",
         "section": "4.8",
         "name": "Verifiable Task Completion",
-        "status": "implemented",
-        "coverage_notes": "Verification paths include buyer/verifier, arbitrator, ZK slot, attestation chains, and multi-verifier quorum.",
+        "status": "partial",
+        "coverage_notes": "Verification paths exist: buyer approval, arbitrator, ZK slot, off-chain attestation chains, and multi-verifier quorum. Gaps: the ZK proof is not bound to the task or escrow (src/TaskEscrow.sol:462-471; src/IZKVerifier.sol passes only circuitId and proof); the quorum game rewards no one, as majority voters are only refunded and abstainers are refunded in full (src/TaskEscrow.sol:935-947); attestation roots are not anchored on-chain (R2); no signed completion credential or buyer dispute bond.",
         "roadmap_items": [
           "2",
           "15",
           "18",
-          "19"
+          "19",
+          "R2",
+          "H12",
+          "H13"
         ]
       },
       {
@@ -121,7 +132,7 @@
         "section": "4.9",
         "name": "Security",
         "status": "partial",
-        "coverage_notes": "Emergency controls, stake mechanisms, and signed artifacts are implemented; stronger identity, prompt-security, TEE, and transport hardening remain open.",
+        "coverage_notes": "Emergency controls, stake mechanisms, and signed artifacts are implemented. SH1 is done (PR #55): HTTP emergency and DCT admin routes require a bearer token, HTTP and local MCP emergency access are separate opt-ins, and CORS defaults to deny. Rate limit, body cap, request IDs, client-side signing, stronger identity, prompt-security, TEE, and transport hardening remain open. The owner is a single EOA that is also deployer and treasury on the recorded Base Sepolia deployment.",
         "roadmap_items": [
           "2",
           "11",
@@ -154,7 +165,7 @@
         "section": "5.2",
         "name": "Accountability in Long Delegation Chains",
         "status": "partial",
-        "coverage_notes": "Attestation chains and transitive liability are implemented; explicit liability firebreak contracts are planned.",
+        "coverage_notes": "Off-chain attestation chains provide evidence of sub-delegation. Transitive liability is NOT implemented: `parentEscrow` only drives the re-delegation fee surcharge and a buyer-is-parent-worker check (src/TaskEscrowFactory.sol:193-196,444), and a child escrow's outcome never affects its parent. Explicit liability firebreak contracts are planned (item 24).",
         "roadmap_items": [
           "15",
           "24"
@@ -164,11 +175,12 @@
         "id": "E5.3",
         "section": "5.3",
         "name": "Reliability and Efficiency",
-        "status": "implemented",
-        "coverage_notes": "Tiered service levels and fee snapshots are implemented.",
+        "status": "partial",
+        "coverage_notes": "Two service tiers with immutable fee snapshots are implemented. Tier 1 blocks `approveByBuyer`, but the buyer can still `dispute()` during review, which wipes quorum votes and refunds verifier stakes (src/TaskEscrow.sol:485-491; tracked as H13). No mandatory safety floors by task class (item 28), so tier choice stays a per-escrow buyer decision.",
         "roadmap_items": [
           "17",
-          "28"
+          "28",
+          "H13"
         ]
       },
       {
@@ -209,7 +221,7 @@
       {
         "id": "S6-MCP",
         "status": "implemented",
-        "notes": "Escrow lifecycle and extension tooling integrated; deeper monitoring semantics remain future work.",
+        "notes": "Escrow lifecycle and extension tooling integrated (50 tools registered in go-server/internal/mcpserver: 35 core, 15 behind UCP, A2A, and emergency opt-ins); deeper monitoring semantics remain future work. Caller identity is a tool argument and is not authenticated (see P4.7).",
         "roadmap_items": [
           "10",
           "13",
@@ -218,18 +230,19 @@
       },
       {
         "id": "S6-A2A",
-        "status": "implemented",
-        "notes": "Adapter with verification_policy and escrow trigger fields implemented.",
+        "status": "partial",
+        "notes": "Agent card and tasks/send persist A2A tasks with a verification_policy and an `escrow_trigger` flag (go-server/internal/a2a/service.go:103-179). Nothing acts on the flag: the adapter never creates or links an escrow, and `UpdateA2ATaskEscrow` (go-server/internal/storage/queries.go:2535) has no callers. The settlement skills in the agent card are advertised, not wired.",
         "roadmap_items": [
           "8"
         ]
       },
       {
         "id": "S6-AP2",
-        "status": "implemented",
-        "notes": "Mandate-to-escrow bridge implemented with x402 facilitator path.",
+        "status": "partial",
+        "notes": "Mandate validation, escrow binding, and EIP-3009 funding via the server signer (`Chain.FundWithAuthorization`, go-server/internal/ap2/service.go:238) work. The mandate `signature` is only checked for non-emptiness and never verified (go-server/internal/ap2/service.go:52); fund safety currently rests on the token's own EIP-3009 check. The verification fix is tracked as H1 (separate PR in flight). Funding does not route through x402. No stake-on-bid or clawback semantics.",
         "roadmap_items": [
-          "9"
+          "9",
+          "H1"
         ]
       },
       {
@@ -242,8 +255,8 @@
       },
       {
         "id": "S6-x402",
-        "status": "implemented",
-        "notes": "Used as payment rail and complexity-floor anchor.",
+        "status": "partial",
+        "notes": "A facilitator client exists (go-server/internal/x402: Verify and Settle) and is constructed in go-server/internal/api/router.go:101 when X402_ENABLED is set, then injected into `ap2.Service.X402`. No code calls `.X402`, `Verify`, or `Settle` outside tests, so the client is dead in production. AP2 funding calls the chain directly, and the complexity floor does not use x402. Kept in the tree by owner decision; wire it or remove it in a later change.",
         "roadmap_items": [
           "9"
         ]
@@ -305,7 +318,7 @@
         "4.4"
       ],
       "decision_vs_paper": "Used pre-designated backup worker and explicit activation instead of automatic market rematching.",
-      "residual_gap": "Automated backup discovery remains open."
+      "residual_gap": "Automated backup discovery remains open. `activateBackup` forfeits the primary's whole stake, and the backup's stake settlement spans all milestones including ones the primary already lost (src/TaskEscrow.sol:576,1095); only the current milestone deadline is extended, from the stale deadline with no `> 0` check (tracked as H7)."
     },
     {
       "item_id": "5",
@@ -316,7 +329,7 @@
         "4.6"
       ],
       "decision_vs_paper": "Started with immutable counters and outcome events as a conservative substrate before richer trust models.",
-      "residual_gap": "Portfolio-style DID trust claims remain open."
+      "residual_gap": "Portfolio-style DID trust claims remain open. Counters are ungated: `createEscrow` has no `msg.sender` check (tracked as H10)."
     },
     {
       "item_id": "6",
@@ -327,7 +340,7 @@
         "4.3"
       ],
       "decision_vs_paper": "Implemented a single configurable floor instead of dynamic per-task optimization to keep enforcement simple.",
-      "residual_gap": "Context-aware floor tuning remains open."
+      "residual_gap": "Context-aware floor tuning remains open. The floor is one raw integer compared across tokens with different decimals, so it is unit-unsafe (tracked as H11)."
     },
     {
       "item_id": "7",
@@ -345,25 +358,25 @@
       "item_id": "8",
       "phase": "V2",
       "title": "A2A settlement adapter",
-      "status": "implemented",
+      "status": "partial",
       "paper_refs": [
         "6",
         "6.1"
       ],
-      "decision_vs_paper": "Added escrow-specific fields on A2A task metadata while preserving A2A JSON-RPC compatibility.",
-      "residual_gap": "Stronger protocol-level verification slots in broader A2A ecosystem remain open."
+      "decision_vs_paper": "Added escrow-specific fields on A2A task metadata while preserving A2A JSON-RPC compatibility. The adapter records tasks only; it does not create or link escrows.",
+      "residual_gap": "`escrow_trigger` is stored but never acted on, and `UpdateA2ATaskEscrow` has no callers. Stronger protocol-level verification slots in broader A2A ecosystem remain open."
     },
     {
       "item_id": "9",
       "phase": "V2",
       "title": "AP2 mandate-to-escrow bridge",
-      "status": "implemented",
+      "status": "partial",
       "paper_refs": [
         "6",
         "6.1"
       ],
-      "decision_vs_paper": "Implemented AP2 funding through x402 facilitator and escrow fundWithAuthorization bridge.",
-      "residual_gap": "Richer AP2-native conditional state semantics remain open."
+      "decision_vs_paper": "Implemented AP2 mandate validation, escrow binding, and funding through the escrow `fundWithAuthorization` bridge using the server signer. The x402 facilitator client is wired into the service but never invoked.",
+      "residual_gap": "Mandate signature is never verified (H1, fix in flight). x402 client has no callers. Richer AP2-native conditional state semantics remain open."
     },
     {
       "item_id": "10",
@@ -386,7 +399,7 @@
         "4.9"
       ],
       "decision_vs_paper": "Used owner-governed freeze/unfreeze and emergency resolve controls as immediate incident-response baseline.",
-      "residual_gap": "Decentralized emergency governance remains open."
+      "residual_gap": "Decentralized emergency governance remains open. The server key is the factory owner on the recorded deployment; HTTP and MCP emergency surfaces are opt-in and token-gated since SH1 (PR #55)."
     },
     {
       "item_id": "12",
@@ -410,7 +423,7 @@
         "6.1"
       ],
       "decision_vs_paper": "Implemented DCTs as off-chain attenuated tokens with strict scoping and lifecycle invalidation hooks.",
-      "residual_gap": "On-chain/native cross-protocol DCT interoperability remains open."
+      "residual_gap": "On-chain/native cross-protocol DCT interoperability remains open. No escrow action requires a DCT; tokens are a standalone capability ledger and are DB-backed bearer secrets rather than macaroons or biscuits."
     },
     {
       "item_id": "13a",
@@ -428,13 +441,13 @@
       "item_id": "13b",
       "phase": "V3",
       "title": "Principal authorization layer for DCT operations",
-      "status": "implemented",
+      "status": "partial",
       "paper_refs": [
         "4.7",
         "4.9"
       ],
-      "decision_vs_paper": "Added explicit role-aware default-deny authz plus auditable policy decisions across interfaces.",
-      "residual_gap": "Formal policy verification and richer adaptive policy controls remain open."
+      "decision_vs_paper": "Added explicit role-aware default-deny authz with auditable decisions. Authentication is incomplete: HTTP and CLI mint, delegate, and revoke are always denied because nothing sets `Authenticated`, MCP trusts caller strings, and only the SH1 admin-token routes (audit, emergency override) authenticate.",
+      "residual_gap": "No principal authentication outside the admin token (tracked as H8, blocked on the owner's trust-model decision). Tests inject an `X-Test-Caller` middleware that has no production counterpart. Formal policy verification and richer adaptive policy controls remain open."
     },
     {
       "item_id": "14",
@@ -468,8 +481,8 @@
         "4.4",
         "6.1"
       ],
-      "decision_vs_paper": "Implemented off-chain checkpoint artifact registry with active-worker write authorization.",
-      "residual_gap": "Cryptographic checkpoint execution proofs remain open."
+      "decision_vs_paper": "Implemented off-chain checkpoint artifact registry. The active-worker rule compares the request's `committed_by` string to the stored worker address (go-server/internal/api/handlers.go:1909); it is not authenticated.",
+      "residual_gap": "Commit rights become real only with H8. Checkpoints are storage only: nothing hands them to a backup worker or binds them to the escrow on-chain. Cryptographic checkpoint execution proofs remain open."
     },
     {
       "item_id": "17",
@@ -480,7 +493,7 @@
         "5.3"
       ],
       "decision_vs_paper": "Encoded low-assurance vs high-assurance tiers directly on-chain with fee snapshots and approval constraints.",
-      "residual_gap": "Governance-level mandatory floors by task class remain open."
+      "residual_gap": "Governance-level mandatory floors by task class remain open. In Tier 1 the buyer can still call `dispute()` mid-review, wiping quorum votes (tracked as H13)."
     },
     {
       "item_id": "18",
@@ -491,7 +504,7 @@
         "4.8"
       ],
       "decision_vs_paper": "Implemented optional verifier integration and proof-hash commitments rather than mandatory ZK in all flows.",
-      "residual_gap": "Broader circuit ecosystem and proof UX hardening remain open."
+      "residual_gap": "The proof is not bound to `taskSpecHash`, `submissionHash`, or the escrow: `verifyProof(circuitId, proof)` receives no task-specific public inputs, and a verified proof counts as one ordinary approval vote (tracked as H12). Broader circuit ecosystem and proof UX hardening remain open."
     },
     {
       "item_id": "19",
@@ -502,7 +515,7 @@
         "4.8"
       ],
       "decision_vs_paper": "Implemented bounded verifier panel, quorum thresholds, and stake economics as practical TrueBit-inspired consensus.",
-      "residual_gap": "Large-scale verification game markets remain open."
+      "residual_gap": "Majority voters are only refunded and abstainers are refunded in full, so with stake > 0 abstaining weakly dominates voting (src/TaskEscrow.sol:935-947); minority stake goes to the buyer. Tier-1 buyers can dispute mid-quorum. Incentive redesign is tracked as H13. Large-scale verification game markets remain open."
     },
     {
       "item_id": "20",
@@ -545,7 +558,7 @@
       "paper_refs": [
         "4.9"
       ],
-      "decision_vs_paper": "Require bearer authentication for HTTP emergency and DCT admin routes, default HTTP and local stdio MCP emergency access to disabled, and require explicit origin configuration for cross-origin HTTP and WebSocket access.",
+      "decision_vs_paper": "Require bearer authentication for HTTP emergency and DCT admin routes, default HTTP and local stdio MCP emergency access to disabled, and require explicit origin configuration for cross-origin HTTP and WebSocket access. Merged in PR #55.",
       "residual_gap": "No material gap for SH1 scope."
     },
     {
@@ -557,7 +570,7 @@
         "4.9"
       ],
       "decision_vs_paper": "Use thin stdlib middleware with operator-tunable ceilings to bound RPC spend and gas-drain abuse without changing protocol semantics.",
-      "residual_gap": "Entire item is pending."
+      "residual_gap": "Entire item is pending. Queued next with SH3 and SH4 as one HTTP-hardening change."
     },
     {
       "item_id": "SH3",
@@ -591,8 +604,188 @@
         "4.9",
         "6"
       ],
-      "decision_vs_paper": "Move participant signing to CLI and MCP clients so buyer, worker, verifier, and arbitrator remain distinct principals; the server becomes operator-only for admin/indexing duties.",
-      "residual_gap": "Entire item is pending."
+      "decision_vs_paper": "Move participant signing to CLI and MCP clients so buyer, worker, verifier, and arbitrator remain distinct principals; the server becomes operator-only for admin/indexing duties. The MCP part must NOT take a `signing_key` tool argument (keys would land in transcripts and logs); run a local per-agent MCP process that reads its key from the environment.",
+      "residual_gap": "Entire item is pending. Blocked on the owner's off-chain trust-model decision.",
+      "blocked_on_owner": true
+    },
+    {
+      "item_id": "H1",
+      "phase": "Hardening",
+      "title": "AP2 mandate signature verification",
+      "status": "in_progress",
+      "paper_refs": [
+        "6",
+        "6.1"
+      ],
+      "decision_vs_paper": "Verify the mandate signature (signer binds to `authorization.from`) before funding, instead of relying only on the token's EIP-3009 check.",
+      "residual_gap": "Fix PR in flight separately; until it merges the signature field is checked for non-emptiness only (go-server/internal/ap2/service.go:52)."
+    },
+    {
+      "item_id": "H2",
+      "phase": "Hardening",
+      "title": "Indexer correctness",
+      "status": "in_progress",
+      "paper_refs": [
+        "4.5"
+      ],
+      "decision_vs_paper": "Single-flight `RunOnce`, transactional cursor advance, and a confirmation depth so reorgs and failed handlers cannot skip or reorder events.",
+      "residual_gap": "In flight. Today logs are marked processed before the handler succeeds, the cursor can advance past escrows that failed to index, and concurrent runs have no mutual exclusion."
+    },
+    {
+      "item_id": "H3",
+      "phase": "Hardening",
+      "title": "Solidity test base and expanded invariants",
+      "status": "in_progress",
+      "paper_refs": [
+        "4.8",
+        "4.9"
+      ],
+      "decision_vs_paper": "Shared test base and mocks, plus invariant fuzzing across milestones, verifier stakes, ERC20, backup, and emergency paths, before any contract change.",
+      "residual_gap": "In flight. The current invariant suite covers only single-shot ETH. Must land before H7."
+    },
+    {
+      "item_id": "H4",
+      "phase": "Hardening",
+      "title": "CreateEscrow request unification",
+      "status": "in_progress",
+      "paper_refs": [
+        "4.2"
+      ],
+      "decision_vs_paper": "One shared request DTO and parser, with floor and panel validation in the escrow service once, replacing three duplicated copies (HTTP, MCP, UCP).",
+      "residual_gap": "In flight. Prerequisite for H5 and H6."
+    },
+    {
+      "item_id": "H5",
+      "phase": "Hardening",
+      "title": "Fund-recovery parity across MCP, HTTP, and CLI",
+      "status": "planned",
+      "paper_refs": [
+        "4.9"
+      ],
+      "decision_vs_paper": "Expose timeout refund, arbitrator-timeout claim, cancel-before-funding, milestone timeouts, and `expireNoQuorum` / `expireMilestoneNoQuorum` through all three transports, per the interface-parity rule.",
+      "residual_gap": "Entire item is pending. Today these paths are reachable only through the UCP adapter, and the no-quorum expiries have no Go binding. Starts after H4."
+    },
+    {
+      "item_id": "H6",
+      "phase": "Hardening",
+      "title": "Generic action adapters and service extraction",
+      "status": "planned",
+      "paper_refs": [
+        "6"
+      ],
+      "decision_vs_paper": "Collapse the near-identical HTTP and MCP escrow-action handlers into shared helpers and move checkpoint, RFQ, and decomposition-finalize logic into services; unify escrow ID resolution (MCP accepts ID or address, HTTP only ID).",
+      "residual_gap": "Entire item is pending. Starts after H5."
+    },
+    {
+      "item_id": "H7",
+      "phase": "Hardening",
+      "title": "Contract bug-fix bundle (no owner decision needed)",
+      "status": "planned",
+      "paper_refs": [
+        "4.4",
+        "4.8",
+        "4.9"
+      ],
+      "decision_vs_paper": "Scope backup-worker stake settlement to post-activation milestones; extend backup deadlines for all remaining milestones from max(now, deadline) with checked casts and a required extension > 0; reject 1-element milestone arrays and zero-amount milestones; enforce minimum review, dispute, and arbitrator windows; add `nonReentrant` to `withdrawStake`; reorder `activateBackup` to checks-effects-interactions; restrict `EscrowDeployer.deploy` to the factory.",
+      "residual_gap": "Entire item is pending. Must keep TaskEscrow under 24,576 B (about 584 B of headroom today). Starts after H3. Redeploy is bundled with the owner-approved contract items (H9-H13) as one v2."
+    },
+    {
+      "item_id": "H8",
+      "phase": "Hardening",
+      "title": "Principal authentication (signed requests)",
+      "status": "planned",
+      "blocked_on_owner": true,
+      "paper_refs": [
+        "4.2",
+        "4.7",
+        "4.9"
+      ],
+      "decision_vs_paper": "Replace request-body `caller`, `committed_by`, and bidder strings with signed requests (EIP-191/712 envelope with nonce and expiry) so off-chain identity checks are cryptographic.",
+      "residual_gap": "Blocked on the owner's off-chain trust-model decision (trustless participants vs operator-trusted coordinator). Resolves 13b, and gives P4.2, item 16, and R4 enforcement real meaning."
+    },
+    {
+      "item_id": "H9",
+      "phase": "Hardening",
+      "title": "Pull-payment settlement",
+      "status": "planned",
+      "blocked_on_owner": true,
+      "paper_refs": [
+        "4.9"
+      ],
+      "decision_vs_paper": "Route principal payouts, refunds, worker-stake settlement, and fees through the existing `withdrawable` ledger so a reverting recipient or a blacklisted USDC address cannot brick split dispute or quorum settlement.",
+      "residual_gap": "Blocked on the owner: changes settlement semantics and SPEC invariant 1. Contract v2 redeploy."
+    },
+    {
+      "item_id": "H10",
+      "phase": "Hardening",
+      "title": "createEscrow consent model",
+      "status": "planned",
+      "blocked_on_owner": true,
+      "paper_refs": [
+        "4.6",
+        "4.8"
+      ],
+      "decision_vs_paper": "Decide who must consent at creation (`msg.sender == buyer`, worker acceptance or signature) before an escrow counts toward reputation or the re-delegation surcharge streak.",
+      "residual_gap": "Blocked on the owner. Today anyone can create an escrow naming any buyer or worker, which allows reputation and surcharge griefing. Contract v2 redeploy."
+    },
+    {
+      "item_id": "H11",
+      "phase": "Hardening",
+      "title": "Per-token complexity floor",
+      "status": "planned",
+      "blocked_on_owner": true,
+      "paper_refs": [
+        "4.3"
+      ],
+      "decision_vs_paper": "Key the floor per token (or move it to a USD-denominated off-chain check) so 18-decimal and 6-decimal tokens are not compared raw.",
+      "residual_gap": "Blocked on the owner: per-token mapping with an allowlist, or drop the on-chain floor. Contract v2 redeploy if on-chain."
+    },
+    {
+      "item_id": "H12",
+      "phase": "Hardening",
+      "title": "ZK public-input binding",
+      "status": "planned",
+      "blocked_on_owner": true,
+      "paper_refs": [
+        "4.8"
+      ],
+      "decision_vs_paper": "Bind the verifier's public inputs to chain id, escrow address, milestone, `taskSpecHash`, `submissionHash`, and worker (an `IZKVerifier` interface change), or document the slot as panel-gated proof-carrying evidence only.",
+      "residual_gap": "Blocked on the owner: interface change vs documentation-only. Contract v2 redeploy if bound."
+    },
+    {
+      "item_id": "H13",
+      "phase": "Hardening",
+      "title": "Quorum incentive design",
+      "status": "planned",
+      "blocked_on_owner": true,
+      "paper_refs": [
+        "4.8",
+        "5.3"
+      ],
+      "decision_vs_paper": "Decide whether majority verifiers are paid (protocol fee, per-escrow verifier fee, or redistributed minority stake) and whether Tier-1 buyers may `dispute()` mid-quorum.",
+      "residual_gap": "Blocked on the owner. Today voting can only lose stake and abstainers are refunded, which inverts the paper's Schelling-game incentive."
+    },
+    {
+      "item_id": "H14",
+      "phase": "Hardening",
+      "title": "SQLite migration squash",
+      "status": "planned",
+      "blocked_on_owner": true,
+      "paper_refs": [],
+      "decision_vs_paper": "Squash the 27 SQLite migrations into one baseline before mainnet (hard cutoff).",
+      "residual_gap": "Blocked on the owner: forces a re-index of existing testnet databases from the start block."
+    },
+    {
+      "item_id": "H15",
+      "phase": "Hardening",
+      "title": "Remove dead `owner` request-body field",
+      "status": "planned",
+      "blocked_on_owner": true,
+      "paper_refs": [
+        "4.7"
+      ],
+      "decision_vs_paper": "Remove the `owner` body field (and its `caller` / `committed_by` siblings as authority) as a hard cutoff once principals are authenticated.",
+      "residual_gap": "Blocked on the owner; sequenced with H8."
     },
     {
       "item_id": "23",
@@ -728,11 +921,12 @@
       "revisit_id": "R2",
       "anchored_item_id": "15",
       "title": "Attestation-chain anchoring",
-      "why_revisit": "Off-chain-only verification is efficient, but stronger non-repudiation is useful for high-assurance disputes.",
+      "why_revisit": "Off-chain-only verification is efficient, but stronger non-repudiation is useful for high-assurance disputes. TaskEscrow has about 584 B of size headroom, so anchoring ships without Solidity changes.",
       "tasks": [
-        "Add optional on-chain commitment of attestation root hash on submit.",
+        "Commit the attestation root inside `submissionHash` (keccak256(abi.encode(deliverableHash, attestationRoot))) and verify it off-chain against the `SubmissionMade` event and the stored chain.",
         "Add proof-of-inclusion retrieval and verification helpers.",
-        "Define dispute-time checks for mismatched chain data versus anchored roots."
+        "Define dispute-time checks for mismatched chain data versus anchored roots.",
+        "Revisit a native on-chain root field only if the contract v2 bundle needs it."
       ],
       "status": "planned"
     },
@@ -740,11 +934,11 @@
       "revisit_id": "R3",
       "anchored_item_id": "20",
       "title": "Market stability parameter recalibration",
-      "why_revisit": "Static damping/cooldown/surcharge knobs may need telemetry-driven tuning to avoid over-correction.",
+      "why_revisit": "Static damping/cooldown/surcharge knobs may need tuning, but no traffic data exists yet, so a simulation harness would be speculative.",
       "tasks": [
-        "Build replay/simulation harness for surcharge, cooldown, and damping settings.",
-        "Add parameter guardrails by task class and risk profile.",
-        "Add staged, auditable governance rollout path for parameter updates."
+        "Add parameter range guardrails by task class and risk profile.",
+        "Add an auditable change log for parameter updates.",
+        "Defer the replay/simulation harness and staged governance rollout until real traffic data exists."
       ],
       "status": "planned"
     },
@@ -752,7 +946,7 @@
       "revisit_id": "R4",
       "anchored_item_id": "21",
       "title": "Human delegate preference enforcement modes",
-      "why_revisit": "Advisory-only delegate preference underdelivers on paper emphasis for human delegatees in sensitive workflows.",
+      "why_revisit": "Advisory-only delegate preference underdelivers on paper emphasis for human delegatees in sensitive workflows. Enforcement is not meaningful while bidder identity is self-asserted, so it follows H8.",
       "tasks": [
         "Introduce policy modes (advisory, require_human, require_ai, any) scoped by risk/task class.",
         "Enforce policy mode during decomposition finalize and bid acceptance.",
@@ -762,15 +956,28 @@
     }
   ],
   "recommended_execution_order": [
-    "R1",
-    "R2",
-    "R3",
-    "R4",
-    "SH1",
+    "H2",
+    "H3",
+    "H4",
     "SH2",
     "SH3",
     "SH4",
+    "H1",
+    "H5",
+    "H6",
+    "H7",
+    "R2",
+    "R3",
+    "H8",
     "SH5",
+    "H9",
+    "H10",
+    "H11",
+    "H12",
+    "H13",
+    "H14",
+    "H15",
+    "R4",
     "25",
     "29",
     "30",
@@ -779,5 +986,68 @@
     "26",
     "28",
     "27"
-  ]
+  ],
+  "gaps_identified_during_2026_11_audit": [
+    {
+      "gap_id": "G-AUTH-PRINCIPALS",
+      "paper_section": "4.7, 4.2, 4.9",
+      "description": "Off-chain identity checks compare strings the caller supplies. HTTP/CLI DCT mint, delegate, and revoke are always denied; MCP trusts any non-empty caller; bid acceptance and checkpoint commits use body fields.",
+      "resolution": "H8 (blocked on owner). SH1 covers admin routes only."
+    },
+    {
+      "gap_id": "G-ADAPTIVE-LOOP",
+      "paper_section": "4.4",
+      "description": "No trigger detection or automatic re-allocation; backup activation is manual and has stake and deadline defects.",
+      "resolution": "H7 fixes the defects; the automatic loop stays open. P4.4 downgraded to partial."
+    },
+    {
+      "gap_id": "G-ZK-BINDING",
+      "paper_section": "4.8",
+      "description": "ZK proof verification receives no task-specific public inputs, so a valid proof for the same circuit can be replayed across escrows.",
+      "resolution": "H12 (blocked on owner)."
+    },
+    {
+      "gap_id": "G-QUORUM-INCENTIVE",
+      "paper_section": "4.8, 5.3",
+      "description": "Verifier stake game rewards no majority voter, refunds abstainers, and lets Tier-1 buyers dispute mid-quorum.",
+      "resolution": "H13 (blocked on owner)."
+    },
+    {
+      "gap_id": "G-TRANSITIVE-LIABILITY",
+      "paper_section": "4.8, 5.2",
+      "description": "Transitive liability was documented as implemented; `parentEscrow` only affects fee surcharge.",
+      "resolution": "Claim removed. Firebreaks remain item 24."
+    },
+    {
+      "gap_id": "G-A2A-ESCROW-LINK",
+      "paper_section": "6",
+      "description": "A2A adapter stores tasks but never creates or links escrows.",
+      "resolution": "S6-A2A downgraded to partial; wiring not yet scheduled."
+    },
+    {
+      "gap_id": "G-AP2-SIGNATURE",
+      "paper_section": "6",
+      "description": "AP2 mandate signature is not verified.",
+      "resolution": "H1 (fix in flight)."
+    },
+    {
+      "gap_id": "G-X402-UNUSED",
+      "paper_section": "6",
+      "description": "x402 client is constructed and injected but has no production callers.",
+      "resolution": "S6-x402 downgraded to partial; code kept by owner decision."
+    },
+    {
+      "gap_id": "G-FUND-RECOVERY-PARITY",
+      "paper_section": "4.9",
+      "description": "Timeout and cancel recovery paths exist on-chain but are exposed only through UCP; `expireNoQuorum` has no Go binding.",
+      "resolution": "H5."
+    },
+    {
+      "gap_id": "G-PUSH-PAYMENTS",
+      "paper_section": "4.9",
+      "description": "Synchronous push payouts let a reverting recipient or blacklisted address block split or quorum settlement.",
+      "resolution": "H9 (blocked on owner)."
+    }
+  ],
+  "execution_order_notes": "Completed items (R1, SH1) are omitted. H2-H4 are in flight; H1 is in flight as a separate fix PR. H8, SH5, and H9-H15 are blocked on owner decisions and are listed in the order they would start once unblocked. Contract items H7 and H9-H13 ship together as one bundled v2 redeploy."
 }
