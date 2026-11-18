@@ -8,3 +8,14 @@ solc_version = "0.8.34"
 optimizer = true
 optimizer_runs = 200
 via_ir = true
+
+# Invariant campaigns: sized for CI. Each invariant_* function is its own campaign, so cost scales with
+# (#invariants x runs x depth). Use `FOUNDRY_PROFILE=deep make test-invariant` for a longer local/nightly run.
+[invariant]
+runs = 32
+depth = 512
+fail_on_revert = false
+
+[profile.deep.invariant]
+runs = 512
+depth = 512

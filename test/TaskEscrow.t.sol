@@ -1,92 +1,25 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.34;
 
-import {Test} from "forge-std/Test.sol";
+import {BaseEscrowTest} from "./BaseEscrowTest.sol";
 import {TaskEscrowFactory} from "../src/TaskEscrowFactory.sol";
 import {TaskEscrow} from "../src/TaskEscrow.sol";
 
-contract TaskEscrowTest is Test {
-    TaskEscrowFactory internal factory;
+contract TaskEscrowTest is BaseEscrowTest {
     TaskEscrow internal escrow;
 
-    address internal owner = makeAddr("owner");
-    address internal buyer = makeAddr("buyer");
-    address internal worker = makeAddr("worker");
-    address internal verifier = makeAddr("verifier");
-    address internal arbitrator = makeAddr("arbitrator");
-    address internal treasury = makeAddr("treasury");
-
-    uint256 internal constant AMOUNT = 1 ether;
-    uint256 internal constant STAKE = 0.1 ether;
-    uint16 internal constant FEE_BPS = 100; // 1%
-    uint64 internal constant REVIEW = 86_400;
-    uint64 internal constant DISPUTE = 172_800;
-    uint64 internal constant ARB_TIMEOUT = 7 days;
-
-    function setUp() public {
-        factory = new TaskEscrowFactory(FEE_BPS, FEE_BPS, treasury, owner);
-
-        vm.prank(address(0xBEEF));
-        (, address escrowAddr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-        escrow = TaskEscrow(escrowAddr);
-
+    function setUp() public override {
+        super.setUp();
+        escrow = _createDefault();
         vm.deal(buyer, 10 ether);
         vm.deal(worker, 1 ether);
     }
 
     function _createStakedEscrow() internal returns (TaskEscrow) {
-        (, address addr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: STAKE,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec-staked"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-        return TaskEscrow(addr);
+        TaskEscrowFactory.CreateParams memory p = _defaultParams();
+        p.workerStake = STAKE;
+        p.taskSpecHash = keccak256("spec-staked");
+        return _create(p);
     }
 
     function testHappyPathApproveByBuyer() public {

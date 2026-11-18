@@ -1,90 +1,26 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.34;
 
-import {Test} from "forge-std/Test.sol";
+import {BaseEscrowTest} from "./BaseEscrowTest.sol";
 import {TaskEscrowFactory} from "../src/TaskEscrowFactory.sol";
-import {IERC20} from "../src/interfaces/IERC20.sol";
+import {MockERC20} from "./mocks/MockERC20.sol";
 
-contract MockERC20Floor is IERC20 {
-    string public name = "TestToken";
-    string public symbol = "TT";
-    uint8 public decimals = 18;
-    uint256 public totalSupply;
-    mapping(address => uint256) public balanceOf;
-    mapping(address => mapping(address => uint256)) public allowance;
+contract TaskEscrowComplexityFloorTest is BaseEscrowTest {
+    MockERC20 internal token;
 
-    function mint(address to, uint256 amount) external {
-        balanceOf[to] += amount;
-        totalSupply += amount;
-    }
-
-    function transfer(address to, uint256 amount) external returns (bool) {
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
-        return true;
-    }
-
-    function approve(address spender, uint256 amount) external returns (bool) {
-        allowance[msg.sender][spender] = amount;
-        return true;
-    }
-
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
-        balanceOf[from] -= amount;
-        allowance[from][msg.sender] -= amount;
-        balanceOf[to] += amount;
-        return true;
-    }
-}
-
-contract TaskEscrowComplexityFloorTest is Test {
-    TaskEscrowFactory internal factory;
-    MockERC20Floor internal token;
-
-    address internal factoryOwner = makeAddr("owner");
-    address internal buyer = makeAddr("buyer");
-    address internal worker = makeAddr("worker");
-    address internal verifier = makeAddr("verifier");
-    address internal arbitrator = makeAddr("arbitrator");
-    address internal treasury = makeAddr("treasury");
     address internal nonOwner = makeAddr("nonOwner");
 
-    uint16 internal constant FEE_BPS = 100;
-    uint64 internal constant REVIEW = 86_400;
-    uint64 internal constant DISPUTE = 172_800;
-    uint64 internal constant ARB_TIMEOUT = 7 days;
     uint256 internal constant FLOOR = 0.01 ether;
 
-    function setUp() public {
-        factory = new TaskEscrowFactory(FEE_BPS, FEE_BPS, treasury, factoryOwner);
-        token = new MockERC20Floor();
+    function setUp() public override {
+        super.setUp();
+        token = new MockERC20("TestToken", "TT", 18);
     }
 
     function _defaultParams(uint256 amount) internal view returns (TaskEscrowFactory.CreateParams memory) {
-        return TaskEscrowFactory.CreateParams({
-            buyer: buyer,
-            worker: worker,
-            verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-            quorumThreshold: 1,
-            quorumVerifierCount: 1,
-            verifierStakePerVerifier: 0,
-            arbitrator: arbitrator,
-            amount: amount,
-            workerStake: 0,
-            submissionDeadline: uint64(block.timestamp + 7 days),
-            reviewPeriodSeconds: REVIEW,
-            disputePeriodSeconds: DISPUTE,
-            taskSpecHash: keccak256("spec"),
-            arbitratorTimeoutSeconds: ARB_TIMEOUT,
-            token: address(0),
-            serviceTier: 0,
-            backupWorker: address(0),
-            backupDeadlineExtension: 0,
-            zkVerifier: address(0),
-            circuitId: bytes32(0),
-            parentEscrow: address(0),
-            milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-        });
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.amount = amount;
+        return params;
     }
 
     // ── Default state ──
@@ -96,7 +32,7 @@ contract TaskEscrowComplexityFloorTest is Test {
     // ── Setter ──
 
     function testSetComplexityFloor() public {
-        vm.prank(factoryOwner);
+        vm.prank(owner);
         vm.expectEmit(false, false, false, true);
         emit TaskEscrowFactory.ComplexityFloorUpdated(0, FLOOR);
         factory.setComplexityFloor(FLOOR);
@@ -113,7 +49,7 @@ contract TaskEscrowComplexityFloorTest is Test {
     // ── Enforcement in createEscrow ──
 
     function testCreateEscrowBelowFloorReverts() public {
-        vm.prank(factoryOwner);
+        vm.prank(owner);
         factory.setComplexityFloor(FLOOR);
 
         vm.expectRevert(TaskEscrowFactory.BelowComplexityFloor.selector);
@@ -121,7 +57,7 @@ contract TaskEscrowComplexityFloorTest is Test {
     }
 
     function testCreateEscrowAtFloorSucceeds() public {
-        vm.prank(factoryOwner);
+        vm.prank(owner);
         factory.setComplexityFloor(FLOOR);
 
         (uint256 id, address addr) = factory.createEscrow(_defaultParams(FLOOR));
@@ -130,7 +66,7 @@ contract TaskEscrowComplexityFloorTest is Test {
     }
 
     function testCreateEscrowAboveFloorSucceeds() public {
-        vm.prank(factoryOwner);
+        vm.prank(owner);
         factory.setComplexityFloor(FLOOR);
 
         (uint256 id, address addr) = factory.createEscrow(_defaultParams(FLOOR + 1 ether));
@@ -148,7 +84,7 @@ contract TaskEscrowComplexityFloorTest is Test {
     // ── Milestone escrows ──
 
     function testCreateMilestoneEscrowBelowFloorReverts() public {
-        vm.prank(factoryOwner);
+        vm.prank(owner);
         factory.setComplexityFloor(FLOOR);
 
         // Total amount below floor, split across 2 milestones
@@ -169,7 +105,7 @@ contract TaskEscrowComplexityFloorTest is Test {
     }
 
     function testCreateMilestoneEscrowAtFloorSucceeds() public {
-        vm.prank(factoryOwner);
+        vm.prank(owner);
         factory.setComplexityFloor(FLOOR);
 
         TaskEscrowFactory.CreateMilestoneParams[] memory ms = new TaskEscrowFactory.CreateMilestoneParams[](2);
@@ -190,7 +126,7 @@ contract TaskEscrowComplexityFloorTest is Test {
     // ── Re-disabling ──
 
     function testSetComplexityFloorToZeroDisables() public {
-        vm.startPrank(factoryOwner);
+        vm.startPrank(owner);
         factory.setComplexityFloor(FLOOR);
         assertEq(factory.complexityFloor(), FLOOR);
 
@@ -206,7 +142,7 @@ contract TaskEscrowComplexityFloorTest is Test {
     // ── ERC20 ──
 
     function testComplexityFloorWithERC20() public {
-        vm.prank(factoryOwner);
+        vm.prank(owner);
         factory.setComplexityFloor(FLOOR);
 
         TaskEscrowFactory.CreateParams memory p = _defaultParams(FLOOR - 1);

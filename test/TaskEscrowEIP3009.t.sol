@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.34;
 
-import {Test} from "forge-std/Test.sol";
+import {BaseEscrowTest} from "./BaseEscrowTest.sol";
 import {TaskEscrowFactory} from "../src/TaskEscrowFactory.sol";
 import {TaskEscrow} from "../src/TaskEscrow.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
@@ -173,90 +173,32 @@ contract MockFeeOnTransferEIP3009Token is IERC20, IEIP3009 {
     }
 }
 
-contract TaskEscrowEIP3009Test is Test {
-    TaskEscrowFactory internal factory;
+contract TaskEscrowEIP3009Test is BaseEscrowTest {
     MockEIP3009Token internal usdc;
 
     uint256 internal buyerPk;
-    address internal buyer;
-    address internal worker = makeAddr("worker");
-    address internal verifier = makeAddr("verifier");
-    address internal arbitrator = makeAddr("arbitrator");
-    address internal treasury = makeAddr("treasury");
-    address internal owner = makeAddr("owner");
     address internal relayer = makeAddr("relayer");
 
-    uint256 internal constant AMOUNT = 1000e6;
-    uint16 internal constant FEE_BPS = 100;
-    uint64 internal constant REVIEW = 86_400;
-    uint64 internal constant DISPUTE = 172_800;
-    uint64 internal constant ARB_TIMEOUT = 7 days;
+    uint256 internal constant USDC_AMOUNT = 1000e6;
 
-    function setUp() public {
+    function setUp() public override {
         (buyer, buyerPk) = makeAddrAndKey("buyer");
-        factory = new TaskEscrowFactory(FEE_BPS, FEE_BPS, treasury, owner);
+        super.setUp();
         usdc = new MockEIP3009Token("USD Coin", "USDC", 6);
         usdc.mint(buyer, 10_000e6);
     }
 
     function _createEscrow() internal returns (TaskEscrow) {
-        (, address addr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(usdc),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-        return TaskEscrow(addr);
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.amount = USDC_AMOUNT;
+        params.token = address(usdc);
+        return _create(params);
     }
 
     function _createETHEscrow() internal returns (TaskEscrow) {
-        (, address addr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: 1 ether,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-        return TaskEscrow(addr);
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.amount = 1 ether;
+        return _create(params);
     }
 
     function _signAuthorization(TaskEscrow escrow, bytes32 nonce, uint256 validAfter, uint256 validBefore)
@@ -269,7 +211,7 @@ contract TaskEscrowEIP3009Test is Test {
                 usdc.RECEIVE_WITH_AUTHORIZATION_TYPEHASH(),
                 buyer,
                 address(escrow),
-                AMOUNT,
+                USDC_AMOUNT,
                 validAfter,
                 validBefore,
                 nonce
@@ -293,8 +235,8 @@ contract TaskEscrowEIP3009Test is Test {
         escrow.fundWithAuthorization(buyer, validAfter, validBefore, nonce, v, r, s);
 
         assertEq(uint8(escrow.status()), uint8(TaskEscrow.Status.Funded));
-        assertEq(usdc.balanceOf(address(escrow)), AMOUNT);
-        assertEq(usdc.balanceOf(buyer), 10_000e6 - AMOUNT);
+        assertEq(usdc.balanceOf(address(escrow)), USDC_AMOUNT);
+        assertEq(usdc.balanceOf(buyer), 10_000e6 - USDC_AMOUNT);
     }
 
     function testFundWithAuthorization_BuyerSubmitsSelf() public {
@@ -320,7 +262,7 @@ contract TaskEscrowEIP3009Test is Test {
         (uint8 v, bytes32 r, bytes32 s) = _signAuthorization(escrow, nonce, validAfter, validBefore);
 
         vm.expectEmit(true, false, false, true, address(escrow));
-        emit TaskEscrow.EscrowFunded(buyer, AMOUNT);
+        emit TaskEscrow.EscrowFunded(buyer, USDC_AMOUNT);
 
         vm.prank(relayer);
         escrow.fundWithAuthorization(buyer, validAfter, validBefore, nonce, v, r, s);
@@ -371,34 +313,11 @@ contract TaskEscrowEIP3009Test is Test {
     function testFundWithAuthorization_RevertFeeOnTransfer() public {
         MockFeeOnTransferEIP3009Token feeToken = new MockFeeOnTransferEIP3009Token("FEE", "FEE", 6);
         feeToken.mint(buyer, 10_000e6);
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.amount = USDC_AMOUNT;
+        params.token = address(feeToken);
 
-        (, address addr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(feeToken),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-        TaskEscrow escrow = TaskEscrow(addr);
+        TaskEscrow escrow = _create(params);
 
         vm.expectRevert(TaskEscrow.InsufficientReceived.selector);
         vm.prank(relayer);
@@ -441,34 +360,12 @@ contract TaskEscrowEIP3009Test is Test {
         ms[1] = TaskEscrowFactory.CreateMilestoneParams({
             amount: 400e6, submissionDeadline: uint64(block.timestamp + 7 days)
         });
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.amount = USDC_AMOUNT;
+        params.token = address(usdc);
+        params.milestones = ms;
 
-        (, address addr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(usdc),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: ms
-            })
-        );
-        TaskEscrow escrow = TaskEscrow(addr);
+        TaskEscrow escrow = _create(params);
 
         bytes32 nonce = keccak256("ms-nonce");
         uint256 validBefore = block.timestamp + 1 hours;
@@ -478,7 +375,7 @@ contract TaskEscrowEIP3009Test is Test {
         escrow.fundWithAuthorization(buyer, 0, validBefore, nonce, v, r, s);
 
         assertEq(uint8(escrow.status()), uint8(TaskEscrow.Status.Funded));
-        assertEq(usdc.balanceOf(address(escrow)), AMOUNT);
+        assertEq(usdc.balanceOf(address(escrow)), USDC_AMOUNT);
 
         vm.prank(worker);
         escrow.submitMilestone(0, keccak256("ms0"), "ipfs://ms0", bytes32(0));

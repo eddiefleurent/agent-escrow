@@ -1,30 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.34;
 
-import {Test} from "forge-std/Test.sol";
+import {BaseEscrowTest} from "./BaseEscrowTest.sol";
 import {TaskEscrowFactory} from "../src/TaskEscrowFactory.sol";
 import {TaskEscrow} from "../src/TaskEscrow.sol";
 import {MockZKVerifier} from "./mocks/MockZKVerifier.sol";
 
-contract TaskEscrowZKVerificationTest is Test {
-    TaskEscrowFactory internal factory;
+contract TaskEscrowZKVerificationTest is BaseEscrowTest {
     MockZKVerifier internal zk;
 
-    address internal owner = makeAddr("owner");
-    address internal buyer = makeAddr("buyer");
-    address internal worker = makeAddr("worker");
-    address internal verifier = makeAddr("verifier");
-    address internal arbitrator = makeAddr("arbitrator");
-    address internal treasury = makeAddr("treasury");
-
-    uint256 internal constant AMOUNT = 1 ether;
-    uint16 internal constant FEE_BPS = 100;
-    uint64 internal constant REVIEW = 86_400;
-    uint64 internal constant DISPUTE = 172_800;
-    uint64 internal constant ARB_TIMEOUT = 7 days;
-
-    function setUp() public {
-        factory = new TaskEscrowFactory(FEE_BPS, FEE_BPS, treasury, owner);
+    function setUp() public override {
+        super.setUp();
         zk = new MockZKVerifier();
         vm.deal(buyer, 10 ether);
     }
@@ -155,11 +141,6 @@ contract TaskEscrowZKVerificationTest is Test {
         _createEscrow(makeAddr("not-a-contract"), keccak256("circuit-eoa"), _emptyMilestones());
     }
 
-    function _fund(TaskEscrow e) internal {
-        vm.prank(buyer);
-        e.fund{value: AMOUNT}();
-    }
-
     function _emptyMilestones() internal pure returns (TaskEscrowFactory.CreateMilestoneParams[] memory ms) {
         ms = new TaskEscrowFactory.CreateMilestoneParams[](0);
     }
@@ -179,32 +160,11 @@ contract TaskEscrowZKVerificationTest is Test {
         bytes32 circuitId,
         TaskEscrowFactory.CreateMilestoneParams[] memory milestones
     ) internal returns (TaskEscrow) {
-        (, address addr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec-zk"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 1,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: zkVerifierAddr,
-                circuitId: circuitId,
-                parentEscrow: address(0),
-                milestones: milestones
-            })
-        );
-        return TaskEscrow(addr);
+        TaskEscrowFactory.CreateParams memory params = _defaultParams();
+        params.serviceTier = 1;
+        params.zkVerifier = zkVerifierAddr;
+        params.circuitId = circuitId;
+        params.milestones = milestones;
+        return _create(params);
     }
 }

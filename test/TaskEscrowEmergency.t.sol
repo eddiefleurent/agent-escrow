@@ -1,90 +1,23 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.34;
 
-import {Test} from "forge-std/Test.sol";
+import {BaseEscrowTest} from "./BaseEscrowTest.sol";
 import {TaskEscrowFactory} from "../src/TaskEscrowFactory.sol";
 import {TaskEscrow} from "../src/TaskEscrow.sol";
 
-contract TaskEscrowEmergencyTest is Test {
-    TaskEscrowFactory internal factory;
+contract TaskEscrowEmergencyTest is BaseEscrowTest {
     TaskEscrow internal escrow;
 
-    address internal owner = makeAddr("owner");
-    address internal buyer = makeAddr("buyer");
-    address internal worker = makeAddr("worker");
-    address internal verifier = makeAddr("verifier");
-    address internal arbitrator = makeAddr("arbitrator");
-    address internal treasury = makeAddr("treasury");
     address internal nonOwner = makeAddr("nonOwner");
 
-    uint256 internal constant AMOUNT = 1 ether;
-    uint256 internal constant STAKE = 0.1 ether;
-    uint16 internal constant FEE_BPS = 100; // 1%
-    uint64 internal constant REVIEW = 86_400;
-    uint64 internal constant DISPUTE = 172_800;
-    uint64 internal constant ARB_TIMEOUT = 7 days;
-
-    function setUp() public {
-        factory = new TaskEscrowFactory(FEE_BPS, FEE_BPS, treasury, owner);
+    function setUp() public override {
+        super.setUp();
 
         vm.prank(nonOwner);
-        (, address escrowAddr) = factory.createEscrow(
-            TaskEscrowFactory.CreateParams({
-                buyer: buyer,
-                worker: worker,
-                verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-                quorumThreshold: 1,
-                quorumVerifierCount: 1,
-                verifierStakePerVerifier: 0,
-                arbitrator: arbitrator,
-                amount: AMOUNT,
-                workerStake: 0,
-                submissionDeadline: uint64(block.timestamp + 7 days),
-                reviewPeriodSeconds: REVIEW,
-                disputePeriodSeconds: DISPUTE,
-                taskSpecHash: keccak256("spec"),
-                arbitratorTimeoutSeconds: ARB_TIMEOUT,
-                token: address(0),
-                serviceTier: 0,
-                backupWorker: address(0),
-                backupDeadlineExtension: 0,
-                zkVerifier: address(0),
-                circuitId: bytes32(0),
-                parentEscrow: address(0),
-                milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-            })
-        );
-        escrow = TaskEscrow(escrowAddr);
+        escrow = _create(_defaultParams());
 
         vm.deal(buyer, 10 ether);
         vm.deal(worker, 1 ether);
-    }
-
-    function _defaultParams() internal view returns (TaskEscrowFactory.CreateParams memory) {
-        return TaskEscrowFactory.CreateParams({
-            buyer: buyer,
-            worker: worker,
-            verifierPanel: [verifier, address(0), address(0), address(0), address(0), address(0), address(0)],
-            quorumThreshold: 1,
-            quorumVerifierCount: 1,
-            verifierStakePerVerifier: 0,
-            arbitrator: arbitrator,
-            amount: AMOUNT,
-            workerStake: 0,
-            submissionDeadline: uint64(block.timestamp + 7 days),
-            reviewPeriodSeconds: REVIEW,
-            disputePeriodSeconds: DISPUTE,
-            taskSpecHash: keccak256("spec"),
-            arbitratorTimeoutSeconds: ARB_TIMEOUT,
-            token: address(0),
-            serviceTier: 0,
-            backupWorker: address(0),
-            backupDeadlineExtension: 0,
-            zkVerifier: address(0),
-            circuitId: bytes32(0),
-            parentEscrow: address(0),
-            milestones: new TaskEscrowFactory.CreateMilestoneParams[](0)
-        });
     }
 
     function _milestoneParams3() internal view returns (TaskEscrowFactory.CreateMilestoneParams[] memory ms) {
@@ -108,8 +41,7 @@ contract TaskEscrowEmergencyTest is Test {
         p.milestones = _milestoneParams3();
 
         vm.prank(nonOwner);
-        (, address addr) = factory.createEscrow(p);
-        return TaskEscrow(addr);
+        return _create(p);
     }
 
     // ── Factory: Address Freezing ──
