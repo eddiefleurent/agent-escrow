@@ -39,7 +39,7 @@ func TestCORSMiddlewareAllowAllAndPreflight(t *testing.T) {
 		nextCalled = true
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := corsMiddleware(nil, next)
+	handler := corsMiddleware([]string{"*"}, next)
 
 	req := httptest.NewRequest(http.MethodOptions, "/api/v1/tasks", nil)
 	req.Header.Set("Origin", "https://example.com")

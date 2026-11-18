@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type Config struct {
@@ -22,7 +23,7 @@ type Config struct {
 	DatabaseURL    string
 	Port           int
 	MCPTransport   string
-	CORSOrigins    []string      // Allowed CORS origins; empty means allow all ("*")
+	CORSOrigins    []string      // Allowed HTTP CORS origins; empty omits the allow-origin header
 	RequestTimeout time.Duration // Timeout for read-only requests (default 10s)
 	TxTimeout      time.Duration // Timeout for chain transaction requests (default 90s)
 	LogChunkSize   uint64        // Max block range per eth_getLogs request (default 2000)
@@ -66,8 +67,11 @@ type Config struct {
 	EventsHeartbeatInterval time.Duration // Heartbeat interval for L0 liveness (default 30s)
 
 	// Emergency response protocol (paper §4.9: rapid incident response).
-	EmergencyEnabled bool   // Enable emergency freeze/resolve endpoints (default true)
-	OwnerAddress     string // Factory owner address for emergency override authorization (OWNER_ADDRESS)
+	EmergencyEnabled    bool // Enable HTTP emergency endpoints (default false)
+	MCPEmergencyEnabled bool // Enable emergency and admin audit tools over local MCP stdio (default false)
+	// #nosec G117 -- Loaded from ADMIN_TOKEN and used only for bearer authentication.
+	AdminToken   string
+	OwnerAddress string // Factory owner address for emergency override authorization (OWNER_ADDRESS)
 }
 
 // WebhookMode reports whether CDP webhook mode is enabled (secret is configured).
@@ -259,13 +263,22 @@ func Load() (*Config, error) {
 		eventsBufferSize = v
 	}
 
-	emergencyEnabled := true
+	emergencyEnabled := false
 	if raw := os.Getenv("EMERGENCY_ENABLED"); raw != "" {
 		v, err := strconv.ParseBool(raw)
 		if err != nil {
 			return nil, fmt.Errorf("invalid EMERGENCY_ENABLED: %w", err)
 		}
 		emergencyEnabled = v
+	}
+
+	mcpEmergencyEnabled := false
+	if raw := os.Getenv("MCP_EMERGENCY_ENABLED"); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid MCP_EMERGENCY_ENABLED: %w", err)
+		}
+		mcpEmergencyEnabled = v
 	}
 
 	eventsHeartbeatInterval := 30 * time.Second
@@ -309,6 +322,8 @@ func Load() (*Config, error) {
 		EventsBufferSize:        eventsBufferSize,
 		EventsHeartbeatInterval: eventsHeartbeatInterval,
 		EmergencyEnabled:        emergencyEnabled,
+		MCPEmergencyEnabled:     mcpEmergencyEnabled,
+		AdminToken:              os.Getenv("ADMIN_TOKEN"),
 		OwnerAddress:            strings.ToLower(strings.TrimSpace(os.Getenv("OWNER_ADDRESS"))),
 	}
 
@@ -391,8 +406,12 @@ func (c *Config) Validate() ValidationResult {
 		}
 	}
 
-	if c.EmergencyEnabled && strings.TrimSpace(c.OwnerAddress) == "" {
-		r.Warnings = append(r.Warnings, "EMERGENCY_ENABLED is true but OWNER_ADDRESS is not set: emergency override authorization will always fail")
+	if c.EmergencyEnabled && utf8.RuneCountInString(strings.TrimSpace(c.AdminToken)) < 32 {
+		r.Errors = append(r.Errors, "ADMIN_TOKEN must be at least 32 characters when EMERGENCY_ENABLED is true")
+	}
+
+	if (c.EmergencyEnabled || c.MCPEmergencyEnabled) && strings.TrimSpace(c.OwnerAddress) == "" {
+		r.Warnings = append(r.Warnings, "OWNER_ADDRESS is not set: DCT emergency override authorization will always fail")
 	}
 
 	return r

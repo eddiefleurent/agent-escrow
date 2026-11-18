@@ -480,10 +480,6 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Name:        "revoke_dct",
 		Description: "Revoke a DCT by token_id.",
 	}, s.handleRevokeDCT)
-	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "list_dct_audit",
-		Description: "List DCT authorization audit log entries.",
-	}, s.handleListDCTAudit)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "create_rfq",
@@ -555,7 +551,13 @@ func (s *Server) registerTools(srv *mcp.Server) {
 		Description: "Fund an escrow via an AP2 mandate with EIP-3009 gasless authorization. Paper §6: AP2 stake-on-bid + conditional settlement.",
 	}, s.handleFundViaMandate)
 
-	if s.cfg.EmergencyEnabled {
+	// MCP is served over local stdio, with its own operator opt-in.
+	if s.cfg.MCPEmergencyEnabled {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name:        "list_dct_audit",
+			Description: "List DCT authorization audit log entries.",
+		}, s.handleListDCTAudit)
+
 		mcp.AddTool(srv, &mcp.Tool{
 			Name:        "emergency_override_dct",
 			Description: "Emergency override for DCT operations (factory owner only). Bypasses normal authorization.",

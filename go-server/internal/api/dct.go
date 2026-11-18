@@ -195,7 +195,6 @@ func (h *Handlers) EmergencyOverrideDCT(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
-	r = httpCallerCtx(r, req.Owner)
 	if err := h.dctService().EmergencyOverride(r.Context(), dct.EmergencyOverrideParams{
 		EscrowID:      req.EscrowID,
 		Operation:     req.Operation,
@@ -213,13 +212,6 @@ func (h *Handlers) EmergencyOverrideDCT(w http.ResponseWriter, r *http.Request) 
 const maxAuditListLimit = 1000
 
 func (h *Handlers) ListDCTAudit(w http.ResponseWriter, r *http.Request) {
-	// Audit logs are privileged: only the factory owner may access them.
-	caller := authz.CallerFrom(r.Context())
-	if !caller.Authenticated || !strings.EqualFold(caller.Address, h.cfg.OwnerAddress) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
-		return
-	}
-
 	var escrowID int64
 	if v := r.URL.Query().Get("escrow_id"); v != "" {
 		var err error

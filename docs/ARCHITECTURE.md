@@ -373,7 +373,7 @@ The architectural rule is that adapters may reshape transport semantics, but the
 
 A few operational mechanisms deserve mention because they affect system shape:
 
-- emergency controls span on-chain owner actions plus off-chain auditability;
+- emergency controls span on-chain owner actions plus off-chain auditability. HTTP admin routes require the operator bearer token, and local stdio MCP admin tools have a separate opt-in;
 - event streaming supports L0/L1 today, with deeper monitoring levels staged;
 - configuration gates optional surfaces such as A2A, UCP, x402, and emergency endpoints.
 

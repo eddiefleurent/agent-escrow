@@ -29,6 +29,7 @@ ARBITRATOR_KEY="${ARBITRATOR_KEY:-}"
 BACKUP_KEY="${BACKUP_KEY:-${BACKUP_WORKER_KEY:-}}"
 
 require_env "PRIVATE_KEY"
+require_env "ESCROW_ADMIN_TOKEN"
 require_env "WORKER_KEY"
 require_env "VERIFIER_KEY"
 require_env "ARBITRATOR_KEY"
@@ -55,13 +56,23 @@ jq_set() {
   jq --arg k "$key" --argjson v "$val" '.[$k] = $v' "$RESULTS_FILE" > "$tmp" && mv "$tmp" "$RESULTS_FILE"
 }
 
+api_curl() {
+  local path="$1"
+  shift
+  if [[ "$path" == /api/v1/emergency/* ]]; then
+    curl "$@" -H @- <<<"Authorization: Bearer ${ESCROW_ADMIN_TOKEN}"
+  else
+    curl "$@"
+  fi
+}
+
 api() {
   local method="$1" path="$2"
   shift 2
   if [ "$method" = "GET" ]; then
-    curl -sf -X GET "${BASE_URL}${path}" "$@" 2>&1
+    api_curl "$path" -sf -X GET "${BASE_URL}${path}" "$@" 2>&1
   else
-    curl -sf -X "$method" "${BASE_URL}${path}" -H "Content-Type: application/json" "$@" 2>&1
+    api_curl "$path" -sf -X "$method" "${BASE_URL}${path}" -H "Content-Type: application/json" "$@" 2>&1
   fi
 }
 
@@ -72,9 +83,9 @@ api_retry() {
   for i in $(seq 1 $max_attempts); do
     local resp
     if [ "$method" = "GET" ]; then
-      resp=$(curl -s -X GET "${BASE_URL}${path}" "$@" 2>&1)
+      resp=$(api_curl "$path" -s -X GET "${BASE_URL}${path}" "$@" 2>&1)
     else
-      resp=$(curl -s -X "$method" "${BASE_URL}${path}" -H "Content-Type: application/json" "$@" 2>&1)
+      resp=$(api_curl "$path" -s -X "$method" "${BASE_URL}${path}" -H "Content-Type: application/json" "$@" 2>&1)
     fi
     if echo "$resp" | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'error' not in d" 2>/dev/null; then
       echo "$resp"

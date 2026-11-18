@@ -81,7 +81,7 @@ Recommended near-term order: `R2 -> R3 -> R4 -> SH1 -> SH2 -> SH3 -> SH4 -> SH5 
 
 | ID | Item | Status | Alignment | Notes |
 |---|---|---|---|---|
-| SH1 | Admin auth for emergency endpoints | planned | gap_fill | Bearer token middleware gating all `/api/v1/emergency/*` and `/api/v1/dcts/emergency-override` routes. Token configured via env var. No contract-layer guard exists for these endpoints; any caller can currently trigger emergency freeze/resolve on-chain. |
+| SH1 | Admin auth for emergency endpoints | done | gap_fill | HTTP emergency routes and DCT admin routes require a bearer token. HTTP and local MCP emergency access are independently opt-in, and HTTP CORS defaults to deny. |
 | SH2 | Per-IP rate limiting on POST endpoints | planned | gap_fill | Token-bucket rate limiter on all POST routes. Prevents gas drain via transaction spam and RPC quota exhaustion. No ceiling currently exists. |
 | SH3 | Request body size cap | planned | gap_fill | `http.MaxBytesReader` before decode on all handlers. Prevents memory exhaustion from unbounded body reads. |
 | SH4 | Request ID tracing | planned | gap_fill | `X-Request-ID` header echoed in responses and included in all structured log entries. Required for operational traceability before real traffic hits. |
@@ -153,11 +153,11 @@ All five items below are **blocking gates**: V4 work does not start until all ar
 
 #### SH1: Admin auth for emergency endpoints
 
-- [ ] Add `ADMIN_TOKEN` env var (required when `EMERGENCY_ENABLED=true`; startup fails if absent).
-- [ ] Add middleware that checks `Authorization: Bearer <ADMIN_TOKEN>` on all `/api/v1/emergency/*` and `/api/v1/dcts/emergency-override` routes before routing to handlers.
-- [ ] Return `401 Unauthorized` with no body leakage on mismatch.
-- [ ] Add middleware unit tests covering present/absent/wrong token cases.
-- [ ] Update `docs/SETUP.md` with `ADMIN_TOKEN` provisioning instructions.
+- [x] Disable HTTP emergency access by default and require an `ADMIN_TOKEN` of at least 32 characters to enable it.
+- [x] Require a bearer token for HTTP emergency routes, DCT emergency override, and DCT audit listing. Return `401 Unauthorized` for missing or invalid credentials.
+- [x] Require separate opt-in for local MCP emergency tools and DCT audit. Read the CLI credential from `ESCROW_ADMIN_TOKEN`.
+- [x] Default to no cross-origin HTTP access unless configured.
+- [x] Verify the defaults and credential checks in tests and document setup in `docs/SETUP.md`.
 
 #### SH2: Per-IP rate limiting on POST endpoints
 
@@ -273,4 +273,4 @@ Long-horizon items that remain important but are not V3/V4 blockers:
 - Safety controls becoming cost-prohibitive without governance floor enforcement.
 - Reputation and monitoring signals being overfit or gamed without periodic calibration.
 - Privacy expectations outpacing current on-chain transparency model.
-- **Emergency endpoints have no HTTP-layer auth today**: any caller who can reach the server can freeze addresses or force-resolve escrows on-chain. SH1 is a hard gate before public exposure or V4 work.
+- **Emergency credentials protect privileged operations.** Keep the HTTP bearer token and the local MCP stdio session limited to trusted operators.

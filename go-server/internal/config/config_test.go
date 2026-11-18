@@ -27,6 +27,7 @@ func clearEnv(t *testing.T) {
 		"RPC_URL", "PRIVATE_KEY", "FACTORY_ADDRESS",
 		"CHAIN_ID", "DATABASE_URL", "PORT",
 		"MCP_TRANSPORT", "CORS_ORIGINS",
+		"EMERGENCY_ENABLED", "MCP_EMERGENCY_ENABLED", "ADMIN_TOKEN",
 		"REQUEST_TIMEOUT", "TX_TIMEOUT",
 		"COMPLEXITY_FLOOR", "REBID_COOLDOWN_SECONDS", "REPUTATION_DAMPING_FACTOR",
 		"UCP_ENABLED", "UCP_BASE_URL", "UCP_PROVIDER_NAME",
@@ -636,5 +637,54 @@ func TestLoad_ReputationDampingFactor_Invalid(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "REPUTATION_DAMPING_FACTOR") {
 		t.Fatalf("expected REPUTATION_DAMPING_FACTOR error, got: %v", err)
+	}
+}
+
+func TestLoad_EmergencyDefaults(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EmergencyEnabled || cfg.MCPEmergencyEnabled {
+		t.Fatal("HTTP and MCP emergency access must default to disabled")
+	}
+}
+
+func TestLoad_HTTPEmergencyRequiresAdminToken(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("EMERGENCY_ENABLED", "true")
+
+	for name, token := range map[string]string{"missing": "", "short": strings.Repeat("x", 31)} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("ADMIN_TOKEN", token)
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), "ADMIN_TOKEN") {
+				t.Fatalf("expected startup configuration to reject %s token, got %v", name, err)
+			}
+		})
+	}
+
+	t.Setenv("ADMIN_TOKEN", strings.Repeat("x", 32))
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.EmergencyEnabled || cfg.MCPEmergencyEnabled {
+		t.Fatal("expected only HTTP emergency access to be enabled")
+	}
+}
+
+func TestLoad_MCPOnlyEmergency(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("MCP_TRANSPORT", "stdio")
+	t.Setenv("MCP_EMERGENCY_ENABLED", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EmergencyEnabled || !cfg.MCPEmergencyEnabled {
+		t.Fatal("expected only MCP emergency access to be enabled")
 	}
 }
