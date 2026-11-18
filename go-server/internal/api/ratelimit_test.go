@@ -1,7 +1,10 @@
 package api
 
 import (
+	"bytes"
+	"log/slog"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -132,5 +135,32 @@ func TestIPRateLimiterSweepIsBounded(t *testing.T) {
 	}
 	if len(limiter.buckets) != 1000 {
 		t.Fatalf("no bucket had refilled, yet the table shrank to %d", len(limiter.buckets))
+	}
+}
+
+// Overflow use is logged so operators can see saturation, but at most once
+// per rateLimitOverflowWarnEvery so a flood cannot flood the log.
+func TestIPRateLimiterWarnsOnOverflowAtMostOncePerInterval(t *testing.T) {
+	var buf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(orig) })
+
+	limiter, now := newTestLimiter(0.001, 100, 1)
+	limiter.name = "public"
+	limiter.allow("tracked")
+	for i := range 5 {
+		limiter.allow("rotating-" + strconv.Itoa(i))
+	}
+	if got := strings.Count(buf.String(), "rate limiter at capacity"); got != 1 {
+		t.Fatalf("expected one saturation warning, got %d: %s", got, buf.String())
+	}
+	if !strings.Contains(buf.String(), "limiter=public") {
+		t.Fatalf("warning does not name the limiter: %s", buf.String())
+	}
+	*now = now.Add(rateLimitOverflowWarnEvery)
+	limiter.allow("rotating-later")
+	if got := strings.Count(buf.String(), "rate limiter at capacity"); got != 2 {
+		t.Fatalf("expected a second warning after the interval, got %d", got)
 	}
 }

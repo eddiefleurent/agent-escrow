@@ -2,6 +2,7 @@ package api
 
 import (
 	"container/list"
+	"log/slog"
 	"math"
 	"sync"
 	"time"
@@ -17,6 +18,9 @@ const (
 	rateLimitSweepPerRequest = 4
 	// rateLimitMaxRetryAfter caps the Retry-After hint.
 	rateLimitMaxRetryAfter = 3600
+	// rateLimitOverflowWarnEvery spaces out saturation warnings so a flood
+	// at capacity cannot turn into a log flood.
+	rateLimitOverflowWarnEvery = time.Minute
 )
 
 // ipRateLimiter is a per-key token bucket with a bounded table.
@@ -35,7 +39,16 @@ const (
 //     single overflow bucket with the normal rate and burst. Rotating source
 //     addresses at capacity therefore cannot exceed that one budget, and
 //     tracked clients keep the quota they already spent.
+//
+// Known limitation: at capacity, every unseen client shares that one
+// overflow bucket (with the defaults, 10 rps and a burst of 20), so a
+// rotating-address flood can starve legitimate new clients until tracked
+// buckets refill and are reclaimed. A follow-up should split overflow into
+// keyed shards under an aggregate ceiling and export saturation metrics.
+// Until then, use of the overflow bucket is logged at most once per
+// rateLimitOverflowWarnEvery so operators can see saturation.
 type ipRateLimiter struct {
+	name       string
 	rps        float64
 	burst      float64
 	maxBuckets int
@@ -43,6 +56,7 @@ type ipRateLimiter struct {
 	buckets    map[string]*list.Element // values are *keyedBucket
 	order      *list.List               // round-robin sweep order
 	overflow   tokenBucket
+	lastWarn   time.Time // last overflow saturation warning
 	now        func() time.Time
 }
 
@@ -75,6 +89,16 @@ func newIPRateLimiter(rps float64, burst, maxBuckets int) *ipRateLimiter {
 // Retry-After delay in whole seconds when the bucket is empty.
 func (l *ipRateLimiter) allow(key string) (bool, int) {
 	now := l.now()
+	saturated := false
+	// Registered before the unlock so it runs after it: no logging under mu.
+	defer func() {
+		if saturated {
+			slog.Warn("rate limiter at capacity; unseen clients share the overflow bucket",
+				"limiter", l.name,
+				"max_buckets", l.maxBuckets,
+			)
+		}
+	}()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -89,6 +113,10 @@ func (l *ipRateLimiter) allow(key string) (bool, int) {
 		bucket = &kb.tokenBucket
 	} else {
 		bucket = &l.overflow
+		if l.lastWarn.IsZero() || now.Sub(l.lastWarn) >= rateLimitOverflowWarnEvery {
+			l.lastWarn = now
+			saturated = true
+		}
 	}
 
 	l.refill(bucket, now)

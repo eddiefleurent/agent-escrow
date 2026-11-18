@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -573,28 +574,239 @@ func TestAdminGetIsThrottledBeforeAuth(t *testing.T) {
 	}
 }
 
-func TestStreamingEndpointMatchesOnlyRegisteredRoutes(t *testing.T) {
+// The timeout policy is attached at route registration, so stream handling
+// follows whatever ServeMux matched. A matched SSE request must always reach
+// a writer with Flush; before, HEAD and an escaped slash inside {id} were
+// matched by the mux but not by a separate path predicate, so the SSE
+// handler ran under http.TimeoutHandler and answered 500.
+func TestStreamRoutesFollowServeMuxMatching(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		method, path string
-		want         bool
-	}{
-		{http.MethodGet, "/api/v1/events", true},
-		{http.MethodGet, "/api/v1/events/ws", true},
-		{http.MethodGet, "/api/v1/escrows/42/events", true},
-		{http.MethodPost, "/api/v1/events", false},
-		{http.MethodPost, "/api/v1/escrows/42/events", false},
-		{http.MethodGet, "/api/v1/escrows/42/checkpoints/events", false},
-		{http.MethodGet, "/api/v1/escrows//events", false},
-		{http.MethodGet, "/api/v1/escrows/events", false},
-	}
-	for _, tc := range cases {
-		req := httptest.NewRequest(tc.method, tc.path, http.NoBody)
-		if got := isStreamingEndpoint(req); got != tc.want {
-			t.Errorf("%s %s: expected %v, got %v", tc.method, tc.path, tc.want, got)
+	cfg := baseRouterConfig()
+	cfg.EventsEnabled = true
+	cfg.RequestTimeout = 20 * time.Millisecond
+	cfg.TxTimeout = 20 * time.Millisecond
+	router := NewRouter(nil, nil, nil, cfg, events.NewEventBus(4))
+
+	for _, path := range []string{
+		"/api/v1/events",
+		"/api/v1/escrows/42/events",
+		"/api/v1/escrows/4%2F2/events", // one {id} segment to ServeMux
+	} {
+		code, contentType := serveStream(t, router, http.MethodGet, path)
+		if code != http.StatusOK || !strings.Contains(contentType, "text/event-stream") {
+			t.Errorf("GET %s: expected an SSE stream, got %d %q", path, code, contentType)
 		}
 	}
+
+	// ServeMux routes HEAD to GET handlers. A HEAD has no body to stream,
+	// so stream routes refuse it explicitly instead of holding it open.
+	for _, path := range []string{"/api/v1/events", "/api/v1/escrows/42/events", "/api/v1/events/ws"} {
+		req := httptest.NewRequest(http.MethodHead, path, http.NoBody)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		if rr.Code != http.StatusMethodNotAllowed || rr.Header().Get("Allow") != http.MethodGet {
+			t.Errorf("HEAD %s: expected 405 with Allow: GET, got %d %q", path, rr.Code, rr.Header().Get("Allow"))
+		}
+	}
+
+	// Routes ServeMux does not match as streams stay ordinary.
+	for _, path := range []string{"/api/v1/escrows/42/checkpoints/events", "/api/v1/escrows/events"} {
+		req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		if strings.Contains(rr.Header().Get("Content-Type"), "text/event-stream") {
+			t.Errorf("GET %s: unexpectedly served as a stream", path)
+		}
+	}
+	post := doLimited(router, http.MethodPost, "/api/v1/events", "198.51.100.93:4000", "")
+	if post.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST /api/v1/events: expected 405, got %d", post.Code)
+	}
+}
+
+// serveStream drives a stream route until its first flush, then cancels.
+func serveStream(t *testing.T, router http.Handler, method, path string) (int, string) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(method, path, http.NoBody).WithContext(ctx)
+	rr := &cancelOnFlush{ResponseRecorder: httptest.NewRecorder(), cancel: cancel}
+	done := make(chan struct{})
+	go func() {
+		router.ServeHTTP(rr, req)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		cancel()
+		<-done
+		t.Fatalf("%s %s did not return", method, path)
+	}
+	return rr.Code, rr.Header().Get("Content-Type")
+}
+
+// Each request is charged to exactly one limiter: admin routes to the admin
+// limiter, other mutating routes to the public one. Before, admin POSTs were
+// charged to both, so an exhausted public budget blocked emergency writes.
+func TestAdminAndPublicLimitersChargeOnce(t *testing.T) {
+	t.Parallel()
+
+	cfg := baseRouterConfig()
+	cfg.AdminToken = "correct-admin-token"
+	cfg.EmergencyEnabled = true
+	cfg.RateLimitRPS = 0.001
+	cfg.RateLimitBurst = 2
+	router := NewRouter(nil, nil, nil, cfg, nil)
+
+	adminPost := func(remote string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/emergency/freeze-address", strings.NewReader(`{}`))
+		req.RemoteAddr = remote
+		req.Header.Set("Authorization", "Bearer wrong-guess")
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		return rr
+	}
+
+	// An exhausted public budget does not block an admin write.
+	const exhausted = "198.51.100.94:4000"
+	for range 2 {
+		if rr := doLimited(router, http.MethodPost, "/api/v1/escrows", exhausted, ""); rr.Code == http.StatusTooManyRequests {
+			t.Fatal("public posts inside the burst should pass")
+		}
+	}
+	if rr := doLimited(router, http.MethodPost, "/api/v1/escrows", exhausted, ""); rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected the public budget to be exhausted, got %d", rr.Code)
+	}
+	if rr := adminPost(exhausted); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("admin write should reach auth after the public budget is spent, got %d", rr.Code)
+	}
+
+	// Admin writes do not spend the public budget.
+	const admin = "198.51.100.95:4000"
+	for range 2 {
+		if rr := adminPost(admin); rr.Code != http.StatusUnauthorized {
+			t.Fatalf("admin posts inside the burst should reach auth, got %d", rr.Code)
+		}
+	}
+	if rr := doLimited(router, http.MethodPost, "/api/v1/escrows", admin, ""); rr.Code == http.StatusTooManyRequests {
+		t.Fatal("admin writes drained the public budget")
+	}
+	if rr := adminPost(admin); rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected the admin budget to be exhausted, got %d", rr.Code)
+	}
+}
+
+// An early 429 or 413 over HTTP/1.1 must not wait for the unread body.
+// Without Connection: close, net/http drains up to 256 KiB of it to keep the
+// connection alive, so a client that stalls mid-body stalls the response.
+func TestEarlyRejectionDoesNotDrainBody(t *testing.T) {
+	t.Parallel()
+
+	limited := baseRouterConfig()
+	limited.RateLimitRPS = 0.001
+	limited.RateLimitBurst = 1
+	limitedSrv := httptest.NewServer(NewRouter(nil, nil, nil, limited, nil))
+	t.Cleanup(limitedSrv.Close)
+	// Spend the only token so the next request is throttled.
+	if rr := rawPost(t, limitedSrv, 2, 2); rr.StatusCode == http.StatusTooManyRequests {
+		t.Fatal("first request should pass the limiter")
+	}
+
+	capped := baseRouterConfig()
+	capped.MaxBodyBytes = 1024
+	cappedSrv := httptest.NewServer(NewRouter(nil, nil, nil, capped, nil))
+	t.Cleanup(cappedSrv.Close)
+
+	for _, tc := range []struct {
+		name string
+		srv  *httptest.Server
+		want int
+	}{
+		{"429", limitedSrv, http.StatusTooManyRequests},
+		{"413", cappedSrv, http.StatusRequestEntityTooLarge},
+	} {
+		// Declare 200 KB (under the 256 KiB drain threshold) but send 1 KB
+		// and stall. The response must arrive while the body is incomplete.
+		resp := rawPost(t, tc.srv, 200_000, 1024)
+		if resp.StatusCode != tc.want {
+			t.Fatalf("%s: expected %d, got %d", tc.name, tc.want, resp.StatusCode)
+		}
+		if !resp.Close {
+			t.Fatalf("%s: expected Connection: close on the early rejection", tc.name)
+		}
+	}
+}
+
+// rawPost writes a POST declaring contentLength bytes but sends only sent of
+// them, then reads the response with a short deadline.
+func rawPost(t *testing.T, srv *httptest.Server, contentLength, sent int) *http.Response {
+	t.Helper()
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(t.Context(), "tcp", strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	head := "POST /api/v1/escrows HTTP/1.1\r\nHost: escrow.test\r\nContent-Type: application/json\r\n" +
+		"Content-Length: " + strconv.Itoa(contentLength) + "\r\n\r\n"
+	if _, err := io.WriteString(conn, head+strings.Repeat(" ", sent)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("deadline: %v", err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("no response while the body was incomplete (server drained it?): %v", err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
+// A recovered panic must log and return the request id. The nil database
+// makes the real GET /api/v1/escrows/{id} handler panic.
+func TestPanicLogCarriesRequestID(t *testing.T) {
+	var buf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&lockedWriter{w: &buf}, nil)))
+	t.Cleanup(func() { slog.SetDefault(orig) })
+
+	router := NewRouter(nil, nil, nil, baseRouterConfig(), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/escrows/1", http.NoBody)
+	req.Header.Set("X-Request-ID", "panic-trace-1")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	var panicLine string
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(line, "panic recovered") {
+			panicLine = line
+		}
+	}
+	if !strings.Contains(panicLine, "request_id=panic-trace-1") {
+		t.Fatalf("panic log line missing request_id: %q", panicLine)
+	}
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 from the recovered panic, got %d", rr.Code)
+	}
+	if rr.Header().Get("X-Request-ID") != "panic-trace-1" || decodeError(t, rr)["request_id"] != "panic-trace-1" {
+		t.Fatalf("500 lost the request id: header %q body %s", rr.Header().Get("X-Request-ID"), rr.Body.String())
+	}
+}
+
+// lockedWriter serializes writes from the TimeoutHandler goroutine and the
+// request goroutine.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
 
 func adapterRouter(t *testing.T, maxBody int64) http.Handler {

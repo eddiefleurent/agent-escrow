@@ -21,24 +21,66 @@ import (
 	"github.com/google/uuid"
 )
 
-// isStreamingEndpoint reports whether r targets one of the registered
-// long-lived stream routes (SSE and WebSocket). Only these exact GET routes
-// bypass the request timeout; any other method or nesting does not match.
-func isStreamingEndpoint(r *http.Request) bool {
-	if r.Method != http.MethodGet {
-		return false
-	}
-	p := r.URL.Path
-	if p == "/api/v1/events" || p == "/api/v1/events/ws" {
-		return true
-	}
-	// GET /api/v1/escrows/{id}/events, where {id} is a single path segment.
-	id, ok := strings.CutPrefix(p, "/api/v1/escrows/")
-	if !ok {
-		return false
-	}
-	id, ok = strings.CutSuffix(id, "/events")
-	return ok && id != "" && !strings.Contains(id, "/")
+// routePolicy is the edge chain each route gets at registration. Applying
+// it per route, rather than re-parsing paths in a global middleware, keeps
+// limiter choice and timeout policy aligned with the route ServeMux actually
+// matched (HEAD falls back to GET routes, and an escaped slash inside {id}
+// stays one segment).
+type routePolicy struct {
+	requestTimeout time.Duration
+	txTimeout      time.Duration
+	maxBody        int64
+	trusted        []*net.IPNet
+	publicLimiter  *ipRateLimiter
+	adminLimiter   *ipRateLimiter
+}
+
+// public charges mutating methods to the public limiter, then caps the body
+// and applies the request or tx timeout.
+func (p routePolicy) public(next http.Handler) http.Handler {
+	return rateLimitMiddleware(p.publicLimiter, p.trusted,
+		bodyLimitMiddleware(p.maxBody, timeoutMiddleware(p.requestTimeout, p.txTimeout, next)))
+}
+
+// admin charges every method to the admin limiter only, ahead of
+// authentication, so bearer-token guessing is throttled on reads as well as
+// writes and an exhausted public budget never blocks an operator.
+func (p routePolicy) admin(next http.Handler) http.Handler {
+	return requireRateLimit(p.adminLimiter, p.trusted,
+		bodyLimitMiddleware(p.maxBody, timeoutMiddleware(p.requestTimeout, p.txTimeout, next)))
+}
+
+// unmatched guards requests ServeMux has no route for (404/405). Their
+// mutating methods are still charged to the public limiter, and since the
+// mux rejects them without reading the body, the connection is closed
+// rather than drained.
+func (p routePolicy) unmatched(mux *http.ServeMux) http.Handler {
+	limited := rateLimitMiddleware(p.publicLimiter, p.trusted, mux)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, pattern := mux.Handler(r); pattern != "" {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		closeUnreadBody(w, r)
+		limited.ServeHTTP(w, r)
+	})
+}
+
+// stream serves long-lived SSE and WebSocket routes without a timeout,
+// because http.TimeoutHandler's writer supports neither Flush nor Hijack.
+// Stream routes are GET, so the public write limiter never applies.
+// ServeMux also routes HEAD to them; a HEAD has no body to stream, so it is
+// refused rather than held open.
+func (p routePolicy) stream(next http.Handler) http.Handler {
+	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	return bodyLimitMiddleware(p.maxBody, guarded)
 }
 
 func loggingMiddleware(next http.Handler) http.Handler {
@@ -65,9 +107,10 @@ func recoveryMiddleware(next http.Handler) http.Handler {
 					"error", err,
 					"method", r.Method,
 					"path", r.URL.Path,
+					"request_id", authz.RequestIDFrom(r.Context()),
 				)
 				if !rw.written {
-					http.Error(rw, "internal server error", http.StatusInternalServerError)
+					writeJSON(rw, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 					return
 				}
 			}
@@ -174,18 +217,14 @@ func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 
 // timeoutMiddleware applies request timeouts based on the HTTP method and path.
 // POST endpoints that interact with the chain use txTimeout (default 90s).
-// GET/read endpoints use requestTimeout (default 10s).
+// GET/read endpoints use requestTimeout (default 10s). Stream routes are
+// registered without it (see routePolicy.stream).
 func timeoutMiddleware(requestTimeout, txTimeout time.Duration, next http.Handler) http.Handler {
 	// TimeoutHandler serves the inner handler on its own ResponseWriter.
 	// Copy the request id onto that writer so JSON error bodies can see it.
 	propagated := propagateRequestID(next)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// SSE and WebSocket endpoints are long-lived; skip timeout wrapping.
-		if isStreamingEndpoint(r) {
-			propagated.ServeHTTP(w, r)
-			return
-		}
 		// Built per request so the timeout JSON can carry this request's id.
 		// The id alphabet cannot break the JSON string.
 		body := `{"error":"request timeout"}`
@@ -262,6 +301,7 @@ func bodyLimitMiddleware(maxBytes int64, next http.Handler) http.Handler {
 			return
 		}
 		if r.ContentLength > maxBytes {
+			closeUnreadBody(w, r)
 			writeTooLarge(w, r)
 			return
 		}
@@ -270,6 +310,8 @@ func bodyLimitMiddleware(maxBytes int64, next http.Handler) http.Handler {
 		closeErr := limited.Close()
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
+			// The rest of the oversize body is still on the wire.
+			closeUnreadBody(w, r)
 			writeTooLarge(w, r)
 			return
 		}
@@ -316,9 +358,19 @@ func writeTooLarge(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": errBodyTooLarge})
 }
 
+// closeUnreadBody marks an HTTP/1.x response that rejects a request before
+// its body was consumed. Without Connection: close, net/http keeps the
+// connection alive by draining up to 256 KiB of the unread body before it
+// sends the response, so a slow sender could hold the early 429/413 hostage.
+// HTTP/2 multiplexes streams and forbids the header, so it is left alone.
+func closeUnreadBody(w http.ResponseWriter, r *http.Request) {
+	if r.ProtoMajor == 1 && r.Body != nil && r.Body != http.NoBody {
+		w.Header().Set("Connection", "close")
+	}
+}
+
 // rateLimitMiddleware applies the per-client token bucket to mutating
-// methods before the body is read. A nil limiter disables it. Stream routes
-// are GET and therefore never reach the limiter.
+// methods before the body is read. A nil limiter disables it.
 func rateLimitMiddleware(limiter *ipRateLimiter, trusted []*net.IPNet, next http.Handler) http.Handler {
 	if limiter == nil {
 		return next
@@ -338,24 +390,26 @@ func rateLimitMiddleware(limiter *ipRateLimiter, trusted []*net.IPNet, next http
 // requireRateLimit throttles every request to next, whatever its method.
 // Admin routes use it ahead of authentication so bearer-token guessing is
 // throttled on reads as well as writes. A nil limiter disables it.
-func requireRateLimit(limiter *ipRateLimiter, trusted []*net.IPNet, next http.HandlerFunc) http.HandlerFunc {
+func requireRateLimit(limiter *ipRateLimiter, trusted []*net.IPNet, next http.Handler) http.Handler {
 	if limiter == nil {
 		return next
 	}
-	return func(w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if allowRequest(limiter, trusted, w, r) {
-			next(w, r)
+			next.ServeHTTP(w, r)
 		}
-	}
+	})
 }
 
 // newRateLimiter returns nil when either setting is non-positive, which
-// disables limiting.
-func newRateLimiter(rps float64, burst int) *ipRateLimiter {
+// disables limiting. name labels the limiter in saturation warnings.
+func newRateLimiter(name string, rps float64, burst int) *ipRateLimiter {
 	if rps <= 0 || burst <= 0 {
 		return nil
 	}
-	return newIPRateLimiter(rps, burst, rateLimitMaxBuckets)
+	l := newIPRateLimiter(rps, burst, rateLimitMaxBuckets)
+	l.name = name
+	return l
 }
 
 // allowRequest consumes a token for the client, or writes 429 and returns
@@ -365,6 +419,7 @@ func allowRequest(limiter *ipRateLimiter, trusted []*net.IPNet, w http.ResponseW
 	if allowed {
 		return true
 	}
+	closeUnreadBody(w, r)
 	w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 	writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded"})
 	return false

@@ -8,29 +8,6 @@ import (
 	"time"
 )
 
-func TestIsStreamingEndpoint(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		path string
-		want bool
-	}{
-		{path: "/api/v1/events", want: true},
-		{path: "/api/v1/events/ws", want: true},
-		{path: "/api/v1/escrows/42/events", want: true},
-		{path: "/api/v1/escrows/42", want: false},
-		{path: "/api/v1/tasks", want: false},
-	}
-
-	for _, tc := range cases {
-		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
-		got := isStreamingEndpoint(req)
-		if got != tc.want {
-			t.Fatalf("path %q: expected %v, got %v", tc.path, tc.want, got)
-		}
-	}
-}
-
 func TestCORSMiddlewareAllowAllAndPreflight(t *testing.T) {
 	t.Parallel()
 
@@ -82,23 +59,5 @@ func TestTimeoutMiddlewareReadAndTxPaths(t *testing.T) {
 	handler.ServeHTTP(postRR, postReq)
 	if postRR.Code != http.StatusNoContent {
 		t.Fatalf("expected POST to use tx timeout path and succeed, got %d", postRR.Code)
-	}
-}
-
-func TestTimeoutMiddlewareSkipsStreamingEndpoints(t *testing.T) {
-	t.Parallel()
-
-	slow := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(20 * time.Millisecond)
-		w.WriteHeader(http.StatusNoContent)
-	})
-	handler := timeoutMiddleware(5*time.Millisecond, 5*time.Millisecond, slow)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/events", nil)
-	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusNoContent {
-		t.Fatalf("expected streaming endpoint to bypass timeout middleware, got %d", rr.Code)
 	}
 }
