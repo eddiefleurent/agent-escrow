@@ -31,7 +31,7 @@ type webhookTestEnv struct {
 	mux  http.Handler
 }
 
-func setupWebhookTest(t *testing.T) *webhookTestEnv {
+func setupWebhookTest(t *testing.T, opts ...indexer.Option) *webhookTestEnv {
 	t.Helper()
 
 	db, err := storage.Open(":memory:")
@@ -41,6 +41,7 @@ func setupWebhookTest(t *testing.T) *webhookTestEnv {
 	t.Cleanup(func() { db.Close() })
 
 	mock := chain.NewMockClient()
+	mock.BlockNum = 100
 	cfg := &config.Config{
 		ChainID:                 84532,
 		FactoryAddress:          "0x0000000000000000000000000000000000000F01",
@@ -50,10 +51,53 @@ func setupWebhookTest(t *testing.T) *webhookTestEnv {
 		ReputationDampingFactor: 0.9,
 	}
 
-	idx := indexer.New(db, mock, cfg.FactoryAddress)
+	// A poll interval of an hour means only a webhook trigger starts a pass.
+	opts = append([]indexer.Option{indexer.WithPollInterval(time.Hour), indexer.WithStartBlock(90)}, opts...)
+	idx := indexer.New(db, mock, cfg.FactoryAddress, opts...)
 	mux := NewRouter(db, mock, idx, cfg, nil)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan struct{})
+	go func() {
+		defer close(runDone)
+		idx.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-runDone
+	})
+
 	return &webhookTestEnv{db: db, mock: mock, idx: idx, cfg: cfg, mux: mux}
+}
+
+// waitForCursor waits until the indexer has committed through block.
+func waitForCursor(t *testing.T, env *webhookTestEnv, block int64) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		got, err := env.db.GetCursor(context.Background(), env.cfg.ChainID, "indexer")
+		if err == nil && got >= block {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("indexer cursor = %d (err %v), want >= %d", got, err, block)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// addEscrowCreated puts an EscrowCreated log for escrowAddr on the mock chain.
+func addEscrowCreated(env *webhookTestEnv, escrowID int64, escrowAddr common.Address, block uint64, txHash string) {
+	lg := chain.MakeEscrowCreatedLog(common.HexToAddress(env.cfg.FactoryAddress), escrowID, escrowAddr,
+		common.HexToAddress("0x1000000000000000000000000000000000000001"))
+	lg.BlockNumber, lg.Index, lg.TxHash = block, 0, common.HexToHash(txHash)
+	env.mock.Lock()
+	defer env.mock.Unlock()
+	env.mock.Logs = append(env.mock.Logs, lg)
+	if env.mock.EscrowViews == nil {
+		env.mock.EscrowViews = map[common.Address]chain.MockEscrowViews{}
+	}
+	env.mock.EscrowViews[escrowAddr] = chain.MockEscrowViews{}
 }
 
 // signPayload computes the CDP webhook HMAC-SHA256 signature.
@@ -131,45 +175,81 @@ func sendWebhook(t *testing.T, env *webhookTestEnv, body string, secret string) 
 	return rr
 }
 
-func TestWebhook_ValidSignature_EscrowCreated(t *testing.T) {
+// A signed factory event triggers a polling pass; the pass, not the
+// webhook, writes the escrow from the chain's logs.
+func TestWebhook_ValidSignature_TriggersIndexerPass(t *testing.T) {
 	env := setupWebhookTest(t)
+	escrowAddr := common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12")
+	addEscrowCreated(env, 7, escrowAddr, 100, "0xabc123")
 
-	body := makeCDPPayload(t, "EscrowCreated", env.cfg.FactoryAddress,
-		"0xabc123def456",
-		map[string]string{
-			"escrowId":     "7",
-			"escrow":       "0xABCDEF1234567890ABCDEF1234567890ABCDEF12",
-			"buyer":        "0x1000000000000000000000000000000000000001",
-			"worker":       "0x2000000000000000000000000000000000000002",
-			"verifier":     "0x3000000000000000000000000000000000000003",
-			"arbitrator":   "0x4000000000000000000000000000000000000004",
-			"taskSpecHash": "0x0100000000000000000000000000000000000000000000000000000000000000",
-			"token":        "0x0000000000000000000000000000000000000000",
-		},
-	)
-
+	body := makeCDPPayload(t, "EscrowCreated", env.cfg.FactoryAddress, "0xabc123",
+		map[string]string{"escrowId": "7", "escrow": escrowAddr.Hex()})
 	rr := sendWebhook(t, env, body, testWebhookSecret)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if resp := decodeJSON(t, rr); resp["status"] != "queued" {
+		t.Fatalf("expected status queued, got %v", resp["status"])
 	}
 
-	resp := decodeJSON(t, rr)
-	if resp["status"] != "ok" {
-		t.Fatalf("expected status ok, got %v", resp["status"])
-	}
-
-	// Verify escrow was created in DB (use checksummed form from common.HexToAddress)
-	checksummed := common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12").Hex()
-	escrow, err := env.db.GetEscrowByAddress(context.Background(), checksummed)
+	waitForCursor(t, env, 100)
+	escrow, err := env.db.GetEscrowByAddress(context.Background(), escrowAddr.Hex())
 	if err != nil {
 		t.Fatalf("get escrow by address: %v", err)
 	}
-	if escrow.EscrowID != 7 {
-		t.Fatalf("expected escrow ID 7, got %d", escrow.EscrowID)
+	if escrow.EscrowID != 7 || escrow.Status != "created" {
+		t.Fatalf("escrow = id %d status %q, want 7 created", escrow.EscrowID, escrow.Status)
 	}
-	if escrow.Status != "created" {
-		t.Fatalf("expected status 'created', got %q", escrow.Status)
+	exists, err := env.db.ChainLogExists(context.Background(), common.HexToHash("0xabc123").Hex(), 0)
+	if err != nil || !exists {
+		t.Fatalf("chain log recorded = %v (%v), want true", exists, err)
+	}
+}
+
+// Webhook events get the indexer's confirmation depth: an event above
+// head-confirmations is not applied, whatever the payload says.
+func TestWebhook_RespectsConfirmations(t *testing.T) {
+	env := setupWebhookTest(t, indexer.WithConfirmations(5))
+	escrowAddr := common.HexToAddress("0x5555555555555555555555555555555555555501")
+	addEscrowCreated(env, 8, escrowAddr, 100, "0xunconfirmed")
+
+	body := makeCDPPayload(t, "EscrowCreated", env.cfg.FactoryAddress, "0xunconfirmed",
+		map[string]string{
+			"escrowId":   "8",
+			"escrow":     escrowAddr.Hex(),
+			"buyer":      "0x1000000000000000000000000000000000000001",
+			"worker":     "0x2000000000000000000000000000000000000002",
+			"verifier":   "0x3000000000000000000000000000000000000003",
+			"arbitrator": "0x4000000000000000000000000000000000000004",
+		})
+	if rr := sendWebhook(t, env, body, testWebhookSecret); rr.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rr.Code, rr.Body.String())
+	}
+	waitForCursor(t, env, 95)
+	if _, err := env.db.GetEscrowByAddress(context.Background(), escrowAddr.Hex()); err == nil {
+		t.Fatal("unconfirmed escrow was written")
+	}
+
+	env.mock.Lock()
+	env.mock.BlockNum = 105
+	env.mock.Unlock()
+	if rr := sendWebhook(t, env, body, testWebhookSecret); rr.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rr.Code, rr.Body.String())
+	}
+	waitForCursor(t, env, 100)
+	if _, err := env.db.GetEscrowByAddress(context.Background(), escrowAddr.Hex()); err != nil {
+		t.Fatalf("confirmed escrow not indexed: %v", err)
+	}
+}
+
+// Events from any other contract are rejected and trigger nothing.
+func TestWebhook_ForeignContract_Rejected(t *testing.T) {
+	env := setupWebhookTest(t)
+	body := makeCDPPayload(t, "EscrowCreated", "0x000000000000000000000000000000000000dEaD", "0xforeign",
+		map[string]string{})
+	rr := sendWebhook(t, env, body, testWebhookSecret)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 
@@ -236,7 +316,7 @@ func TestWebhook_UnknownEventType_Ignored(t *testing.T) {
 	}
 }
 
-func TestWebhook_UnknownFactoryEvent_Ignored(t *testing.T) {
+func TestWebhook_UnknownFactoryEvent_Triggers(t *testing.T) {
 	env := setupWebhookTest(t)
 
 	body := makeCDPPayload(t, "SomeUnknownEvent", env.cfg.FactoryAddress,
@@ -245,142 +325,100 @@ func TestWebhook_UnknownFactoryEvent_Ignored(t *testing.T) {
 	)
 
 	rr := sendWebhook(t, env, body, testWebhookSecret)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rr.Code, rr.Body.String())
 	}
-
-	resp := decodeJSON(t, rr)
-	if resp["status"] != "ok" {
-		t.Fatalf("expected status 'ok', got %v", resp["status"])
-	}
+	waitForCursor(t, env, 100)
 }
 
-func TestWebhook_OutcomeRecorded_Processed(t *testing.T) {
+// The decoded payload is never trusted: an OutcomeRecorded webhook whose
+// event is not on the chain records no reputation.
+func TestWebhook_PayloadParamsNotApplied(t *testing.T) {
 	env := setupWebhookTest(t)
+	participant := "0x1000000000000000000000000000000000000001"
 
 	body := makeCDPPayload(t, "OutcomeRecorded", env.cfg.FactoryAddress,
 		"0xoutcome456",
 		map[string]string{
 			"escrowId":    "1",
-			"participant": "0x1000000000000000000000000000000000000001",
+			"participant": participant,
 			"role":        "worker",
 			"outcome":     "completed",
 		},
 	)
-
-	rr := sendWebhook(t, env, body, testWebhookSecret)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	if rr := sendWebhook(t, env, body, testWebhookSecret); rr.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rr.Code, rr.Body.String())
 	}
-
-	// Verify reputation was upserted
-	rep, err := env.db.GetReputation(
-		context.Background(),
-		strings.ToLower("0x1000000000000000000000000000000000000001"),
-		"worker",
-	)
-	if err != nil {
-		t.Fatalf("get reputation: %v", err)
-	}
-	if rep.Completed != 1 {
-		t.Fatalf("expected 1 completed, got %d", rep.Completed)
-	}
-
-	events, err := env.db.ListReputationEvents(
-		context.Background(),
-		strings.ToLower("0x1000000000000000000000000000000000000001"),
-		"worker",
-		100,
-	)
+	waitForCursor(t, env, 100)
+	events, err := env.db.ListReputationEvents(context.Background(), strings.ToLower(participant), "worker", 100)
 	if err != nil {
 		t.Fatalf("list reputation events: %v", err)
 	}
-	if len(events) != 1 {
-		t.Fatalf("expected 1 reputation event, got %d", len(events))
-	}
-	if events[0].Role != "worker" {
-		t.Errorf("unexpected role: got %v want worker", events[0].Role)
-	}
-	if events[0].Outcome != "completed" {
-		t.Errorf("unexpected outcome: got %v want completed", events[0].Outcome)
-	}
-	if events[0].TxHash != "0xoutcome456" {
-		t.Errorf("unexpected tx_hash: got %v want 0xoutcome456", events[0].TxHash)
-	}
-	if events[0].LogIndex != 0 {
-		t.Errorf("unexpected log_index: got %v want 0", events[0].LogIndex)
-	}
-	if events[0].Address != strings.ToLower("0x1000000000000000000000000000000000000001") {
-		t.Errorf("unexpected address: got %v want %v", events[0].Address, strings.ToLower("0x1000000000000000000000000000000000000001"))
-	}
-	if events[0].BlockNumber != 100 {
-		t.Errorf("unexpected block_number: got %v want 100", events[0].BlockNumber)
+	if len(events) != 0 {
+		t.Fatalf("reputation events from an off-chain payload = %d, want 0", len(events))
 	}
 }
 
+// Redelivery of the same event applies it once.
 func TestWebhook_DuplicateEvent_Idempotent(t *testing.T) {
 	env := setupWebhookTest(t)
+	escrowAddr := common.HexToAddress("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD1")
+	addEscrowCreated(env, 99, escrowAddr, 100, "0xduplicate789")
+	body := makeCDPPayload(t, "EscrowCreated", env.cfg.FactoryAddress, "0xduplicate789",
+		map[string]string{"escrowId": "99", "escrow": escrowAddr.Hex()})
 
-	body := makeCDPPayload(t, "EscrowCreated", env.cfg.FactoryAddress,
-		"0xduplicate789",
-		map[string]string{
-			"escrowId":   "99",
-			"escrow":     "0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD1",
-			"buyer":      "0x1000000000000000000000000000000000000001",
-			"worker":     "0x2000000000000000000000000000000000000002",
-			"verifier":   "0x3000000000000000000000000000000000000003",
-			"arbitrator": "0x4000000000000000000000000000000000000004",
-		},
-	)
-
-	rr1 := sendWebhook(t, env, body, testWebhookSecret)
-	if rr1.Code != http.StatusOK {
-		t.Fatalf("first send: expected 200, got %d: %s", rr1.Code, rr1.Body.String())
+	for i := range 2 {
+		if rr := sendWebhook(t, env, body, testWebhookSecret); rr.Code != http.StatusAccepted {
+			t.Fatalf("send %d: expected 202, got %d: %s", i, rr.Code, rr.Body.String())
+		}
+		waitForCursor(t, env, 100)
 	}
-
-	rr2 := sendWebhook(t, env, body, testWebhookSecret)
-	if rr2.Code != http.StatusOK {
-		t.Fatalf("second send: expected 200, got %d: %s", rr2.Code, rr2.Body.String())
+	escrows, err := env.db.ListEscrowsByChainID(context.Background(), env.cfg.ChainID)
+	if err != nil {
+		t.Fatalf("list escrows: %v", err)
+	}
+	if len(escrows) != 1 {
+		t.Fatalf("escrows = %d, want 1", len(escrows))
 	}
 }
 
+// An escrow the API already stored is not duplicated by the indexer pass.
 func TestWebhook_ExistingEscrow_Skipped(t *testing.T) {
 	env := setupWebhookTest(t)
 	ctx := context.Background()
 
-	// Pre-create the escrow in the DB (simulates API/MCP creation)
 	task, err := env.db.CreateTask(ctx, "Existing", "desc", "0xabc")
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	escrowAddr := "0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE1"
+	escrowAddr := common.HexToAddress("0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE1")
 	_, err = env.db.CreateEscrow(ctx, &storage.Escrow{
 		TaskID: task.ID, ChainID: 84532, FactoryAddress: env.cfg.FactoryAddress,
-		EscrowAddress: escrowAddr, EscrowID: 42,
+		EscrowAddress: escrowAddr.Hex(), EscrowID: 42,
 		Buyer: "0xB", Worker: "0xW", Verifier: "0xV", Arbitrator: "0xA",
 		Amount: "100", Status: "created",
 	})
 	if err != nil {
 		t.Fatalf("create escrow: %v", err)
 	}
+	addEscrowCreated(env, 42, escrowAddr, 100, "0xexisting123")
 
-	body := makeCDPPayload(t, "EscrowCreated", env.cfg.FactoryAddress,
-		"0xexisting123",
-		map[string]string{
-			"escrowId":   "42",
-			"escrow":     escrowAddr,
-			"buyer":      "0x1000000000000000000000000000000000000001",
-			"worker":     "0x2000000000000000000000000000000000000002",
-			"verifier":   "0x3000000000000000000000000000000000000003",
-			"arbitrator": "0x4000000000000000000000000000000000000004",
-		},
-	)
-
-	rr := sendWebhook(t, env, body, testWebhookSecret)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	body := makeCDPPayload(t, "EscrowCreated", env.cfg.FactoryAddress, "0xexisting123",
+		map[string]string{"escrowId": "42", "escrow": escrowAddr.Hex()})
+	if rr := sendWebhook(t, env, body, testWebhookSecret); rr.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rr.Code, rr.Body.String())
+	}
+	waitForCursor(t, env, 100)
+	e, err := env.db.GetEscrowByAddress(ctx, escrowAddr.Hex())
+	if err != nil {
+		t.Fatalf("get escrow: %v", err)
+	}
+	if e.Amount != "100" {
+		t.Fatalf("existing escrow overwritten: amount = %q", e.Amount)
+	}
+	escrows, err := env.db.ListEscrowsByChainID(ctx, env.cfg.ChainID)
+	if err != nil || len(escrows) != 1 {
+		t.Fatalf("escrows = %d (%v), want 1", len(escrows), err)
 	}
 }
 

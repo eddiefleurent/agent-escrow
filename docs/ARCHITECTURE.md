@@ -121,7 +121,7 @@ For internal wiring, handler-to-service relationships, and event flow detail, se
 - `go-server/internal/escrow/` -- shared escrow orchestration used by multiple transports.
 - `go-server/internal/bidding/` -- RFQ, bid, credential checks, and negotiation logic.
 - `go-server/internal/attestation/` -- completion-attestation-v1 validation and attestation-chain handling.
-- `go-server/internal/indexer/` -- event polling/webhook ingestion and DB reconciliation.
+- `go-server/internal/indexer/` -- event polling (webhook-triggered when configured) and DB reconciliation.
 - `go-server/internal/events/` -- in-process event fan-out consumed by SSE/WebSocket/MCP subscribers.
 - `go-server/internal/storage/` -- SQLite schema, queries, and read-model persistence.
 - `go-server/internal/api/` -- HTTP handlers and middleware.
@@ -325,14 +325,12 @@ client action
   -> SSE/WebSocket/MCP consumers
 ```
 
-Two ingestion mechanisms coexist for structural reasons:
+The polling indexer is the only writer of chain-derived state:
 
-- **Polling** handles escrow contracts, because new escrow addresses are created dynamically.
-- **CDP webhooks** accelerate factory-level events, because the factory address is static.
+- **Polling** reads factory and escrow logs from the chain, because new escrow addresses are created dynamically.
+- **CDP webhooks** only wake the indexer early. A signed factory event from the monitored factory triggers a polling pass; the webhook payload is never applied, so webhook events get the same confirmation depth, transactions, and dedup as polled events.
 
-Both paths deduplicate through persisted chain-log identity, so overlap is safe.
-
-Polling runs are single-flight, so concurrent request-path nudges cannot race the cursor. A caller that arrives mid-run waits for a follow-up pass that reads the chain after it arrived. Each block's logs and that block's cursor update commit in one transaction; a handler error rolls the block back and the next pass retries it. `CONFIRMATIONS` (default 0) stops the cursor at `head - CONFIRMATIONS`. Leave it at 0 for local chains; 12 is the recommended setting on Base mainnet.
+Indexing passes are single-flight and run on their own goroutine. A caller that arrives mid-pass joins the pass queued behind it, which reads the chain after the caller arrived; each caller gets its own pass's result, and a caller whose context ends returns at once. Each block's logs and that block's cursor update commit in one transaction; a handler error rolls the block back and the next pass retries it. Contract reads a block needs (new escrow details, milestone layouts) happen before its write transaction opens, so a slow RPC never holds SQLite's write lock. Escrows created directly on-chain get their milestone rows from the contract when indexed. The first pass stores its scan start as the cursor before applying anything, so a failure in the first range is retried from the same place. `CONFIRMATIONS` (default 0) stops the cursor at `head - CONFIRMATIONS`. Leave it at 0 for local chains; 12 is the recommended setting on Base mainnet. Request paths still run a pass after writes, but that read-after-write is best effort.
 
 ### Interface Surfaces
 

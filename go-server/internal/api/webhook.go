@@ -1,13 +1,10 @@
 package api
 
 import (
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,10 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
-	"github.com/eddiefleurent/agent-escrow/go-server/internal/numconv"
-	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -30,7 +24,6 @@ const (
 )
 
 // cdpWebhookPayload represents the top-level CDP webhook JSON structure.
-// CDP delivers decoded event parameters as flat fields in the data object.
 type cdpWebhookPayload struct {
 	ID        string              `json:"id"`
 	Type      string              `json:"type"`
@@ -38,52 +31,33 @@ type cdpWebhookPayload struct {
 	Data      cdpWebhookEventData `json:"data"`
 }
 
-// cdpWebhookEventData holds the decoded event data from CDP.
-// Known parameter fields are extracted explicitly; unknown events are ignored.
+// cdpWebhookEventData holds the fields of a CDP event the handler checks or
+// logs. The decoded event parameters are deliberately not read: the indexer
+// fetches the logs from the chain itself.
 type cdpWebhookEventData struct {
-	SubscriptionID  string      `json:"subscriptionId"`
-	NetworkID       string      `json:"networkId"`
 	BlockNumber     json.Number `json:"blockNumber"`
-	BlockHash       string      `json:"blockHash"`
 	TransactionHash string      `json:"transactionHash"`
-	LogIndex        json.Number `json:"logIndex"`
 	ContractAddress string      `json:"contractAddress"`
 	EventName       string      `json:"eventName"`
-
-	// Decoded parameters — CDP flattens indexed + non-indexed params into the
-	// data object. Field names match the Solidity event parameter names.
-	// EscrowCreated params:
-	EscrowID     string `json:"escrowId,omitempty"`
-	Escrow       string `json:"escrow,omitempty"`
-	Buyer        string `json:"buyer,omitempty"`
-	Worker       string `json:"worker,omitempty"`
-	Verifier     string `json:"verifier,omitempty"`
-	Arbitrator   string `json:"arbitrator,omitempty"`
-	TaskSpecHash string `json:"taskSpecHash,omitempty"`
-	Token        string `json:"token,omitempty"`
-
-	// OutcomeRecorded params:
-	Participant string `json:"participant,omitempty"`
-	Role        string `json:"role,omitempty"`
-	Outcome     string `json:"outcome,omitempty"`
 }
 
-// WebhookHandler handles incoming CDP webhook events for factory contracts.
-// Escrow-level events are still handled by the polling indexer since each
-// TaskEscrow is a dynamically-deployed contract that can't be pre-subscribed.
+// WebhookHandler turns signed CDP factory-event notifications into an
+// immediate indexer pass. It writes nothing itself: the polling indexer is
+// the only writer of chain-derived state, so webhook events get the same
+// confirmation depth, per-block transaction, and dedup as polled events.
 type WebhookHandler struct {
 	idx    *indexer.Indexer
 	secret string
-	bus    *events.EventBus
 }
 
-// NewWebhookHandler creates a webhook handler. The bus parameter may be nil
-// when event streaming is disabled.
-func NewWebhookHandler(idx *indexer.Indexer, secret string, bus *events.EventBus) *WebhookHandler {
-	return &WebhookHandler{idx: idx, secret: secret, bus: bus}
+// NewWebhookHandler creates a webhook handler.
+func NewWebhookHandler(idx *indexer.Indexer, secret string) *WebhookHandler {
+	return &WebhookHandler{idx: idx, secret: secret}
 }
 
-// HandleCDPWebhook is the HTTP handler for POST /webhooks/cdp.
+// HandleCDPWebhook is the HTTP handler for POST /webhooks/cdp. A verified
+// event from the monitored factory triggers an indexer pass and returns 202;
+// the pass applies the event once it is confirmed.
 func (wh *WebhookHandler) HandleCDPWebhook(w http.ResponseWriter, r *http.Request) {
 	if wh.secret == "" {
 		slog.Error("webhook: secret is not configured — rejecting request")
@@ -124,210 +98,26 @@ func (wh *WebhookHandler) HandleCDPWebhook(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := wh.processWebhookEvent(r.Context(), payload); err != nil {
-		slog.Error("webhook: event processing failed",
-			"event_id", payload.ID,
-			"event_name", payload.Data.EventName,
-			"tx_hash", payload.Data.TransactionHash,
-			"error", err,
-		)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "processing failed"})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-// processWebhookEvent handles a CDP webhook payload by dispatching on eventName.
-// Only factory events (EscrowCreated, OutcomeRecorded) are handled here.
-func (wh *WebhookHandler) processWebhookEvent(ctx context.Context, payload cdpWebhookPayload) error {
 	data := payload.Data
-	db := wh.idx.DB()
-
-	if !common.IsHexAddress(data.ContractAddress) {
-		return fmt.Errorf("invalid contract address: %q", data.ContractAddress)
-	}
-	expectedFactory := wh.idx.FactoryAddress()
-	if common.HexToAddress(data.ContractAddress) != expectedFactory {
-		return fmt.Errorf("contract address %s does not match factory %s", data.ContractAddress, expectedFactory.Hex())
-	}
-
-	logIdx, err := strconv.Atoi(data.LogIndex.String())
-	if err != nil {
-		return fmt.Errorf("invalid logIndex %q: %w", data.LogIndex.String(), err)
-	}
-
-	blockNum, err := strconv.ParseInt(data.BlockNumber.String(), 10, 64)
-	if err != nil {
-		return fmt.Errorf("invalid blockNumber %q: %w", data.BlockNumber.String(), err)
-	}
-
-	// Deduplicate: use the same chain_log mechanism as the polling indexer.
-	exists, err := db.ChainLogExists(ctx, data.TransactionHash, logIdx)
-	if err != nil {
-		return fmt.Errorf("check chain log: %w", err)
-	}
-	if exists {
-		return nil
-	}
-
-	// Run the handler before recording the chain log so that a handler failure
-	// doesn't permanently mark the event as processed (which would drop it on retry).
-	var handlerErr error
-	switch data.EventName {
-	case "EscrowCreated":
-		handlerErr = wh.handleEscrowCreated(ctx, data)
-	case "OutcomeRecorded":
-		handlerErr = wh.handleOutcomeRecorded(ctx, data, blockNum, logIdx)
-	default:
-		slog.Info("webhook: ignoring unhandled factory event", "event_name", data.EventName)
-	}
-	if handlerErr != nil {
-		return handlerErr
-	}
-
-	if err := db.CreateChainLog(ctx, data.TransactionHash, logIdx, blockNum, data.EventName, data.ContractAddress, ""); err != nil {
-		return fmt.Errorf("create chain log: %w", err)
-	}
-
-	wh.publishWebhookEvent(data, blockNum)
-	return nil
-}
-
-// publishWebhookEvent publishes an L1 event to the bus for webhook-delivered events.
-func (wh *WebhookHandler) publishWebhookEvent(data cdpWebhookEventData, blockNum int64) {
-	if wh.bus == nil {
+	if !common.IsHexAddress(data.ContractAddress) ||
+		common.HexToAddress(data.ContractAddress) != wh.idx.FactoryAddress() {
+		slog.Warn("webhook: event is not from the monitored factory",
+			"event_id", payload.ID,
+			"contract_address", data.ContractAddress,
+			"factory_address", wh.idx.FactoryAddress().Hex(),
+		)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unexpected contract address"})
 		return
 	}
-	blockUint, err := numconv.Int64ToUint64(blockNum, "block_number")
-	if err != nil {
-		slog.Warn("webhook: invalid block number for event publish", "block_number", blockNum, "error", err)
-		return
-	}
-	streamName, ok := events.OnChainEventName[data.EventName]
-	if !ok {
-		return
-	}
-	wh.bus.Publish(events.Event{
-		Name:   streamName,
-		Escrow: data.Escrow,
-		Level:  events.L1,
-		Block:  blockUint,
-		ID:     fmt.Sprintf("%s-%s", data.TransactionHash, data.LogIndex.String()),
-	})
-}
 
-// handleEscrowCreated processes an EscrowCreated event from the CDP webhook.
-// Mirrors the logic in indexer.handleEscrowCreated but reads from decoded params.
-func (wh *WebhookHandler) handleEscrowCreated(ctx context.Context, data cdpWebhookEventData) error {
-	db := wh.idx.DB()
-
-	if !common.IsHexAddress(data.Escrow) {
-		return fmt.Errorf("EscrowCreated: invalid escrow address: %q", data.Escrow)
-	}
-	escrowAddr := common.HexToAddress(data.Escrow).Hex()
-
-	// Check if escrow already exists (e.g. created via API/MCP handler)
-	_, err := db.GetEscrowByAddress(ctx, escrowAddr)
-	if err == nil {
-		return nil // Already indexed
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("check existing escrow %s: %w", escrowAddr, err)
-	}
-
-	for _, pair := range []struct{ name, val string }{
-		{"buyer", data.Buyer},
-		{"worker", data.Worker},
-		{"verifier", data.Verifier},
-		{"arbitrator", data.Arbitrator},
-	} {
-		if !common.IsHexAddress(pair.val) {
-			return fmt.Errorf("EscrowCreated: invalid %s address: %q", pair.name, pair.val)
-		}
-	}
-
-	var escrowID int64
-	if data.EscrowID != "" {
-		var err error
-		escrowID, err = strconv.ParseInt(data.EscrowID, 10, 64)
-		if err != nil {
-			return fmt.Errorf("EscrowCreated: malformed escrowId %q: %w", data.EscrowID, err)
-		}
-	}
-
-	taskSpecHash := data.TaskSpecHash
-	if taskSpecHash == "" {
-		taskSpecHash = "0x0"
-	}
-
-	tokenAddr := common.Address{}
-	if data.Token != "" {
-		if !common.IsHexAddress(data.Token) {
-			return fmt.Errorf("EscrowCreated: invalid token address: %q", data.Token)
-		}
-		tokenAddr = common.HexToAddress(data.Token)
-	}
-
-	task, err := db.CreateTask(ctx, "Indexed task", "", taskSpecHash)
-	if err != nil {
-		return fmt.Errorf("create task: %w", err)
-	}
-
-	factoryAddr := wh.idx.FactoryAddress()
-	chainID := wh.idx.ChainID()
-
-	_, err = db.CreateEscrow(ctx, &storage.Escrow{
-		TaskID:             task.ID,
-		ChainID:            chainID,
-		FactoryAddress:     factoryAddr.Hex(),
-		EscrowAddress:      escrowAddr,
-		EscrowID:           escrowID,
-		Buyer:              common.HexToAddress(data.Buyer).Hex(),
-		Worker:             common.HexToAddress(data.Worker).Hex(),
-		Verifier:           common.HexToAddress(data.Verifier).Hex(),
-		Arbitrator:         common.HexToAddress(data.Arbitrator).Hex(),
-		Amount:             "0",
-		Token:              tokenAddr.Hex(),
-		Status:             "created",
-		SubmissionDeadline: 0,
-	})
-	if err != nil {
-		return fmt.Errorf("create escrow: %w", err)
-	}
-
-	slog.Info("webhook: escrow created",
-		"escrow_address", escrowAddr,
-		"escrow_id", escrowID,
-		"buyer", data.Buyer,
+	slog.Info("webhook: factory event received; triggering indexer pass",
+		"event_id", payload.ID,
+		"event_name", data.EventName,
+		"tx_hash", data.TransactionHash,
+		"block_number", data.BlockNumber.String(),
 	)
-
-	return nil
-}
-
-// handleOutcomeRecorded processes an OutcomeRecorded event from the CDP webhook.
-// Mirrors the logic in indexer.handleOutcomeRecorded.
-func (wh *WebhookHandler) handleOutcomeRecorded(ctx context.Context, data cdpWebhookEventData, blockNum int64, logIndex int) error {
-	if !common.IsHexAddress(data.Participant) {
-		return fmt.Errorf("OutcomeRecorded: invalid participant address: %q", data.Participant)
-	}
-
-	participant := strings.ToLower(common.HexToAddress(data.Participant).Hex())
-
-	slog.Info("webhook: outcome recorded",
-		"participant", participant,
-		"role", data.Role,
-		"outcome", data.Outcome,
-	)
-
-	return wh.idx.DB().RecordReputationOutcome(ctx, &storage.ReputationEvent{
-		Address:     participant,
-		Role:        data.Role,
-		Outcome:     data.Outcome,
-		TxHash:      data.TransactionHash,
-		LogIndex:    logIndex,
-		BlockNumber: blockNum,
-	})
+	wh.idx.Trigger()
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "queued"})
 }
 
 // verifyCDPSignature verifies the HMAC-SHA256 signature from a CDP webhook.

@@ -345,6 +345,24 @@ func (d *DB) queryEscrows(ctx context.Context, query string, args ...any) ([]*Es
 	return escrows, nil
 }
 
+// SetEscrowMilestoneCount records how many milestones an escrow has on-chain.
+func (d *DB) SetEscrowMilestoneCount(ctx context.Context, id int64, count int) error {
+	res, err := d.q(ctx).ExecContext(ctx,
+		`UPDATE escrows SET milestone_count = ?, updated_at = datetime('now') WHERE id = ?`, count, id,
+	)
+	if err != nil {
+		return fmt.Errorf("set milestone count: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set milestone count rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("set milestone count escrow_id=%d: %w", id, sql.ErrNoRows)
+	}
+	return nil
+}
+
 func (d *DB) UpdateEscrowMilestoneProgress(ctx context.Context, id int64, currentMilestone int) error {
 	res, err := d.q(ctx).ExecContext(ctx,
 		`UPDATE escrows SET current_milestone = ?, updated_at = datetime('now') WHERE id = ?`,
@@ -2275,6 +2293,22 @@ func (d *DB) GetCursor(ctx context.Context, chainID int64, cursorKey string) (in
 		return 0, nil
 	}
 	return blockNumber, err
+}
+
+// LookupCursor returns the stored cursor and whether one exists, so callers
+// can tell "never indexed" from "indexed through block 0".
+func (d *DB) LookupCursor(ctx context.Context, chainID int64, cursorKey string) (int64, bool, error) {
+	var blockNumber int64
+	err := d.q(ctx).QueryRowContext(ctx,
+		`SELECT block_number FROM chain_cursors WHERE chain_id = ? AND cursor_key = ?`, chainID, cursorKey,
+	).Scan(&blockNumber)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return blockNumber, true, nil
 }
 
 func (d *DB) SetCursor(ctx context.Context, chainID int64, cursorKey string, blockNumber int64) error {

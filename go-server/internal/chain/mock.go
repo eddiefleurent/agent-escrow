@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"math/big"
 	"sync"
 	"time"
 
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/numconv"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
@@ -35,6 +37,19 @@ type MockClient struct {
 
 	CallResult []byte
 	CallErr    error
+
+	// BlockNumHook, when set, runs at the start of every BlockNumber call,
+	// outside the mock's lock. Tests use it to gate or observe head reads.
+	BlockNumHook func(ctx context.Context)
+
+	// EscrowViews answers read-only TaskEscrow calls (getQuorumPanel,
+	// verifierStakePerVerifier, milestoneCount, milestones) per escrow
+	// address. Calls to other addresses fall back to CallResult/CallErr.
+	EscrowViews map[common.Address]MockEscrowViews
+
+	// CallHook, when set, runs at the start of every CallContract call with
+	// the caller's context, outside the mock's lock.
+	CallHook func(ctx context.Context, to common.Address)
 
 	SentTxs []MockTxRecord
 
@@ -126,6 +141,12 @@ func (m *MockClient) applyDelay(ctx context.Context) error {
 }
 
 func (m *MockClient) BlockNumber(ctx context.Context) (uint64, error) {
+	m.mu.RLock()
+	hook := m.BlockNumHook
+	m.mu.RUnlock()
+	if hook != nil {
+		hook(ctx)
+	}
 	if err := m.applyDelay(ctx); err != nil {
 		return 0, err
 	}
@@ -189,10 +210,81 @@ func (m *MockClient) SendTx(_ context.Context, to common.Address, _ []byte, valu
 	return makeFakeTx(), nil
 }
 
-func (m *MockClient) CallContract(_ context.Context, _ common.Address, _ []byte) ([]byte, error) {
+func (m *MockClient) CallContract(ctx context.Context, to common.Address, data []byte) ([]byte, error) {
+	m.mu.RLock()
+	hook := m.CallHook
+	m.mu.RUnlock()
+	if hook != nil {
+		hook(ctx, to)
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	if views, ok := m.EscrowViews[to]; ok {
+		return views.call(data)
+	}
 	return m.CallResult, m.CallErr
+}
+
+// MockMilestone is one entry of a multi-milestone escrow's milestones array.
+type MockMilestone struct {
+	Amount             *big.Int
+	SubmissionDeadline uint64
+}
+
+// MockEscrowViews is the on-chain view state of one mocked TaskEscrow.
+// An empty Milestones slice is a single-milestone escrow (milestoneCount 1).
+type MockEscrowViews struct {
+	QuorumPanel   []common.Address
+	VerifierStake *big.Int
+	Milestones    []MockMilestone
+	// Err, when set, fails every view call to this escrow.
+	Err error
+}
+
+func (v MockEscrowViews) call(data []byte) ([]byte, error) {
+	if v.Err != nil {
+		return nil, v.Err
+	}
+	if len(data) < 4 {
+		return nil, errors.New("mock escrow view: calldata too short")
+	}
+	method, err := EscrowABI.MethodById(data[:4])
+	if err != nil {
+		return nil, fmt.Errorf("mock escrow view: %w", err)
+	}
+	switch method.Name {
+	case "getQuorumPanel":
+		return method.Outputs.Pack(v.QuorumPanel)
+	case "verifierStakePerVerifier":
+		stake := v.VerifierStake
+		if stake == nil {
+			stake = new(big.Int)
+		}
+		return method.Outputs.Pack(stake)
+	case "milestoneCount", "getMilestoneCount":
+		count := len(v.Milestones)
+		if count == 0 {
+			count = 1
+		}
+		count8, err := numconv.IntToUint8(count, "milestone count")
+		if err != nil {
+			return nil, fmt.Errorf("mock escrow view: %w", err)
+		}
+		return method.Outputs.Pack(count8)
+	case "milestones":
+		args, err := method.Inputs.Unpack(data[4:])
+		if err != nil {
+			return nil, fmt.Errorf("mock escrow view: unpack milestones args: %w", err)
+		}
+		i, ok := args[0].(*big.Int)
+		if !ok || !i.IsInt64() || i.Int64() < 0 || i.Int64() >= int64(len(v.Milestones)) {
+			return nil, errors.New("mock escrow view: milestone index out of range")
+		}
+		ms := v.Milestones[i.Int64()]
+		return method.Outputs.Pack(ms.Amount, ms.SubmissionDeadline, [32]byte{}, "", [32]byte{},
+			uint64(0), uint64(0), uint64(0), "", uint8(0), uint16(0))
+	}
+	return nil, fmt.Errorf("mock escrow view: unsupported method %s", method.Name)
 }
 
 func (m *MockClient) TransactionReceipt(_ context.Context, _ common.Hash) (*types.Receipt, error) {
@@ -573,6 +665,16 @@ func (m *MockClient) IsFrozenAddress(_ context.Context, _ common.Address, _ comm
 // MakeEscrowCreatedReceipt builds a fake receipt containing an EscrowCreated event log
 // for use in tests that exercise receipt parsing.
 func MakeEscrowCreatedReceipt(escrowID int64, escrowAddr, buyer common.Address) *types.Receipt {
+	lg := MakeEscrowCreatedLog(common.Address{}, escrowID, escrowAddr, buyer)
+	return &types.Receipt{
+		Status: types.ReceiptStatusSuccessful,
+		Logs:   []*types.Log{&lg},
+	}
+}
+
+// MakeEscrowCreatedLog builds a factory EscrowCreated log with fixed worker,
+// arbitrator, and quorum fields. Callers set BlockNumber, Index, and TxHash.
+func MakeEscrowCreatedLog(factory common.Address, escrowID int64, escrowAddr, buyer common.Address) types.Log {
 	escrowCreatedID := FactoryABI.Events["EscrowCreated"].ID
 
 	// Indexed: escrowId (topic1), escrow address (topic2), buyer (topic3)
@@ -596,14 +698,10 @@ func MakeEscrowCreatedReceipt(escrowID int64, escrowAddr, buyer common.Address) 
 		panic("failed to pack EscrowCreated non-indexed args: " + err.Error())
 	}
 
-	return &types.Receipt{
-		Status: types.ReceiptStatusSuccessful,
-		Logs: []*types.Log{
-			{
-				Topics: []common.Hash{escrowCreatedID, idBytes, addrBytes, buyerBytes},
-				Data:   nonIndexed,
-			},
-		},
+	return types.Log{
+		Address: factory,
+		Topics:  []common.Hash{escrowCreatedID, idBytes, addrBytes, buyerBytes},
+		Data:    nonIndexed,
 	}
 }
 

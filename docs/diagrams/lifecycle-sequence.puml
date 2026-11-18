@@ -376,13 +376,16 @@ note over factory #C8E6C9 : On-chain reputation counters updated
 
 == Off-Chain Indexing (dual-mode) ==
 
-alt #E8F5E9 CDP Webhook (real-time, if configured)
+alt #E8F5E9 CDP Webhook (early wake-up, if configured)
   factory --> "CDP" as cdp ** #FFF3E0 : OutcomeRecorded event
   cdp -> "Webhook Handler" as webhook ** #BBDEFB : HMAC-signed POST
-  webhook -> webhook : verify signature\n+ deduplicate via chain_logs
-  webhook -> db : UpsertReputation(address, role, outcome)
-else #F5F5F5 Polling fallback (always active)
+  webhook -> webhook : verify signature\n+ factory address
+  webhook -> indexer : trigger pass (payload not applied)
+else #F5F5F5 Timed poll (always active)
   note over indexer : polls every 15s
+end
+
+group Indexer pass (up to head - CONFIRMATIONS)
   indexer -> factory : listen for OutcomeRecorded
   factory --> indexer : OutcomeRecorded(address, role, outcome)
   indexer -> indexer : decode event\n+ deduplicate via chain_logs

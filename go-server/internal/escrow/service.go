@@ -708,6 +708,7 @@ func (s *Service) FundEscrow(ctx context.Context, escrow *storage.Escrow) (strin
 	if err != nil {
 		return "", fmt.Errorf("fund escrow: %w", err)
 	}
+	// Best effort: the escrow row may still read "created" (see runIndexerOnce).
 	s.runIndexerOnce(ctx)
 	return tx.Hash().Hex(), nil
 }
@@ -1286,6 +1287,12 @@ func (s *Service) persistAttestationChain(ctx context.Context, escrowID int64, m
 	return nil
 }
 
+// runIndexerOnce indexes the chain after a write so the response usually
+// reflects it. This read-after-write is best effort: a failed pass is only
+// logged, and with CONFIRMATIONS > 0 the just-mined transaction is not yet
+// confirmed, so the row can still show the previous state when the call
+// returns. The polling indexer applies it later. Reporting a pending-index
+// status to callers is a follow-up; response shapes are unchanged here.
 func (s *Service) runIndexerOnce(ctx context.Context) {
 	if s.Idx != nil {
 		if err := s.Idx.RunOnce(ctx); err != nil {

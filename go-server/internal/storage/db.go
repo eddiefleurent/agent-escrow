@@ -3,7 +3,9 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	_ "embed"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -256,32 +258,49 @@ func (tx *ImmediateTx) QueryRowContext(ctx context.Context, query string, args .
 	return tx.conn.QueryRowContext(ctx, query, args...)
 }
 
+// Commit commits the transaction. A failed COMMIT leaves the transaction open
+// on the connection (a cancelled ctx means COMMIT never ran), so Commit rolls
+// it back on a fresh context before the connection goes back to the pool.
 func (tx *ImmediateTx) Commit(ctx context.Context) error {
 	if !tx.done.CompareAndSwap(false, true) {
 		return nil
 	}
-	_, err := tx.conn.ExecContext(ctx, "COMMIT")
-	closeErr := tx.conn.Close()
-	if err != nil {
-		return fmt.Errorf("commit immediate tx: %w", err)
+	if _, err := tx.conn.ExecContext(ctx, "COMMIT"); err != nil {
+		commitErr := fmt.Errorf("commit immediate tx: %w", err)
+		if cleanupErr := tx.release(); cleanupErr != nil {
+			return errors.Join(commitErr, cleanupErr)
+		}
+		return commitErr
 	}
-	if closeErr != nil {
-		return fmt.Errorf("close immediate tx conn after commit: %w", closeErr)
+	if err := tx.conn.Close(); err != nil {
+		return fmt.Errorf("close immediate tx conn after commit: %w", err)
 	}
 	return nil
 }
 
-func (tx *ImmediateTx) Rollback(ctx context.Context) error {
+// Rollback rolls the transaction back. It ignores ctx cancellation: a caller
+// that gave up must still release SQLite's write lock.
+func (tx *ImmediateTx) Rollback(_ context.Context) error {
 	if !tx.done.CompareAndSwap(false, true) {
 		return nil
 	}
-	_, err := tx.conn.ExecContext(ctx, "ROLLBACK")
-	closeErr := tx.conn.Close()
-	if err != nil {
-		return fmt.Errorf("rollback immediate tx: %w", err)
+	return tx.release()
+}
+
+// release rolls back on a context that cannot be cancelled and returns the
+// connection to the pool. If ROLLBACK fails, the connection's transaction
+// state is unknown, so the connection is discarded instead of reused.
+func (tx *ImmediateTx) release() error {
+	if _, err := tx.conn.ExecContext(context.Background(), "ROLLBACK"); err != nil {
+		rollbackErr := fmt.Errorf("rollback immediate tx: %w", err)
+		// Returning driver.ErrBadConn from Raw makes database/sql close the
+		// underlying driver connection rather than pool it.
+		_ = tx.conn.Raw(func(any) error { return driver.ErrBadConn })
+		_ = tx.conn.Close()
+		return rollbackErr
 	}
-	if closeErr != nil {
-		return fmt.Errorf("close immediate tx conn after rollback: %w", closeErr)
+	if err := tx.conn.Close(); err != nil {
+		return fmt.Errorf("close immediate tx conn after rollback: %w", err)
 	}
 	return nil
 }
@@ -300,6 +319,14 @@ func (d *DB) q(ctx context.Context) QueryExecer {
 		return q
 	}
 	return d.db
+}
+
+// InTx reports whether ctx is bound to a transaction opened by
+// RunInImmediateTx. Code that must not hold SQLite's write lock (such as
+// chain RPCs) can assert on it.
+func InTx(ctx context.Context) bool {
+	q, ok := ctx.Value(queryExecerCtxKey{}).(QueryExecer)
+	return ok && q != nil
 }
 
 func (d *DB) hasQueryExecer(ctx context.Context) bool {

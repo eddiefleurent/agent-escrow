@@ -90,7 +90,7 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	}
 
 	if cfg.WebhookMode() {
-		wh := NewWebhookHandler(idx, cfg.CDPWebhookSecret, bus)
+		wh := NewWebhookHandler(idx, cfg.CDPWebhookSecret)
 		mux.HandleFunc("POST /webhooks/cdp", wh.HandleCDPWebhook)
 	}
 
