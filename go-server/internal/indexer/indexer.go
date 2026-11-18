@@ -10,6 +10,8 @@ import (
 	"math"
 	"math/big"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
@@ -79,7 +81,23 @@ type Indexer struct {
 	maxConsecFailures int
 	fatalCh           chan error
 	startBlock        uint64 // initial fromBlock when cursor is 0; overrides defaultLookback
+	confirmations     uint64 // blocks to trail the head; 0 indexes the head
 	bus               *events.EventBus
+
+	// logHook, when set, runs after dedup and before a log is applied.
+	// Tests use it to inject a one-shot handler failure. Production leaves it nil.
+	logHook func(types.Log) error
+
+	runMu      sync.Mutex
+	running    bool
+	runWaiters []runWaiter
+}
+
+// runWaiter is a RunOnce caller that arrived while a pass was already running.
+// It waits for a follow-up pass that starts after it arrived.
+type runWaiter struct {
+	ctx context.Context
+	ch  chan error
 }
 
 // Option configures optional Indexer parameters.
@@ -113,6 +131,16 @@ func WithStartBlock(block uint64) Option {
 func WithEventBus(bus *events.EventBus) Option {
 	return func(idx *Indexer) {
 		idx.bus = bus
+	}
+}
+
+// WithConfirmations sets how many blocks behind the chain head the indexer
+// stays. Zero, the default, indexes the head. A reorg of a block at or below
+// the cursor cannot happen once confirmations is deep enough for the chain;
+// 12 is the recommended value on Base mainnet.
+func WithConfirmations(n uint64) Option {
+	return func(idx *Indexer) {
+		idx.confirmations = n
 	}
 }
 
@@ -157,8 +185,28 @@ func (idx *Indexer) Bus() *events.EventBus {
 	return idx.bus
 }
 
+type publishBatch struct {
+	events []events.Event
+}
+
+type publishCtxKey struct{}
+
+func withPublishBatch(ctx context.Context, batch *publishBatch) context.Context {
+	return context.WithValue(ctx, publishCtxKey{}, batch)
+}
+
+func publishBatchFrom(ctx context.Context) *publishBatch {
+	batch, ok := ctx.Value(publishCtxKey{}).(*publishBatch)
+	if !ok {
+		return nil
+	}
+	return batch
+}
+
 // publishEvent publishes a lifecycle event to the event bus if configured.
-func (idx *Indexer) publishEvent(onChainName string, escrowAddr string, lg types.Log) {
+// Events produced inside a block transaction are held until that transaction
+// commits, so a rollback does not announce state that was never stored.
+func (idx *Indexer) publishEvent(ctx context.Context, onChainName string, escrowAddr string, lg types.Log) {
 	if idx.bus == nil {
 		return
 	}
@@ -166,14 +214,28 @@ func (idx *Indexer) publishEvent(onChainName string, escrowAddr string, lg types
 	if !ok {
 		return
 	}
-	idx.bus.Publish(events.Event{
+	ev := events.Event{
 		Name:      streamName,
 		Escrow:    escrowAddr,
 		Level:     events.L1,
 		Block:     lg.BlockNumber,
 		Timestamp: time.Now().UTC(),
 		ID:        fmt.Sprintf("%s-%d", lg.TxHash.Hex(), lg.Index),
-	})
+	}
+	if batch := publishBatchFrom(ctx); batch != nil {
+		batch.events = append(batch.events, ev)
+		return
+	}
+	idx.bus.Publish(ev)
+}
+
+func (idx *Indexer) flushPublished(batch *publishBatch) {
+	if idx.bus == nil || batch == nil {
+		return
+	}
+	for _, ev := range batch.events {
+		idx.bus.Publish(ev)
+	}
 }
 
 // Err returns a channel that receives a fatal error when the indexer has failed
@@ -219,14 +281,95 @@ func (idx *Indexer) Run(ctx context.Context) {
 	}
 }
 
+// RunOnce indexes blocks up to head-confirmations.
+//
+// Concurrent calls never overlap. A caller that arrives during a pass waits
+// for a follow-up pass that reads the chain after the caller arrived, so a
+// transaction mined before RunOnce is visible in the database when it returns.
+// A handler error rolls back the failed block and leaves the cursor in front
+// of that block; the next pass retries it. Run counts that error toward
+// max consecutive failures.
 func (idx *Indexer) RunOnce(ctx context.Context) error {
+	idx.runMu.Lock()
+	if idx.running {
+		ch := make(chan error, 1)
+		idx.runWaiters = append(idx.runWaiters, runWaiter{ctx: ctx, ch: ch})
+		idx.runMu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-ch:
+			return err
+		}
+	}
+	idx.running = true
+	idx.runMu.Unlock()
+
+	return idx.finishRun(ctx, idx.runOnceBody(ctx))
+}
+
+func (idx *Indexer) finishRun(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		err = ctx.Err()
+	}
+	for {
+		idx.runMu.Lock()
+		waiters := idx.runWaiters
+		idx.runWaiters = nil
+		if len(waiters) == 0 {
+			idx.running = false
+			idx.runMu.Unlock()
+			return err
+		}
+		idx.runMu.Unlock()
+
+		followCtx, cancel := contextFromWaiters(waiters)
+		followErr := idx.runOnceBody(followCtx)
+		if followErr == nil && followCtx.Err() != nil {
+			followErr = followCtx.Err()
+		}
+		cancel()
+		for _, w := range waiters {
+			w.ch <- followErr
+		}
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		} else {
+			err = followErr
+		}
+	}
+}
+
+func contextFromWaiters(waiters []runWaiter) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var alive atomic.Int64
+	alive.Store(int64(len(waiters)))
+	for _, w := range waiters {
+		go func(wctx context.Context) {
+			select {
+			case <-wctx.Done():
+				if alive.Add(-1) == 0 {
+					cancel()
+				}
+			case <-ctx.Done():
+			}
+		}(w.ctx)
+	}
+	return ctx, cancel
+}
+
+func (idx *Indexer) runOnceBody(ctx context.Context) error {
 	if idx.chain == nil {
 		return nil
 	}
 
-	currentBlock, err := idx.chain.BlockNumber(ctx)
+	head, err := idx.chain.BlockNumber(ctx)
 	if err != nil {
 		return fmt.Errorf("get block number: %w", err)
+	}
+	safeHead, ok := idx.confirmedHead(head)
+	if !ok {
+		return nil
 	}
 
 	cursor, err := idx.db.GetCursor(ctx, idx.chainID, cursorKey)
@@ -241,67 +384,244 @@ func (idx *Indexer) RunOnce(ctx context.Context) error {
 	if fromBlock == 0 {
 		if idx.startBlock > 0 {
 			fromBlock = idx.startBlock
-		} else if currentBlock > defaultLookback {
-			fromBlock = currentBlock - defaultLookback
+		} else if safeHead > defaultLookback {
+			fromBlock = safeHead - defaultLookback
 		}
 	} else {
 		fromBlock++ // Start after last processed block
 	}
 
-	if fromBlock > currentBlock {
+	if fromBlock > safeHead {
 		return nil
 	}
-
-	// Index factory EscrowCreated events
-	if err := idx.indexFactoryEvents(ctx, fromBlock, currentBlock); err != nil {
-		return fmt.Errorf("index factory events: %w", err)
+	if safeHead > math.MaxInt64 {
+		return fmt.Errorf("block number %d exceeds int64 max", safeHead)
 	}
 
-	// Index escrow events for escrows on this chain only
+	return idx.applyRange(ctx, fromBlock, safeHead)
+}
+
+// confirmedHead is the highest block that has confirmations blocks on top of
+// it. ok is false when the chain is not yet that deep.
+func (idx *Indexer) confirmedHead(head uint64) (uint64, bool) {
+	if head < idx.confirmations {
+		return 0, false
+	}
+	return head - idx.confirmations, true
+}
+
+// errEscrowLogsNotLoaded asks applyRange to fetch logs for escrows created in
+// the current block and retry that block. The open transaction is rolled back.
+var errEscrowLogsNotLoaded = errors.New("escrow logs not yet loaded")
+
+type escrowLogIndex map[string]map[uint64][]types.Log
+
+func logsByBlock(logs []types.Log) map[uint64][]types.Log {
+	out := make(map[uint64][]types.Log)
+	for _, lg := range logs {
+		out[lg.BlockNumber] = append(out[lg.BlockNumber], lg)
+	}
+	return out
+}
+
+func factoryLogTopics() [][]common.Hash {
+	names := []string{
+		"EscrowCreated",
+		"OutcomeRecorded",
+		"MarketStabilityFeeApplied",
+		"AddressFrozen",
+		"AddressUnfrozen",
+		"EscrowFrozen",
+		"EscrowUnfrozen",
+		"EmergencyResolved",
+	}
+	ids := make([]common.Hash, 0, len(names))
+	for _, name := range names {
+		ids = append(ids, chain.FactoryABI.Events[name].ID)
+	}
+	return [][]common.Hash{ids}
+}
+
+func (idx *Indexer) prefetchLogs(ctx context.Context, from, to uint64) (map[uint64][]types.Log, escrowLogIndex, error) {
+	factoryLogs, err := idx.chain.FilterLogs(ctx, []common.Address{idx.factoryAddress}, factoryLogTopics(), from, to)
+	if err != nil {
+		return nil, nil, fmt.Errorf("filter factory logs: %w", err)
+	}
 	escrows, err := idx.db.ListEscrowsByChainID(ctx, idx.chainID)
 	if err != nil {
-		return fmt.Errorf("list escrows: %w", err)
+		return nil, nil, fmt.Errorf("list escrows: %w", err)
 	}
-
+	byEscrow := make(escrowLogIndex, len(escrows))
 	for _, e := range escrows {
-		if err := idx.indexEscrowEvents(ctx, common.HexToAddress(e.EscrowAddress), e.ID, fromBlock, currentBlock); err != nil {
-			slog.Warn("escrow event indexing failed", "escrow_address", e.EscrowAddress, "error", err)
+		if err := idx.loadEscrowLogs(ctx, e.EscrowAddress, from, to, byEscrow); err != nil {
+			return nil, nil, err
 		}
 	}
+	return logsByBlock(factoryLogs), byEscrow, nil
+}
 
-	// Update cursor (block numbers fit in int64 for foreseeable chain heights)
-	if currentBlock > math.MaxInt64 {
-		return fmt.Errorf("block number %d exceeds int64 max", currentBlock)
+func (idx *Indexer) loadEscrowLogs(ctx context.Context, addr string, from, to uint64, dest escrowLogIndex) error {
+	logs, err := idx.chain.FilterLogs(ctx, []common.Address{common.HexToAddress(addr)}, nil, from, to)
+	if err != nil {
+		return fmt.Errorf("filter escrow logs %s: %w", addr, err)
 	}
-	if err := idx.db.SetCursor(ctx, idx.chainID, cursorKey, int64(currentBlock)); err != nil {
-		return fmt.Errorf("set cursor: %w", err)
-	}
-
+	dest[strings.ToLower(addr)] = logsByBlock(logs)
 	return nil
 }
 
-func (idx *Indexer) indexFactoryEvents(ctx context.Context, from, to uint64) error {
-	topicIDs := []common.Hash{
-		chain.FactoryABI.Events["EscrowCreated"].ID,
-		chain.FactoryABI.Events["OutcomeRecorded"].ID,
-		chain.FactoryABI.Events["MarketStabilityFeeApplied"].ID,
-		chain.FactoryABI.Events["AddressFrozen"].ID,
-		chain.FactoryABI.Events["AddressUnfrozen"].ID,
-		chain.FactoryABI.Events["EscrowFrozen"].ID,
-		chain.FactoryABI.Events["EscrowUnfrozen"].ID,
-		chain.FactoryABI.Events["EmergencyResolved"].ID,
-	}
-	logs, err := idx.chain.FilterLogs(ctx, []common.Address{idx.factoryAddress}, [][]common.Hash{topicIDs}, from, to)
-	if err != nil {
-		return fmt.Errorf("filter factory logs: %w", err)
-	}
-
-	for _, lg := range logs {
-		if err := idx.ProcessFactoryLog(ctx, lg); err != nil {
-			slog.Warn("factory log processing failed", "tx_hash", lg.TxHash.Hex(), "log_index", lg.Index, "error", err)
+func nextLogBlock(from uint64, factory map[uint64][]types.Log, escrows escrowLogIndex) (uint64, bool) {
+	var next uint64
+	found := false
+	consider := func(block uint64, n int) {
+		if n == 0 || block < from {
+			return
+		}
+		if !found || block < next {
+			next = block
+			found = true
 		}
 	}
+	for block, logs := range factory {
+		consider(block, len(logs))
+	}
+	for _, byBlock := range escrows {
+		for block, logs := range byBlock {
+			consider(block, len(logs))
+		}
+	}
+	return next, found
+}
+
+// applyRange applies logs from through to. Empty stretches advance the
+// cursor in one transaction. A block that contains logs is its own transaction
+// together with the cursor update for that block. A handler error leaves the
+// cursor on the last block that fully committed.
+func (idx *Indexer) applyRange(ctx context.Context, from, to uint64) error {
+	factoryByBlock, escrowLogs, err := idx.prefetchLogs(ctx, from, to)
+	if err != nil {
+		return err
+	}
+
+	block := from
+	refetch := 0
+	for block <= to {
+		next, ok := nextLogBlock(block, factoryByBlock, escrowLogs)
+		if !ok || next > to {
+			return idx.advanceCursor(ctx, to)
+		}
+		if next > block {
+			if err := idx.advanceCursor(ctx, next-1); err != nil {
+				return err
+			}
+			block = next
+		}
+
+		missing, batch, err := idx.applyBlock(ctx, block, factoryByBlock, escrowLogs)
+		if err != nil {
+			return fmt.Errorf("apply block %d: %w", block, err)
+		}
+		if len(missing) > 0 {
+			refetch++
+			if refetch > 3 {
+				return fmt.Errorf("apply block %d: escrow log prefetch did not settle", block)
+			}
+			for _, addr := range missing {
+				if err := idx.loadEscrowLogs(ctx, addr, block, to, escrowLogs); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		refetch = 0
+		idx.flushPublished(batch)
+		if block == to {
+			return nil
+		}
+		block++
+	}
 	return nil
+}
+
+func (idx *Indexer) advanceCursor(ctx context.Context, block uint64) error {
+	if block > math.MaxInt64 {
+		return fmt.Errorf("block number %d exceeds int64 max", block)
+	}
+	cursor := int64(block)
+	err := idx.db.RunInImmediateTx(ctx, func(txCtx context.Context) error {
+		if err := idx.db.SetCursor(txCtx, idx.chainID, cursorKey, cursor); err != nil {
+			return fmt.Errorf("set cursor: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("advance cursor to %d: %w", block, err)
+	}
+	return nil
+}
+
+func (idx *Indexer) applyBlock(
+	ctx context.Context,
+	block uint64,
+	factoryByBlock map[uint64][]types.Log,
+	escrowLogs escrowLogIndex,
+) ([]string, *publishBatch, error) {
+	if block > math.MaxInt64 {
+		return nil, nil, fmt.Errorf("block number %d exceeds int64 max", block)
+	}
+	cursor := int64(block)
+	var missing []string
+	var batch *publishBatch
+	err := idx.db.RunInImmediateTx(ctx, func(txCtx context.Context) error {
+		batch = &publishBatch{}
+		txCtx = withPublishBatch(txCtx, batch)
+		for _, lg := range factoryByBlock[block] {
+			if err := idx.ProcessFactoryLog(txCtx, lg); err != nil {
+				return fmt.Errorf("factory log %s:%d: %w", lg.TxHash.Hex(), lg.Index, err)
+			}
+		}
+
+		escrows, err := idx.db.ListEscrowsByChainID(txCtx, idx.chainID)
+		if err != nil {
+			return fmt.Errorf("list escrows: %w", err)
+		}
+		var notLoaded []string
+		for _, e := range escrows {
+			if _, ok := escrowLogs[strings.ToLower(e.EscrowAddress)]; !ok {
+				notLoaded = append(notLoaded, e.EscrowAddress)
+			}
+		}
+		if len(notLoaded) > 0 {
+			missing = notLoaded
+			return errEscrowLogsNotLoaded
+		}
+
+		for _, e := range escrows {
+			key := strings.ToLower(e.EscrowAddress)
+			for _, lg := range escrowLogs[key][block] {
+				if err := idx.ProcessEscrowLog(txCtx, lg, e.ID); err != nil {
+					return fmt.Errorf("escrow %s log %s:%d: %w", e.EscrowAddress, lg.TxHash.Hex(), lg.Index, err)
+				}
+			}
+		}
+		if err := idx.db.SetCursor(txCtx, idx.chainID, cursorKey, cursor); err != nil {
+			return fmt.Errorf("set cursor: %w", err)
+		}
+		return nil
+	})
+	if errors.Is(err, errEscrowLogsNotLoaded) {
+		return missing, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return nil, batch, nil
+}
+
+func (idx *Indexer) guardLog(lg types.Log) error {
+	if idx.logHook == nil {
+		return nil
+	}
+	return idx.logHook(lg)
 }
 
 // ProcessFactoryLog deduplicates, stores, and dispatches a single factory event log.
@@ -317,6 +637,9 @@ func (idx *Indexer) ProcessFactoryLog(ctx context.Context, lg types.Log) error {
 	}
 	if exists {
 		return nil
+	}
+	if err := idx.guardLog(lg); err != nil {
+		return err
 	}
 
 	event, err := chain.FactoryABI.EventByID(lg.Topics[0])
@@ -358,7 +681,7 @@ func (idx *Indexer) ProcessFactoryLog(ctx context.Context, lg types.Log) error {
 		if event.Name == "EscrowCreated" && len(lg.Topics) >= 3 {
 			escrowAddr = common.BytesToAddress(lg.Topics[2].Bytes()).Hex()
 		}
-		idx.publishEvent(event.Name, escrowAddr, lg)
+		idx.publishEvent(ctx, event.Name, escrowAddr, lg)
 	}
 	return handlerErr
 }
@@ -552,20 +875,6 @@ func (idx *Indexer) handleOutcomeRecorded(ctx context.Context, lg types.Log) err
 	})
 }
 
-func (idx *Indexer) indexEscrowEvents(ctx context.Context, escrowAddr common.Address, dbEscrowID int64, from, to uint64) error {
-	logs, err := idx.chain.FilterLogs(ctx, []common.Address{escrowAddr}, nil, from, to)
-	if err != nil {
-		return fmt.Errorf("filter escrow logs: %w", err)
-	}
-
-	for _, lg := range logs {
-		if err := idx.ProcessEscrowLog(ctx, lg, dbEscrowID); err != nil {
-			slog.Warn("escrow log processing failed", "tx_hash", lg.TxHash.Hex(), "log_index", lg.Index, "error", err)
-		}
-	}
-	return nil
-}
-
 func (idx *Indexer) isTerminalStatus(ctx context.Context, dbEscrowID int64) bool {
 	e, err := idx.db.GetEscrow(ctx, dbEscrowID)
 	if err != nil {
@@ -587,6 +896,9 @@ func (idx *Indexer) ProcessEscrowLog(ctx context.Context, lg types.Log, dbEscrow
 	}
 	if exists {
 		return nil
+	}
+	if err := idx.guardLog(lg); err != nil {
+		return err
 	}
 
 	event, err := chain.EscrowABI.EventByID(lg.Topics[0])
@@ -667,7 +979,7 @@ func (idx *Indexer) ProcessEscrowLog(ctx context.Context, lg types.Log, dbEscrow
 	}
 
 	if handlerErr == nil {
-		idx.publishEvent(event.Name, lg.Address.Hex(), lg)
+		idx.publishEvent(ctx, event.Name, lg.Address.Hex(), lg)
 	}
 
 	return handlerErr

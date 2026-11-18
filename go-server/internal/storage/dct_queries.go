@@ -44,7 +44,7 @@ func scanDCTToken(scanner interface{ Scan(...any) error }) (*DCTToken, error) {
 }
 
 func (d *DB) CreateDCTToken(ctx context.Context, t *DCTToken) (*DCTToken, error) {
-	res, err := d.db.ExecContext(ctx,
+	res, err := d.q(ctx).ExecContext(ctx,
 		`INSERT INTO dct_tokens (token_id, token_hash, parent_token_id, escrow_id, subject, issuer, operations_json, resources_json, profile, caveats_json, depth, expires_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.TokenID, t.TokenHash, nilIfEmpty(t.ParentTokenID), t.EscrowID, t.Subject, t.Issuer,
@@ -61,7 +61,7 @@ func (d *DB) CreateDCTToken(ctx context.Context, t *DCTToken) (*DCTToken, error)
 }
 
 func (d *DB) GetDCTTokenByID(ctx context.Context, id int64) (*DCTToken, error) {
-	row := d.db.QueryRowContext(ctx, `SELECT `+dctColumns+` FROM dct_tokens WHERE id = ?`, id)
+	row := d.q(ctx).QueryRowContext(ctx, `SELECT `+dctColumns+` FROM dct_tokens WHERE id = ?`, id)
 	t, err := scanDCTToken(row)
 	if err != nil {
 		return nil, fmt.Errorf("get dct token by id: %w", err)
@@ -70,7 +70,7 @@ func (d *DB) GetDCTTokenByID(ctx context.Context, id int64) (*DCTToken, error) {
 }
 
 func (d *DB) GetDCTTokenByTokenID(ctx context.Context, tokenID string) (*DCTToken, error) {
-	row := d.db.QueryRowContext(ctx, `SELECT `+dctColumns+` FROM dct_tokens WHERE token_id = ?`, tokenID)
+	row := d.q(ctx).QueryRowContext(ctx, `SELECT `+dctColumns+` FROM dct_tokens WHERE token_id = ?`, tokenID)
 	t, err := scanDCTToken(row)
 	if err != nil {
 		return nil, fmt.Errorf("get dct token by token_id: %w", err)
@@ -79,7 +79,7 @@ func (d *DB) GetDCTTokenByTokenID(ctx context.Context, tokenID string) (*DCTToke
 }
 
 func (d *DB) GetDCTTokenByTokenHash(ctx context.Context, tokenHash string) (*DCTToken, error) {
-	row := d.db.QueryRowContext(ctx, `SELECT `+dctColumns+` FROM dct_tokens WHERE token_hash = ?`, tokenHash)
+	row := d.q(ctx).QueryRowContext(ctx, `SELECT `+dctColumns+` FROM dct_tokens WHERE token_hash = ?`, tokenHash)
 	t, err := scanDCTToken(row)
 	if err != nil {
 		return nil, fmt.Errorf("get dct token by token_hash: %w", err)
@@ -88,7 +88,7 @@ func (d *DB) GetDCTTokenByTokenHash(ctx context.Context, tokenHash string) (*DCT
 }
 
 func (d *DB) RevokeDCTToken(ctx context.Context, tokenID, reason, revokedBy string) error {
-	res, err := d.db.ExecContext(ctx,
+	res, err := d.q(ctx).ExecContext(ctx,
 		`UPDATE dct_tokens
 		 SET revoked_at = datetime('now'), revocation_reason = ?, revoked_by = ?, updated_at = datetime('now')
 		 WHERE token_id = ? AND revoked_at IS NULL`, reason, revokedBy, tokenID)
@@ -104,7 +104,7 @@ func (d *DB) RevokeDCTToken(ctx context.Context, tokenID, reason, revokedBy stri
 	}
 
 	var revokedAt sql.NullString
-	if err := d.db.QueryRowContext(ctx, `SELECT revoked_at FROM dct_tokens WHERE token_id = ?`, tokenID).Scan(&revokedAt); err != nil {
+	if err := d.q(ctx).QueryRowContext(ctx, `SELECT revoked_at FROM dct_tokens WHERE token_id = ?`, tokenID).Scan(&revokedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return sql.ErrNoRows
 		}
@@ -117,7 +117,7 @@ func (d *DB) RevokeDCTToken(ctx context.Context, tokenID, reason, revokedBy stri
 }
 
 func (d *DB) RevokeDCTTokensByEscrow(ctx context.Context, escrowID int64, reason, revokedBy string) (int64, error) {
-	res, err := d.db.ExecContext(ctx,
+	res, err := d.q(ctx).ExecContext(ctx,
 		`UPDATE dct_tokens
 		 SET revoked_at = datetime('now'), revocation_reason = ?, revoked_by = ?, updated_at = datetime('now')
 		 WHERE escrow_id = ? AND revoked_at IS NULL`, reason, revokedBy, escrowID)
@@ -132,7 +132,7 @@ func (d *DB) RevokeDCTTokensByEscrow(ctx context.Context, escrowID int64, reason
 }
 
 func (d *DB) ListDCTTokensByEscrow(ctx context.Context, escrowID int64) ([]*DCTToken, error) {
-	rows, err := d.db.QueryContext(ctx, `SELECT `+dctColumns+` FROM dct_tokens WHERE escrow_id = ? ORDER BY id DESC`, escrowID)
+	rows, err := d.q(ctx).QueryContext(ctx, `SELECT `+dctColumns+` FROM dct_tokens WHERE escrow_id = ? ORDER BY id DESC`, escrowID)
 	if err != nil {
 		return nil, fmt.Errorf("list dct tokens by escrow: %w", err)
 	}

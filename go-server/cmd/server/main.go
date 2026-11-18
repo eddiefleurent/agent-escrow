@@ -67,7 +67,9 @@ func run() error {
 		)
 	}
 
-	idxOpts := []indexer.Option{}
+	idxOpts := []indexer.Option{
+		indexer.WithConfirmations(cfg.Confirmations),
+	}
 	if cfg.StartBlock > 0 {
 		idxOpts = append(idxOpts, indexer.WithStartBlock(cfg.StartBlock))
 	}
@@ -75,6 +77,10 @@ func run() error {
 		idxOpts = append(idxOpts, indexer.WithEventBus(bus))
 	}
 	idx := indexer.New(db, chainClient, cfg.FactoryAddress, idxOpts...)
+	slog.Info("indexer configured",
+		"confirmations", cfg.Confirmations,
+		"start_block", cfg.StartBlock,
+	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()

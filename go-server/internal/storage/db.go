@@ -290,6 +290,50 @@ func (d *DB) SQLDB() *sql.DB {
 	return d.db
 }
 
+type queryExecerCtxKey struct{}
+
+// q returns the transaction bound to ctx, or the pool when ctx has none.
+// Indexer block application binds an ImmediateTx so every read and write in
+// that block shares one snapshot and rolls back together.
+func (d *DB) q(ctx context.Context) QueryExecer {
+	if q, ok := ctx.Value(queryExecerCtxKey{}).(QueryExecer); ok && q != nil {
+		return q
+	}
+	return d.db
+}
+
+func (d *DB) hasQueryExecer(ctx context.Context) bool {
+	q, ok := ctx.Value(queryExecerCtxKey{}).(QueryExecer)
+	return ok && q != nil
+}
+
+// RunInImmediateTx runs fn inside a BEGIN IMMEDIATE transaction. Queries made
+// with the context passed to fn participate in that transaction. fn's error
+// rolls the transaction back; a nil error commits it.
+func (d *DB) RunInImmediateTx(ctx context.Context, fn func(context.Context) error) error {
+	tx, err := d.BeginImmediateTx(ctx)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			// Background so a cancelled caller still releases the write lock.
+			_ = tx.Rollback(context.Background())
+		}
+	}()
+
+	txCtx := context.WithValue(ctx, queryExecerCtxKey{}, QueryExecer(tx))
+	if err := fn(txCtx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
 func splitStatements(sql string) []string {
 	var stmts []string
 	for s := range strings.SplitSeq(sql, ";") {

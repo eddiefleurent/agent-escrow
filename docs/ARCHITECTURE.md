@@ -332,6 +332,8 @@ Two ingestion mechanisms coexist for structural reasons:
 
 Both paths deduplicate through persisted chain-log identity, so overlap is safe.
 
+Polling runs are single-flight, so concurrent request-path nudges cannot race the cursor. A caller that arrives mid-run waits for a follow-up pass that reads the chain after it arrived. Each block's logs and that block's cursor update commit in one transaction; a handler error rolls the block back and the next pass retries it. `CONFIRMATIONS` (default 0) stops the cursor at `head - CONFIRMATIONS`. Leave it at 0 for local chains; 12 is the recommended setting on Base mainnet.
+
 ### Interface Surfaces
 
 The project exposes one domain model through multiple transports:

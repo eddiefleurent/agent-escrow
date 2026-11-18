@@ -137,7 +137,7 @@ func (m *MockClient) BlockNumber(ctx context.Context) (uint64, error) {
 	return m.BlockNum, nil
 }
 
-func (m *MockClient) FilterLogs(ctx context.Context, _ []common.Address, _ [][]common.Hash, _, _ uint64) ([]types.Log, error) {
+func (m *MockClient) FilterLogs(ctx context.Context, addresses []common.Address, topics [][]common.Hash, fromBlock, toBlock uint64) ([]types.Log, error) {
 	if err := m.applyDelay(ctx); err != nil {
 		return nil, err
 	}
@@ -146,7 +146,40 @@ func (m *MockClient) FilterLogs(ctx context.Context, _ []common.Address, _ [][]c
 	if m.LogsErr != nil {
 		return nil, m.LogsErr
 	}
-	return m.Logs, nil
+
+	allowed := make(map[common.Address]struct{}, len(addresses))
+	for _, addr := range addresses {
+		allowed[addr] = struct{}{}
+	}
+	var topic0 map[common.Hash]struct{}
+	if len(topics) > 0 && len(topics[0]) > 0 {
+		topic0 = make(map[common.Hash]struct{}, len(topics[0]))
+		for _, topic := range topics[0] {
+			topic0[topic] = struct{}{}
+		}
+	}
+
+	out := make([]types.Log, 0, len(m.Logs))
+	for _, lg := range m.Logs {
+		if lg.BlockNumber < fromBlock || lg.BlockNumber > toBlock {
+			continue
+		}
+		if len(allowed) > 0 {
+			if _, ok := allowed[lg.Address]; !ok {
+				continue
+			}
+		}
+		if topic0 != nil {
+			if len(lg.Topics) == 0 {
+				continue
+			}
+			if _, ok := topic0[lg.Topics[0]]; !ok {
+				continue
+			}
+		}
+		out = append(out, lg)
+	}
+	return out, nil
 }
 
 func (m *MockClient) SendTx(_ context.Context, to common.Address, _ []byte, value *big.Int) (*types.Transaction, error) {
