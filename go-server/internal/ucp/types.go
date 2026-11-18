@@ -1,5 +1,7 @@
 package ucp
 
+import escrowservice "github.com/eddiefleurent/agent-escrow/go-server/internal/escrow"
+
 type CheckoutStatus string
 
 const (
@@ -20,36 +22,7 @@ type CreateCheckoutRequest struct {
 	AutoFund       bool                 `json:"auto_fund,omitempty"`
 }
 
-type CreateEscrowPayload struct {
-	Title                    string             `json:"title"`
-	Description              string             `json:"description"`
-	Buyer                    string             `json:"buyer"`
-	Worker                   string             `json:"worker"`
-	VerifierPanel            []string           `json:"verifier_panel"`
-	QuorumThreshold          int                `json:"quorum_threshold"`
-	QuorumVerifierCount      int                `json:"quorum_verifier_count"`
-	VerifierStakePerVerifier string             `json:"verifier_stake_per_verifier,omitempty"`
-	Arbitrator               string             `json:"arbitrator"`
-	Amount                   string             `json:"amount"`
-	WorkerStake              string             `json:"worker_stake,omitempty"`
-	SubmissionDeadline       string             `json:"submission_deadline"`
-	ReviewPeriodSeconds      string             `json:"review_period_seconds"`
-	DisputePeriodSeconds     string             `json:"dispute_period_seconds"`
-	ArbitratorTimeoutSeconds string             `json:"arbitrator_timeout_seconds"`
-	Token                    string             `json:"token,omitempty"`
-	ServiceTier              int                `json:"service_tier,omitempty"`
-	Milestones               []milestonePayload `json:"milestones,omitempty"`
-	BackupWorker             string             `json:"backup_worker,omitempty"`
-	BackupDeadlineExtension  string             `json:"backup_deadline_extension,omitempty"`
-	ZKVerifier               string             `json:"zk_verifier,omitempty"`
-	CircuitID                string             `json:"circuit_id,omitempty"`
-	ParentEscrowID           *int64             `json:"parent_escrow_id,omitempty"`
-}
-
-type milestonePayload struct {
-	Amount             string `json:"amount"`
-	SubmissionDeadline string `json:"submission_deadline"`
-}
+type CreateEscrowPayload = escrowservice.CreateEscrowRequest
 
 type UpdateCheckoutRequest struct {
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
