@@ -102,8 +102,8 @@ func TestMilestoneAndStakeHelpers(t *testing.T) {
 	if _, err := validateMilestoneIndex(2, nil); err == nil {
 		t.Fatal("expected required milestone index error for multi-milestone escrow")
 	}
-	if _, err := validateOptionalMilestoneIndex(1, nil); err != nil {
-		t.Fatalf("expected optional nil index to succeed, got %v", err)
+	if _, err := validateMilestoneIndex(1, &idx); !IsValidation(err) {
+		t.Fatalf("expected a supplied index to be rejected for single-milestone escrow, got %v", err)
 	}
 }
 

@@ -125,6 +125,14 @@ func (c *Client) EscalateSilence(ctx context.Context, escrow common.Address, rea
 	return c.SendTx(ctx, escrow, data, nil)
 }
 
+func (c *Client) ExpireNoQuorum(ctx context.Context, escrow common.Address, reasonURI string) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("expireNoQuorum", reasonURI)
+	if err != nil {
+		return nil, fmt.Errorf("pack expireNoQuorum: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, nil)
+}
+
 func (c *Client) ResolveDispute(ctx context.Context, escrow common.Address, workerAwardBps uint16, resolutionURI string) (*types.Transaction, error) {
 	data, err := EscrowABI.Pack("resolveDispute", workerAwardBps, resolutionURI)
 	if err != nil {
@@ -150,26 +158,60 @@ func (c *Client) ClaimArbitratorTimeout(ctx context.Context, escrow common.Addre
 }
 
 func (c *Client) Status(ctx context.Context, escrow common.Address) (uint8, error) {
-	data, err := EscrowABI.Pack("status")
+	return c.readEscrowUint8(ctx, escrow, "status")
+}
+
+// MilestoneCount reads the immutable milestone count from the contract.
+func (c *Client) MilestoneCount(ctx context.Context, escrow common.Address) (uint8, error) {
+	return c.readEscrowUint8(ctx, escrow, "milestoneCount")
+}
+
+func (c *Client) readEscrowUint8(ctx context.Context, escrow common.Address, getter string) (uint8, error) {
+	data, err := EscrowABI.Pack(getter)
 	if err != nil {
-		return 0, fmt.Errorf("pack status: %w", err)
+		return 0, fmt.Errorf("pack %s: %w", getter, err)
 	}
 	result, err := c.CallContract(ctx, escrow, data)
 	if err != nil {
-		return 0, fmt.Errorf("call status: %w", err)
+		return 0, fmt.Errorf("call %s: %w", getter, err)
 	}
-	values, err := EscrowABI.Unpack("status", result)
+	values, err := EscrowABI.Unpack(getter, result)
 	if err != nil {
-		return 0, fmt.Errorf("unpack status: %w", err)
+		return 0, fmt.Errorf("unpack %s: %w", getter, err)
 	}
-	status, ok := values[0].(uint8)
+	if len(values) != 1 {
+		return 0, fmt.Errorf("unexpected %s result length: %d", getter, len(values))
+	}
+	value, ok := values[0].(uint8)
 	if !ok {
-		return 0, fmt.Errorf("unexpected status type: %T", values[0])
+		return 0, fmt.Errorf("unexpected %s type: %T", getter, values[0])
 	}
-	return status, nil
+	return value, nil
 }
 
 // Milestone-specific operations (V2 multi-milestone)
+
+// MilestoneStatus reads the state of a milestone from the contract.
+func (c *Client) MilestoneStatus(ctx context.Context, escrow common.Address, milestoneIndex uint8) (uint8, error) {
+	const getter = "milestones"
+	data, err := EscrowABI.Pack(getter, big.NewInt(int64(milestoneIndex)))
+	if err != nil {
+		return 0, fmt.Errorf("pack milestones: %w", err)
+	}
+	result, err := c.CallContract(ctx, escrow, data)
+	if err != nil {
+		return 0, fmt.Errorf("call milestones: %w", err)
+	}
+	fields := make(map[string]any)
+	if err := EscrowABI.Methods[getter].Outputs.UnpackIntoMap(fields, result); err != nil {
+		return 0, fmt.Errorf("unpack milestones: %w", err)
+	}
+	status, ok := fields["status"].(uint8)
+	if !ok {
+		return 0, fmt.Errorf("unexpected milestone status type: %T", fields["status"])
+	}
+	return status, nil
+}
 
 func (c *Client) SubmitMilestone(ctx context.Context, escrow common.Address, milestoneIndex uint8, submissionHash [32]byte, submissionURI string, proofHash [32]byte) (*types.Transaction, error) {
 	data, err := EscrowABI.Pack("submitMilestone", milestoneIndex, submissionHash, submissionURI, proofHash)
@@ -215,6 +257,14 @@ func (c *Client) EscalateMilestoneSilence(ctx context.Context, escrow common.Add
 	data, err := EscrowABI.Pack("escalateMilestoneSilence", milestoneIndex, reasonURI)
 	if err != nil {
 		return nil, fmt.Errorf("pack escalateMilestoneSilence: %w", err)
+	}
+	return c.SendTx(ctx, escrow, data, nil)
+}
+
+func (c *Client) ExpireMilestoneNoQuorum(ctx context.Context, escrow common.Address, milestoneIndex uint8, reasonURI string) (*types.Transaction, error) {
+	data, err := EscrowABI.Pack("expireMilestoneNoQuorum", milestoneIndex, reasonURI)
+	if err != nil {
+		return nil, fmt.Errorf("pack expireMilestoneNoQuorum: %w", err)
 	}
 	return c.SendTx(ctx, escrow, data, nil)
 }

@@ -1063,62 +1063,55 @@ func (s *Service) ResolveDispute(ctx context.Context, escrow *storage.Escrow, wo
 	return tx.Hash().Hex(), nil
 }
 
+// These values mirror the Status and MilestoneStatus enums in TaskEscrow.sol.
+type recoveryState struct {
+	code uint8
+	name string
+}
+
+type recoveryAction struct {
+	name           string
+	escrowState    recoveryState
+	milestoneState recoveryState
+	send           func(context.Context, common.Address) (*types.Transaction, error)
+	sendMilestone  func(context.Context, common.Address, uint8) (*types.Transaction, error)
+}
+
 func (s *Service) ClaimTimeoutRefund(ctx context.Context, escrow *storage.Escrow, milestoneIndex *int) (string, error) {
-	resolvedMilestone, err := validateOptionalMilestoneIndex(escrow.MilestoneCount, milestoneIndex)
-	if err != nil {
-		return "", err
-	}
-	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
-	if err != nil {
-		return "", err
-	}
-	if resolvedMilestone != nil {
-		msIdxU8, convErr := numconv.IntToUint8(*resolvedMilestone, "milestone_index")
-		if convErr != nil {
-			return "", convErr
-		}
-		tx, err := s.Chain.ClaimMilestoneTimeoutRefund(ctx, addr, msIdxU8)
-		if err != nil {
-			return "", fmt.Errorf("claim milestone timeout refund: %w", err)
-		}
-		s.runIndexerOnce(ctx)
-		return tx.Hash().Hex(), nil
-	}
-	tx, err := s.Chain.ClaimTimeoutRefund(ctx, addr)
-	if err != nil {
-		return "", fmt.Errorf("claim timeout refund: %w", err)
-	}
-	s.runIndexerOnce(ctx)
-	return tx.Hash().Hex(), nil
+	return s.recoverEscrow(ctx, escrow, milestoneIndex, recoveryAction{
+		name:           "claim timeout refund",
+		escrowState:    recoveryState{1, "funded"},
+		milestoneState: recoveryState{0, "pending"},
+		send:           s.Chain.ClaimTimeoutRefund,
+		sendMilestone:  s.Chain.ClaimMilestoneTimeoutRefund,
+	})
 }
 
 func (s *Service) ClaimArbitratorTimeout(ctx context.Context, escrow *storage.Escrow, milestoneIndex *int) (string, error) {
-	resolvedMilestone, err := validateOptionalMilestoneIndex(escrow.MilestoneCount, milestoneIndex)
-	if err != nil {
-		return "", err
+	return s.recoverEscrow(ctx, escrow, milestoneIndex, recoveryAction{
+		name:           "claim arbitrator timeout",
+		escrowState:    recoveryState{4, "disputed"},
+		milestoneState: recoveryState{3, "disputed"},
+		send:           s.Chain.ClaimArbitratorTimeout,
+		sendMilestone:  s.Chain.ClaimMilestoneArbitratorTimeout,
+	})
+}
+
+func (s *Service) ExpireNoQuorum(ctx context.Context, escrow *storage.Escrow, milestoneIndex *int, reasonURI string) (string, error) {
+	if len(reasonURI) > 2048 {
+		return "", fmt.Errorf("%w: reason_uri must be at most 2048 bytes", ErrValidation)
 	}
-	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
-	if err != nil {
-		return "", err
-	}
-	if resolvedMilestone != nil {
-		msIdxU8, convErr := numconv.IntToUint8(*resolvedMilestone, "milestone_index")
-		if convErr != nil {
-			return "", convErr
-		}
-		tx, err := s.Chain.ClaimMilestoneArbitratorTimeout(ctx, addr, msIdxU8)
-		if err != nil {
-			return "", fmt.Errorf("claim milestone arbitrator timeout: %w", err)
-		}
-		s.runIndexerOnce(ctx)
-		return tx.Hash().Hex(), nil
-	}
-	tx, err := s.Chain.ClaimArbitratorTimeout(ctx, addr)
-	if err != nil {
-		return "", fmt.Errorf("claim arbitrator timeout: %w", err)
-	}
-	s.runIndexerOnce(ctx)
-	return tx.Hash().Hex(), nil
+	return s.recoverEscrow(ctx, escrow, milestoneIndex, recoveryAction{
+		name:           "expire no quorum",
+		escrowState:    recoveryState{2, "submitted"},
+		milestoneState: recoveryState{1, "submitted"},
+		send: func(ctx context.Context, addr common.Address) (*types.Transaction, error) {
+			return s.Chain.ExpireNoQuorum(ctx, addr, reasonURI)
+		},
+		sendMilestone: func(ctx context.Context, addr common.Address, idx uint8) (*types.Transaction, error) {
+			return s.Chain.ExpireMilestoneNoQuorum(ctx, addr, idx, reasonURI)
+		},
+	})
 }
 
 func (s *Service) CancelBeforeFunding(ctx context.Context, escrow *storage.Escrow) (string, error) {
@@ -1126,12 +1119,82 @@ func (s *Service) CancelBeforeFunding(ctx context.Context, escrow *storage.Escro
 	if err != nil {
 		return "", err
 	}
+	if err := s.requireRecoveryState(ctx, addr, recoveryState{0, "created"}); err != nil {
+		return "", err
+	}
 	tx, err := s.Chain.CancelBeforeFunding(ctx, addr)
+	return s.confirmRecovery(ctx, "cancel before funding", tx, err)
+}
+
+func (s *Service) recoverEscrow(ctx context.Context, escrow *storage.Escrow, milestoneIndex *int, action recoveryAction) (string, error) {
+	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
 	if err != nil {
-		return "", fmt.Errorf("cancel before funding: %w", err)
+		return "", err
+	}
+	// Indexed escrow records can default to one milestone before full reconciliation.
+	count, err := s.Chain.MilestoneCount(ctx, addr)
+	if err != nil {
+		return "", fmt.Errorf("read escrow milestone count: %w", err)
+	}
+	if count == 0 {
+		return "", errors.New("invalid on-chain escrow milestone count: 0")
+	}
+	index, err := validateMilestoneIndex(int(count), milestoneIndex)
+	if err != nil {
+		return "", err
+	}
+	if index == nil {
+		if err := s.requireRecoveryState(ctx, addr, action.escrowState); err != nil {
+			return "", err
+		}
+		tx, err := action.send(ctx, addr)
+		return s.confirmRecovery(ctx, action.name, tx, err)
+	}
+
+	idx, err := numconv.IntToUint8(*index, "milestone_index")
+	if err != nil {
+		return "", err
+	}
+	if err := s.requireRecoveryState(ctx, addr, recoveryState{1, "funded"}); err != nil {
+		return "", err
+	}
+	state, err := s.Chain.MilestoneStatus(ctx, addr, idx)
+	if err != nil {
+		return "", fmt.Errorf("read milestone %d status: %w", idx, err)
+	}
+	if state != action.milestoneState.code {
+		return "", fmt.Errorf("%w: milestone %d must be %s", ErrValidation, idx, action.milestoneState.name)
+	}
+	// The contract also checks the current milestone, signer, and deadline.
+	tx, err := action.sendMilestone(ctx, addr, idx)
+	return s.confirmRecovery(ctx, action.name, tx, err)
+}
+
+func (s *Service) requireRecoveryState(ctx context.Context, addr common.Address, want recoveryState) error {
+	state, err := s.Chain.Status(ctx, addr)
+	if err != nil {
+		return fmt.Errorf("read escrow status: %w", err)
+	}
+	if state != want.code {
+		return fmt.Errorf("%w: escrow must be %s", ErrValidation, want.name)
+	}
+	return nil
+}
+
+func (s *Service) confirmRecovery(ctx context.Context, action string, tx *types.Transaction, sendErr error) (string, error) {
+	if sendErr != nil {
+		return "", fmt.Errorf("%s: %w", action, sendErr)
+	}
+	hash := tx.Hash()
+	receipt, err := chain.WaitMined(ctx, s.Chain, hash)
+	if err != nil {
+		return "", fmt.Errorf("%s: wait for transaction %s: %w", action, hash.Hex(), err)
+	}
+	if receipt.Status != types.ReceiptStatusSuccessful {
+		return "", fmt.Errorf("%s: transaction %s reverted", action, hash.Hex())
 	}
 	s.runIndexerOnce(ctx)
-	return tx.Hash().Hex(), nil
+	return hash.Hex(), nil
 }
 
 func (s *Service) AbortRemainingMilestones(ctx context.Context, escrow *storage.Escrow) (string, error) {
@@ -1183,19 +1246,6 @@ func validateMilestoneIndex(milestoneCount int, milestoneIndex *int) (*int, erro
 		return nil, fmt.Errorf("%w: milestone_index is not valid for single-milestone escrows", ErrValidation)
 	}
 	return nil, nil
-}
-
-func validateOptionalMilestoneIndex(milestoneCount int, milestoneIndex *int) (*int, error) {
-	if milestoneIndex == nil {
-		return nil, nil
-	}
-	if milestoneCount <= 1 {
-		return nil, fmt.Errorf("%w: milestone_index is not valid for single-milestone escrows", ErrValidation)
-	}
-	if *milestoneIndex < 0 || *milestoneIndex >= milestoneCount {
-		return nil, fmt.Errorf("%w: milestone_index %d out of range [0, %d)", ErrValidation, *milestoneIndex, milestoneCount)
-	}
-	return milestoneIndex, nil
 }
 
 type validatedAttestationChain struct {

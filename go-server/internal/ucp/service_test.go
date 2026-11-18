@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
@@ -111,6 +112,43 @@ func TestUpdateCheckoutFund(t *testing.T) {
 	}
 	if len(mock.SentTxs) == 0 || mock.SentTxs[0].Method != "fund" {
 		t.Fatalf("expected mock fund tx, got: %+v", mock.SentTxs)
+	}
+}
+
+func TestCancelCheckoutRequiresMilestoneIndexFromChain(t *testing.T) {
+	for _, tc := range []struct {
+		status      string
+		chainStatus uint8
+	}{
+		{"funded", 1},
+		{"disputed", 4},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			svc, db, mock, cleanup := newUCPTestService(t)
+			defer cleanup()
+			ctx := t.Context()
+			escrowID := createTestEscrow(ctx, t, db, tc.status)
+			mock.MilestoneCountVal = 2 // The SQLite record has the default count of one.
+			mock.StatusVal = tc.chainStatus
+			checkout, err := svc.CreateCheckout(ctx, CreateCheckoutRequest{EscrowID: &escrowID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			escrow, err := db.GetEscrow(ctx, escrowID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if escrow.MilestoneCount != 1 {
+				t.Fatalf("stored milestone count = %d, want 1", escrow.MilestoneCount)
+			}
+			_, err = svc.CancelCheckout(ctx, checkout.CheckoutID, CancelCheckoutRequest{})
+			if !errors.Is(err, escrowservice.ErrValidation) || !strings.Contains(err.Error(), "milestone_index required for multi-milestone escrow") {
+				t.Fatalf("unexpected cancellation error: %v", err)
+			}
+			if len(mock.SentTxs) != 0 {
+				t.Fatalf("unexpected transactions: %+v", mock.SentTxs)
+			}
+		})
 	}
 }
 

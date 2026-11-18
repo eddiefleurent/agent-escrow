@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/big"
 	"net/http"
@@ -506,6 +507,49 @@ func (h *Handlers) ResolveDispute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
+}
+
+type recoveryRequest struct {
+	MilestoneIndex *int   `json:"milestone_index,omitempty"`
+	ReasonURI      string `json:"reason_uri,omitempty"`
+}
+
+func (h *Handlers) recoveryHandler(action string, milestone bool, run func(context.Context, *storage.Escrow, recoveryRequest) (string, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+			return
+		}
+		var req recoveryRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+			return
+		}
+		if milestone && req.MilestoneIndex == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "milestone_index is required"})
+			return
+		}
+		if !milestone && req.MilestoneIndex != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "use a milestone recovery route with milestone_index"})
+			return
+		}
+		escrow, err := h.db.GetEscrow(r.Context(), id)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		if err != nil {
+			handleEscrowServiceActionError(w, r, action, id, err)
+			return
+		}
+		txHash, err := run(r.Context(), escrow, req)
+		if err != nil {
+			handleEscrowServiceActionError(w, r, action, id, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"tx_hash": txHash})
+	}
 }
 
 func (h *Handlers) AbortRemainingMilestones(w http.ResponseWriter, r *http.Request) {

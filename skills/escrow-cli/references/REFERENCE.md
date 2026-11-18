@@ -129,6 +129,27 @@ POST /api/v1/escrows/{id}/resolve
 
 Fields: `worker_award_bps` (required, string, 0-10000), `resolution_uri` (required), `milestone_index` (optional, int)
 
+#### Fund recovery
+
+All commands take the local escrow ID and send a `POST` to the matching
+`/api/v1/escrows/{id}/<command>` route. A successful response includes
+`tx_hash` after the transaction is mined successfully.
+
+| CLI command | JSON payload | When to use it |
+|---|---|---|
+| `escrow cancel <id>` | No body | Buyer cancels an unfunded escrow. |
+| `escrow claim-timeout <id>` | No body | Buyer claims a refund after the submission deadline on a funded single-milestone escrow. |
+| `escrow claim-arbitrator-timeout <id>` | No body | Buyer claims a refund after the arbitrator deadline on a disputed single-milestone escrow. |
+| `escrow expire-no-quorum <id>` | `{}` or `{"reason_uri":"ipfs://..."}` | Buyer, active worker, or panel verifier moves an expired single-milestone review to dispute. |
+| `escrow claim-milestone-timeout <id>` | `{"milestone_index":0}` | Buyer claims a refund for the current pending milestone after its submission deadline. |
+| `escrow claim-milestone-arbitrator-timeout <id>` | `{"milestone_index":0}` | Buyer claims a refund for the current disputed milestone after its arbitrator deadline. |
+| `escrow expire-milestone-no-quorum <id>` | `{"milestone_index":0}` with optional `reason_uri` | Buyer, active worker, or panel verifier moves the current milestone to dispute after its review and dispute windows expire. |
+
+Pass JSON payloads with `--data` or `--data-file`. Milestone recovery on
+multi-milestone escrows requires the zero-based index of the current milestone.
+No-quorum expiry refunds unsettled verifier stakes and opens a dispute for the
+arbitrator to resolve.
+
 #### `escrow abort <id>`
 
 ```

@@ -67,6 +67,31 @@ Start the server:
 make go-run
 ```
 
+### Fund Recovery
+
+Use the buyer's signing key for cancellation and timeout refunds. The buyer,
+active worker, or a panel verifier can move a review that expired without quorum
+to dispute. Run the CLI against the server configured with the eligible signer's
+key.
+
+```bash
+escrow-cli escrow cancel "$ESCROW_ID"
+escrow-cli escrow claim-timeout "$ESCROW_ID"
+escrow-cli escrow claim-arbitrator-timeout "$ESCROW_ID"
+escrow-cli escrow expire-no-quorum "$ESCROW_ID" --data '{}'
+escrow-cli escrow claim-milestone-timeout "$ESCROW_ID" --data '{"milestone_index":0}'
+escrow-cli escrow claim-milestone-arbitrator-timeout "$ESCROW_ID" --data '{"milestone_index":0}'
+escrow-cli escrow expire-milestone-no-quorum "$ESCROW_ID" --data '{"milestone_index":0}'
+```
+
+The HTTP routes use the same action names under `POST /api/v1/escrows/{id}/`.
+MCP provides `cancel_before_funding`, `claim_timeout_refund`,
+`claim_arbitrator_timeout`, `expire_no_quorum`, `claim_milestone_timeout_refund`,
+`claim_milestone_arbitrator_timeout`, and `expire_milestone_no_quorum`.
+HTTP and CLI use the local database ID. MCP also accepts the escrow contract
+address. For milestone actions, supply the zero-based index of the current
+milestone. The expiry actions accept an optional `reason_uri`.
+
 ### Admin Access and CORS
 
 - HTTP emergency routes and DCT emergency override are disabled by default. To enable them, set `EMERGENCY_ENABLED=true` and provision `ADMIN_TOKEN` from your secret store. Generate a random token with `openssl rand -hex 32`. Startup rejects tokens shorter than 32 characters when HTTP emergency routes are enabled.
