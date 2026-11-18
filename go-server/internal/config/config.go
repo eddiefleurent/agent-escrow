@@ -28,6 +28,7 @@ type Config struct {
 	TxTimeout      time.Duration // Timeout for chain transaction requests (default 90s)
 	LogChunkSize   uint64        // Max block range per eth_getLogs request (default 2000)
 	StartBlock     uint64        // Block to start indexing from (0 = use defaultLookback)
+	Confirmations  uint64        // Blocks the indexer stays behind the head (0 = index the head)
 	// RebidCooldownSeconds enforces minimum delay between parent-linked RFQ creations.
 	// 0 disables the cooldown gate.
 	RebidCooldownSeconds int64
@@ -146,6 +147,15 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("invalid START_BLOCK: %w", err)
 		}
 		startBlock = v
+	}
+
+	var confirmations uint64
+	if raw := os.Getenv("CONFIRMATIONS"); raw != "" {
+		v, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CONFIRMATIONS: %w", err)
+		}
+		confirmations = v
 	}
 
 	rebidCooldownSeconds := int64(0)
@@ -306,6 +316,7 @@ func Load() (*Config, error) {
 		TxTimeout:               txTimeout,
 		LogChunkSize:            logChunkSize,
 		StartBlock:              startBlock,
+		Confirmations:           confirmations,
 		RebidCooldownSeconds:    rebidCooldownSeconds,
 		ReputationDampingFactor: reputationDampingFactor,
 		ComplexityFloor:         complexityFloor,

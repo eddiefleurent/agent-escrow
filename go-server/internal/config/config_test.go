@@ -31,6 +31,7 @@ func clearEnv(t *testing.T) {
 		"REQUEST_TIMEOUT", "TX_TIMEOUT",
 		"COMPLEXITY_FLOOR", "REBID_COOLDOWN_SECONDS", "REPUTATION_DAMPING_FACTOR",
 		"UCP_ENABLED", "UCP_BASE_URL", "UCP_PROVIDER_NAME",
+		"CONFIRMATIONS",
 	} {
 		os.Unsetenv(key)
 	}
@@ -48,6 +49,32 @@ func TestLoad_OfflineMode(t *testing.T) {
 	}
 	if cfg.Online() {
 		t.Error("expected Online() == false in offline mode")
+	}
+}
+
+func TestLoad_Confirmations(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if cfg.Confirmations != 0 {
+		t.Fatalf("expected default confirmations 0, got %d", cfg.Confirmations)
+	}
+
+	t.Setenv("CONFIRMATIONS", "12")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if cfg.Confirmations != 12 {
+		t.Fatalf("expected confirmations 12, got %d", cfg.Confirmations)
+	}
+
+	t.Setenv("CONFIRMATIONS", "-1")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "CONFIRMATIONS") {
+		t.Fatalf("expected CONFIRMATIONS error, got: %v", err)
 	}
 }
 
