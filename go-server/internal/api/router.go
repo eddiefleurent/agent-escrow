@@ -25,8 +25,14 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 	}
 
 	mux := http.NewServeMux()
+	// Admin routes get their own pre-auth limiter on every method, so token
+	// guessing against admin GETs is throttled like any write. It is separate
+	// from the mutating-request limiter so admin probes and normal writes do
+	// not drain each other's budget.
+	adminLimiter := newRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst)
 	handleAdmin := func(pattern string, handler http.HandlerFunc) {
-		mux.HandleFunc(pattern, requireAdmin(cfg.AdminToken, cfg.OwnerAddress, handler))
+		mux.HandleFunc(pattern, requireRateLimit(adminLimiter, cfg.TrustedProxies,
+			requireAdmin(cfg.AdminToken, cfg.OwnerAddress, handler)))
 	}
 
 	mux.HandleFunc("GET /api/v1/health", h.Health)
@@ -147,14 +153,17 @@ func NewRouter(db *storage.DB, chainClient chain.ChainClient, idx *indexer.Index
 		mux.HandleFunc("POST /api/v1/ucp/checkouts/{checkout_id}/cancel", ucpHandler.CancelCheckout)
 	}
 
+	// Outermost first: recovery, request ID, logging, CORS, rate limit,
+	// body cap, timeout. Request ID precedes logging so the access line and
+	// JSON error bodies both carry it. CORS precedes the 429/413 guards so an
+	// allowed browser origin can read those errors and their headers. The
+	// rate limit precedes the body cap so throttled requests are rejected
+	// before their body is buffered.
 	var handler http.Handler = mux
 	handler = timeoutMiddleware(cfg.RequestTimeout, cfg.TxTimeout, handler)
-	handler = corsMiddleware(cfg.CORSOrigins, handler)
-	// Outermost first: recovery, request ID, logging, body cap, rate limit.
-	// Request ID is installed before logging so the access line and JSON
-	// error bodies can both carry it.
-	handler = rateLimitMiddleware(cfg.RateLimitRPS, cfg.RateLimitBurst, cfg.TrustedProxies, handler)
 	handler = bodyLimitMiddleware(cfg.MaxBodyBytes, handler)
+	handler = rateLimitMiddleware(newRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst), cfg.TrustedProxies, handler)
+	handler = corsMiddleware(cfg.CORSOrigins, handler)
 	handler = loggingMiddleware(handler)
 	handler = requestIDMiddleware(handler)
 	handler = recoveryMiddleware(handler)

@@ -569,7 +569,7 @@
       "paper_refs": [
         "4.9"
       ],
-      "decision_vs_paper": "Per-client-IP token bucket on mutating HTTP methods, keyed by RemoteAddr unless the peer is in TRUSTED_PROXIES. SSE and WebSocket are exempt. Setting RATE_LIMIT_RPS or RATE_LIMIT_BURST to 0 disables the limit.",
+      "decision_vs_paper": "Per-client-IP token bucket on mutating HTTP methods, keyed by RemoteAddr unless the peer is in TRUSTED_PROXIES, in which case X-Forwarded-For is walked right to left to the first untrusted hop. IPv6 is bucketed by /64. Admin routes are limited on every method before authentication. At table capacity, unseen clients share one overflow bucket. Setting RATE_LIMIT_RPS or RATE_LIMIT_BURST to 0 disables the limit.",
       "residual_gap": "No material gap for SH2 scope."
     },
     {
@@ -591,7 +591,7 @@
       "paper_refs": [
         "4.9"
       ],
-      "decision_vs_paper": "Echo a validated X-Request-ID or a generated UUID on every response, store it with authz.WithRequestID, and include it on the request log line and in JSON error bodies.",
+      "decision_vs_paper": "Echo a validated X-Request-ID or a generated UUID on every response, store it with authz.WithRequestID, add it to request-path log records through a context-aware slog handler, and include it in JSON error bodies, A2A JSON-RPC error data, and the WebSocket upgrade response.",
       "residual_gap": "No material gap for SH4 scope."
     },
     {

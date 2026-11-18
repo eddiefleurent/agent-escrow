@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/authz"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/bidding"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
@@ -74,7 +75,7 @@ func (h *Handlers) CreateEscrow(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": validationMessage(err)})
 			return
 		}
-		slog.Error("create escrow failed", "method", r.Method, "path", r.URL.Path, "error", err)
+		slog.ErrorContext(r.Context(), "create escrow failed", "method", r.Method, "path", r.URL.Path, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
@@ -107,7 +108,7 @@ func (h *Handlers) GetEscrow(w http.ResponseWriter, r *http.Request) {
 	if escrow.MilestoneCount > 1 {
 		milestones, err := h.db.GetMilestonesByEscrow(r.Context(), id)
 		if err != nil {
-			slog.Error("failed to fetch milestones", "escrow_id", id, "error", err)
+			slog.ErrorContext(r.Context(), "failed to fetch milestones", "escrow_id", id, "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch milestones"})
 			return
 		}
@@ -117,7 +118,7 @@ func (h *Handlers) GetEscrow(w http.ResponseWriter, r *http.Request) {
 	// Include attestation chain summary if present.
 	chains, chainErr := h.db.GetAttestationChainsByEscrow(r.Context(), id)
 	if chainErr != nil {
-		slog.Error("failed to fetch optional attestation_chains for escrow response", "escrow_id", id, "result_key", "attestation_chains", "error", chainErr)
+		slog.ErrorContext(r.Context(), "failed to fetch optional attestation_chains for escrow response", "escrow_id", id, "result_key", "attestation_chains", "error", chainErr)
 	} else if len(chains) > 0 {
 		result["attestation_chains"] = chains
 	}
@@ -125,7 +126,7 @@ func (h *Handlers) GetEscrow(w http.ResponseWriter, r *http.Request) {
 	// Include child escrow count for delegation visibility.
 	children, childErr := h.db.ListChildEscrows(r.Context(), id)
 	if childErr != nil {
-		slog.Error("failed to fetch optional child_escrow_ids for escrow response", "escrow_id", id, "result_key", "child_escrow_ids", "error", childErr)
+		slog.ErrorContext(r.Context(), "failed to fetch optional child_escrow_ids for escrow response", "escrow_id", id, "result_key", "child_escrow_ids", "error", childErr)
 	} else if len(children) > 0 {
 		childIDs := make([]int64, len(children))
 		for i, c := range children {
@@ -168,7 +169,7 @@ func (h *Handlers) GetAttestationChain(w http.ResponseWriter, r *http.Request) {
 	for _, ac := range chains {
 		links, linkErr := h.db.GetAttestationLinksByChain(r.Context(), ac.ID)
 		if linkErr != nil {
-			slog.Error("failed to fetch attestation links", "chain_id", ac.ID, "error", linkErr)
+			slog.ErrorContext(r.Context(), "failed to fetch attestation links", "chain_id", ac.ID, "error", linkErr)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch attestation links"})
 			return
 		}
@@ -210,7 +211,7 @@ func (h *Handlers) ListEscrows(w http.ResponseWriter, r *http.Request) {
 
 	escrows, err := h.db.ListEscrows(r.Context(), role, address, status)
 	if err != nil {
-		slog.Error("list escrows failed", "error", err)
+		slog.ErrorContext(r.Context(), "list escrows failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
@@ -565,7 +566,7 @@ func (h *Handlers) GetReputation(w http.ResponseWriter, r *http.Request) {
 	if role != "" {
 		view, err := h.db.GetReputationView(r.Context(), addr, role, h.cfg.ReputationDampingFactor)
 		if err != nil {
-			slog.Error("GetReputation DB error", "address", addr, "role", role, "error", err)
+			slog.ErrorContext(r.Context(), "GetReputation DB error", "address", addr, "role", role, "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 			return
 		}
@@ -575,7 +576,7 @@ func (h *Handlers) GetReputation(w http.ResponseWriter, r *http.Request) {
 
 	views, err := h.db.GetReputationViewsByAddress(r.Context(), addr, h.cfg.ReputationDampingFactor)
 	if err != nil {
-		slog.Error("GetReputationByAddress DB error", "address", addr, "error", err)
+		slog.ErrorContext(r.Context(), "GetReputationByAddress DB error", "address", addr, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
@@ -658,7 +659,7 @@ func (h *Handlers) ListDecompositions(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	items, err := h.decompositionService().ListDecompositions(r.Context(), buyer, status)
 	if err != nil {
-		slog.Error("list decompositions failed", "error", err)
+		slog.ErrorContext(r.Context(), "list decompositions failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
@@ -679,7 +680,7 @@ func (h *Handlers) GetDecomposition(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		} else {
-			slog.Error("get decomposition failed", "error", err)
+			slog.ErrorContext(r.Context(), "get decomposition failed", "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		}
 		return
@@ -942,7 +943,7 @@ func (h *Handlers) ListRFQs(w http.ResponseWriter, r *http.Request) {
 
 	rfqs, err := h.db.ListRFQs(r.Context(), status, buyer)
 	if err != nil {
-		slog.Error("list rfqs failed", "error", err)
+		slog.ErrorContext(r.Context(), "list rfqs failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
@@ -963,13 +964,13 @@ func (h *Handlers) GetRFQ(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 			return
 		}
-		slog.Error("failed to fetch rfq", "rfq_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "failed to fetch rfq", "rfq_id", id, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch rfq"})
 		return
 	}
 	if rfq.BiddingMode == "sealed" && time.Now().Unix() > rfq.RevealDeadline {
 		if _, err := h.biddingService().FinalizeSealedBidding(r.Context(), rfq.ID); err != nil {
-			slog.Error("failed to finalize sealed bidding", "rfq_id", id, "error", err)
+			slog.ErrorContext(r.Context(), "failed to finalize sealed bidding", "rfq_id", id, "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to finalize sealed bidding"})
 			return
 		}
@@ -979,7 +980,7 @@ func (h *Handlers) GetRFQ(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 				return
 			}
-			slog.Error("failed to refetch rfq after sealed bidding finalization", "rfq_id", id, "error", err)
+			slog.ErrorContext(r.Context(), "failed to refetch rfq after sealed bidding finalization", "rfq_id", id, "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch rfq"})
 			return
 		}
@@ -988,14 +989,14 @@ func (h *Handlers) GetRFQ(w http.ResponseWriter, r *http.Request) {
 
 	bids, err := h.db.ListBidsByRFQ(r.Context(), id)
 	if err != nil {
-		slog.Error("failed to fetch bids for rfq", "rfq_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "failed to fetch bids for rfq", "rfq_id", id, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch bids"})
 		return
 	}
 
 	commits, err := h.db.ListBidCommitsByRFQ(r.Context(), id)
 	if err != nil {
-		slog.Error("failed to fetch bid commits for rfq", "rfq_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "failed to fetch bid commits for rfq", "rfq_id", id, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch bid commits"})
 		return
 	}
@@ -1047,20 +1048,20 @@ func (h *Handlers) CancelRFQ(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.db.UpdateRFQStatus(r.Context(), id, "cancelled"); err != nil {
-		slog.Error("cancel rfq: update status failed", "rfq_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "cancel rfq: update status failed", "rfq_id", id, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 	if err := h.db.RejectPendingBids(r.Context(), id, 0); err != nil {
-		slog.Error("failed to reject pending bids on cancel", "rfq_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "failed to reject pending bids on cancel", "rfq_id", id, "error", err)
 		if rollbackErr := h.db.UpdateRFQStatus(r.Context(), id, "open"); rollbackErr != nil {
-			slog.Error("failed to rollback rfq status after RejectPendingBids failure", "rfq_id", id, "error", rollbackErr)
+			slog.ErrorContext(r.Context(), "failed to rollback rfq status after RejectPendingBids failure", "rfq_id", id, "error", rollbackErr)
 		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("cancel failed: %v", err)})
 		return
 	}
 	if err := h.db.RejectUnacceptedBidCommits(r.Context(), id, 0); err != nil {
-		slog.Error("failed to reject bid commits on cancel", "rfq_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "failed to reject bid commits on cancel", "rfq_id", id, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("cancel failed: %v", err)})
 		return
 	}
@@ -1183,20 +1184,20 @@ func (h *Handlers) ListBids(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		if rfq.BiddingMode == "sealed" && time.Now().Unix() > rfq.RevealDeadline {
 			if _, finalizeErr := h.biddingService().FinalizeSealedBidding(r.Context(), rfqID); finalizeErr != nil {
-				slog.Error("failed to finalize sealed bidding", "rfq_id", rfqID, "error", finalizeErr)
+				slog.ErrorContext(r.Context(), "failed to finalize sealed bidding", "rfq_id", rfqID, "error", finalizeErr)
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to finalize sealed bidding"})
 				return
 			}
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
-		slog.Error("failed to fetch rfq in list bids", "rfq_id", rfqID, "error", err)
+		slog.ErrorContext(r.Context(), "failed to fetch rfq in list bids", "rfq_id", rfqID, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch rfq"})
 		return
 	}
 
 	bids, err := h.db.ListBidsByRFQ(r.Context(), rfqID)
 	if err != nil {
-		slog.Error("list bids failed", "error", err)
+		slog.ErrorContext(r.Context(), "list bids failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
@@ -1249,7 +1250,7 @@ func (h *Handlers) AcceptBid(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) writeEmergencyRecordingError(
 	w http.ResponseWriter, r *http.Request, txHash, operation string, err error,
 ) {
-	slog.Error("emergency action recorded on-chain but local persistence failed",
+	slog.ErrorContext(r.Context(), "emergency action recorded on-chain but local persistence failed",
 		"operation", operation,
 		"path", r.URL.Path,
 		"method", r.Method,
@@ -1604,7 +1605,7 @@ func (h *Handlers) CommitCheckpoint(w http.ResponseWriter, r *http.Request) {
 		MetadataJSON:     req.MetadataJSON,
 	})
 	if err != nil {
-		slog.Error("failed to create checkpoint", "escrow_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "failed to create checkpoint", "escrow_id", id, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create checkpoint"})
 		return
 	}
@@ -1645,7 +1646,7 @@ func (h *Handlers) ListCheckpoints(w http.ResponseWriter, r *http.Request) {
 
 	checkpoints, err := h.db.ListCheckpointsByEscrow(r.Context(), id, milestoneIndex)
 	if err != nil {
-		slog.Error("failed to list checkpoints", "escrow_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "failed to list checkpoints", "escrow_id", id, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list checkpoints"})
 		return
 	}
@@ -1692,7 +1693,7 @@ func (h *Handlers) GetLatestCheckpoint(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "no checkpoints found"})
 		} else {
-			slog.Error("failed to get latest checkpoint", "escrow_id", id, "error", err)
+			slog.ErrorContext(r.Context(), "failed to get latest checkpoint", "escrow_id", id, "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get latest checkpoint"})
 		}
 		return
@@ -1716,7 +1717,7 @@ func handleEscrowServiceActionError(w http.ResponseWriter, r *http.Request, acti
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": validationMessage(err)})
 		return
 	}
-	slog.Error(
+	slog.ErrorContext(r.Context(),
 		"escrow action failed",
 		"action", action,
 		"escrow_id", escrowID,
@@ -1729,7 +1730,7 @@ func handleEscrowServiceActionError(w http.ResponseWriter, r *http.Request, acti
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	if status >= 400 {
-		v = withRequestID(w, v)
+		v = authz.WithRequestIDField(w.Header(), v)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -1740,26 +1741,4 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 			"request_id", w.Header().Get("X-Request-ID"),
 		)
 	}
-}
-
-// withRequestID copies the echoed X-Request-ID into a JSON error object so
-// clients can correlate the body with the response header.
-func withRequestID(w http.ResponseWriter, v any) any {
-	id := w.Header().Get("X-Request-ID")
-	if id == "" {
-		return v
-	}
-	switch body := v.(type) {
-	case map[string]string:
-		if _, ok := body["error"]; ok && body["request_id"] == "" {
-			body["request_id"] = id
-		}
-	case map[string]any:
-		if _, ok := body["error"]; ok {
-			if _, exists := body["request_id"]; !exists {
-				body["request_id"] = id
-			}
-		}
-	}
-	return v
 }

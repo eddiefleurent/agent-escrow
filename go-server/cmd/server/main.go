@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,19 +16,26 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/events"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/logging"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/mcpserver"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})))
+	slog.SetDefault(newLogger(os.Stderr))
 
 	if err := run(); err != nil {
 		slog.Error("startup failed", "error", err)
 		os.Exit(1)
 	}
+}
+
+// newLogger builds the production JSON logger. Records logged with a
+// request context carry its request_id.
+func newLogger(w io.Writer) *slog.Logger {
+	return slog.New(logging.NewContextHandler(slog.NewJSONHandler(w, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})))
 }
 
 func run() error {

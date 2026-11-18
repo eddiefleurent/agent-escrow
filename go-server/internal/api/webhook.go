@@ -24,9 +24,8 @@ import (
 )
 
 const (
-	signatureHeader    = "X-Hook0-Signature"
-	maxWebhookBodySize = 1 << 20 // 1 MiB
-	maxTimestampAge    = 5 * time.Minute
+	signatureHeader = "X-Hook0-Signature"
+	maxTimestampAge = 5 * time.Minute
 )
 
 // cdpWebhookPayload represents the top-level CDP webhook JSON structure.
@@ -86,46 +85,49 @@ func NewWebhookHandler(idx *indexer.Indexer, secret string, bus *events.EventBus
 // HandleCDPWebhook is the HTTP handler for POST /webhooks/cdp.
 func (wh *WebhookHandler) HandleCDPWebhook(w http.ResponseWriter, r *http.Request) {
 	if wh.secret == "" {
-		slog.Error("webhook: secret is not configured — rejecting request")
+		slog.ErrorContext(r.Context(), "webhook: secret is not configured — rejecting request")
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "webhook secret not configured"})
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxWebhookBodySize))
+	// The router's body cap (MAX_BODY_BYTES) has already bounded and
+	// buffered the body; a second, smaller limit here would silently
+	// truncate it and fail the signature check.
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		slog.Error("webhook: failed to read body", "error", err)
+		slog.ErrorContext(r.Context(), "webhook: failed to read body", "error", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "failed to read body"})
 		return
 	}
 
 	sigHeader := r.Header.Get(signatureHeader)
 	if sigHeader == "" {
-		slog.Warn("webhook: missing signature header")
+		slog.WarnContext(r.Context(), "webhook: missing signature header")
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing signature"})
 		return
 	}
 
 	if !verifyCDPSignature(body, sigHeader, wh.secret, r.Header) {
-		slog.Warn("webhook: invalid signature")
+		slog.WarnContext(r.Context(), "webhook: invalid signature")
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid signature"})
 		return
 	}
 
 	var payload cdpWebhookPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
-		slog.Error("webhook: invalid JSON payload", "error", err)
+		slog.ErrorContext(r.Context(), "webhook: invalid JSON payload", "error", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
 
 	if payload.Type != "onchain.activity.detected" {
-		slog.Info("webhook: ignoring unknown event type", "type", payload.Type)
+		slog.InfoContext(r.Context(), "webhook: ignoring unknown event type", "type", payload.Type)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ignored"})
 		return
 	}
 
 	if err := wh.processWebhookEvent(r.Context(), payload); err != nil {
-		slog.Error("webhook: event processing failed",
+		slog.ErrorContext(r.Context(), "webhook: event processing failed",
 			"event_id", payload.ID,
 			"event_name", payload.Data.EventName,
 			"tx_hash", payload.Data.TransactionHash,
@@ -180,7 +182,7 @@ func (wh *WebhookHandler) processWebhookEvent(ctx context.Context, payload cdpWe
 	case "OutcomeRecorded":
 		handlerErr = wh.handleOutcomeRecorded(ctx, data, blockNum, logIdx)
 	default:
-		slog.Info("webhook: ignoring unhandled factory event", "event_name", data.EventName)
+		slog.InfoContext(ctx, "webhook: ignoring unhandled factory event", "event_name", data.EventName)
 	}
 	if handlerErr != nil {
 		return handlerErr
@@ -296,7 +298,7 @@ func (wh *WebhookHandler) handleEscrowCreated(ctx context.Context, data cdpWebho
 		return fmt.Errorf("create escrow: %w", err)
 	}
 
-	slog.Info("webhook: escrow created",
+	slog.InfoContext(ctx, "webhook: escrow created",
 		"escrow_address", escrowAddr,
 		"escrow_id", escrowID,
 		"buyer", data.Buyer,
@@ -314,7 +316,7 @@ func (wh *WebhookHandler) handleOutcomeRecorded(ctx context.Context, data cdpWeb
 
 	participant := strings.ToLower(common.HexToAddress(data.Participant).Hex())
 
-	slog.Info("webhook: outcome recorded",
+	slog.InfoContext(ctx, "webhook: outcome recorded",
 		"participant", participant,
 		"role", data.Role,
 		"outcome", data.Outcome,

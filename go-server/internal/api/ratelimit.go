@@ -1,35 +1,48 @@
 package api
 
 import (
+	"container/list"
 	"math"
 	"sync"
 	"time"
 )
 
 const (
-	// rateLimitIdleTTL is how long an unused client bucket is kept.
-	rateLimitIdleTTL = 10 * time.Minute
 	// rateLimitMaxBuckets caps the client table so a flood of source
 	// addresses cannot grow it without bound.
 	rateLimitMaxBuckets = 10000
+	// rateLimitSweepPerRequest is how many tracked buckets each request
+	// inspects for reclamation. A small constant keeps cleanup O(1) per
+	// request while still reclaiming faster than new keys can arrive.
+	rateLimitSweepPerRequest = 4
 	// rateLimitMaxRetryAfter caps the Retry-After hint.
 	rateLimitMaxRetryAfter = 3600
 )
 
-// ipRateLimiter is a per-key token bucket.
+// ipRateLimiter is a per-key token bucket with a bounded table.
 //
 // The HTTP edge keeps this small implementation instead of
 // golang.org/x/time/rate. That module is only an indirect dependency, and
-// its limiter has no idle eviction. A private bucket map lets us drop cold
-// clients and cap the table without a new module.
+// its limiter has no notion of a bounded key table.
+//
+// Reclamation rules:
+//   - A bucket is removed only once it has fully refilled. A full bucket is
+//     indistinguishable from a fresh one, so removing it never hands a client
+//     quota it has not earned back.
+//   - Each request inspects at most rateLimitSweepPerRequest buckets in
+//     round-robin order. No request scans the whole table.
+//   - When the table is full and no bucket has refilled, unseen keys share a
+//     single overflow bucket with the normal rate and burst. Rotating source
+//     addresses at capacity therefore cannot exceed that one budget, and
+//     tracked clients keep the quota they already spent.
 type ipRateLimiter struct {
 	rps        float64
 	burst      float64
-	idleTTL    time.Duration
 	maxBuckets int
 	mu         sync.Mutex
-	buckets    map[string]*tokenBucket
-	lastSweep  time.Time
+	buckets    map[string]*list.Element // values are *keyedBucket
+	order      *list.List               // round-robin sweep order
+	overflow   tokenBucket
 	now        func() time.Time
 }
 
@@ -38,19 +51,22 @@ type tokenBucket struct {
 	updated time.Time
 }
 
-func newIPRateLimiter(rps float64, burst int, idleTTL time.Duration, maxBuckets int) *ipRateLimiter {
-	if idleTTL <= 0 {
-		idleTTL = rateLimitIdleTTL
-	}
+type keyedBucket struct {
+	key string
+	tokenBucket
+}
+
+func newIPRateLimiter(rps float64, burst, maxBuckets int) *ipRateLimiter {
 	if maxBuckets <= 0 {
 		maxBuckets = rateLimitMaxBuckets
 	}
 	return &ipRateLimiter{
 		rps:        rps,
 		burst:      float64(burst),
-		idleTTL:    idleTTL,
 		maxBuckets: maxBuckets,
-		buckets:    make(map[string]*tokenBucket),
+		buckets:    make(map[string]*list.Element),
+		order:      list.New(),
+		overflow:   tokenBucket{tokens: float64(burst)},
 		now:        time.Now,
 	}
 }
@@ -62,31 +78,75 @@ func (l *ipRateLimiter) allow(key string) (bool, int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.lastSweep.IsZero() || now.Sub(l.lastSweep) >= time.Second || len(l.buckets) >= l.maxBuckets {
-		l.evictIdle(now)
-		l.lastSweep = now
+	l.sweep(now, rateLimitSweepPerRequest)
+
+	var bucket *tokenBucket
+	if elem, ok := l.buckets[key]; ok && entryOf(elem) != nil {
+		bucket = &entryOf(elem).tokenBucket
+	} else if len(l.buckets) < l.maxBuckets {
+		kb := &keyedBucket{key: key, tokenBucket: tokenBucket{tokens: l.burst, updated: now}}
+		l.buckets[key] = l.order.PushBack(kb)
+		bucket = &kb.tokenBucket
+	} else {
+		bucket = &l.overflow
 	}
 
-	bucket, ok := l.buckets[key]
-	if !ok {
-		for len(l.buckets) >= l.maxBuckets {
-			l.evictOldest()
-		}
-		bucket = &tokenBucket{tokens: l.burst, updated: now}
-		l.buckets[key] = bucket
-	} else if elapsed := now.Sub(bucket.updated).Seconds(); elapsed > 0 {
-		bucket.tokens += elapsed * l.rps
-		if bucket.tokens > l.burst {
-			bucket.tokens = l.burst
-		}
-		bucket.updated = now
-	}
-
+	l.refill(bucket, now)
 	if bucket.tokens >= 1 {
 		bucket.tokens--
 		return true, 0
 	}
 	return false, l.retryAfterSeconds(bucket.tokens)
+}
+
+// refill credits the tokens earned since the bucket was last touched.
+func (l *ipRateLimiter) refill(b *tokenBucket, now time.Time) {
+	if b.updated.IsZero() {
+		b.updated = now
+		return
+	}
+	if elapsed := now.Sub(b.updated).Seconds(); elapsed > 0 {
+		b.tokens = math.Min(l.burst, b.tokens+elapsed*l.rps)
+		b.updated = now
+	}
+}
+
+// full reports whether b would hold a full burst at now.
+func (l *ipRateLimiter) full(b *tokenBucket, now time.Time) bool {
+	missing := l.burst - b.tokens
+	if missing <= 0 {
+		return true
+	}
+	return now.Sub(b.updated).Seconds()*l.rps >= missing
+}
+
+// sweep inspects up to n buckets from the front of the round-robin order.
+// Fully refilled buckets are removed; the rest move to the back.
+func (l *ipRateLimiter) sweep(now time.Time, n int) {
+	for i := 0; i < n && l.order.Len() > 0; i++ {
+		elem := l.order.Front()
+		kb := entryOf(elem)
+		if kb == nil {
+			l.order.Remove(elem)
+			continue
+		}
+		if l.full(&kb.tokenBucket, now) {
+			l.order.Remove(elem)
+			delete(l.buckets, kb.key)
+			continue
+		}
+		l.order.MoveToBack(elem)
+	}
+}
+
+// entryOf returns the bucket stored in a sweep-order element. Every element
+// holds a *keyedBucket; nil is returned only if that invariant breaks.
+func entryOf(elem *list.Element) *keyedBucket {
+	kb, ok := elem.Value.(*keyedBucket)
+	if !ok {
+		return nil
+	}
+	return kb
 }
 
 func (l *ipRateLimiter) retryAfterSeconds(tokens float64) int {
@@ -101,28 +161,4 @@ func (l *ipRateLimiter) retryAfterSeconds(tokens float64) int {
 		seconds = rateLimitMaxRetryAfter
 	}
 	return int(seconds)
-}
-
-func (l *ipRateLimiter) evictIdle(now time.Time) {
-	for key, bucket := range l.buckets {
-		if now.Sub(bucket.updated) >= l.idleTTL {
-			delete(l.buckets, key)
-		}
-	}
-}
-
-func (l *ipRateLimiter) evictOldest() {
-	var oldestKey string
-	var oldest time.Time
-	first := true
-	for key, bucket := range l.buckets {
-		if first || bucket.updated.Before(oldest) {
-			first = false
-			oldestKey = key
-			oldest = bucket.updated
-		}
-	}
-	if oldestKey != "" {
-		delete(l.buckets, oldestKey)
-	}
 }

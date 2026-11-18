@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -14,22 +15,30 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/a2a"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/authz"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
 	"github.com/google/uuid"
 )
 
-// isStreamingEndpoint returns true for SSE and WebSocket event stream paths
-// that should bypass request timeout middleware.
+// isStreamingEndpoint reports whether r targets one of the registered
+// long-lived stream routes (SSE and WebSocket). Only these exact GET routes
+// bypass the request timeout; any other method or nesting does not match.
 func isStreamingEndpoint(r *http.Request) bool {
+	if r.Method != http.MethodGet {
+		return false
+	}
 	p := r.URL.Path
 	if p == "/api/v1/events" || p == "/api/v1/events/ws" {
 		return true
 	}
-	if strings.HasPrefix(p, "/api/v1/escrows/") && strings.HasSuffix(p, "/events") {
-		return true
+	// GET /api/v1/escrows/{id}/events, where {id} is a single path segment.
+	id, ok := strings.CutPrefix(p, "/api/v1/escrows/")
+	if !ok {
+		return false
 	}
-	return false
+	id, ok = strings.CutSuffix(id, "/events")
+	return ok && id != "" && !strings.Contains(id, "/")
 }
 
 func loggingMiddleware(next http.Handler) http.Handler {
@@ -52,11 +61,10 @@ func recoveryMiddleware(next http.Handler) http.Handler {
 		rw := &responseWriter{ResponseWriter: w, statusCode: 200}
 		defer func() {
 			if err := recover(); err != nil {
-				slog.Error("panic recovered",
+				slog.ErrorContext(r.Context(), "panic recovered",
 					"error", err,
 					"method", r.Method,
 					"path", r.URL.Path,
-					"request_id", rw.Header().Get("X-Request-ID"),
 				)
 				if !rw.written {
 					http.Error(rw, "internal server error", http.StatusInternalServerError)
@@ -254,7 +262,7 @@ func bodyLimitMiddleware(maxBytes int64, next http.Handler) http.Handler {
 			return
 		}
 		if r.ContentLength > maxBytes {
-			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request body too large"})
+			writeTooLarge(w, r)
 			return
 		}
 		limited := http.MaxBytesReader(w, r.Body, maxBytes)
@@ -262,7 +270,7 @@ func bodyLimitMiddleware(maxBytes int64, next http.Handler) http.Handler {
 		closeErr := limited.Close()
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
-			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request body too large"})
+			writeTooLarge(w, r)
 			return
 		}
 		if err != nil || closeErr != nil {
@@ -278,27 +286,88 @@ func bodyLimitMiddleware(maxBytes int64, next http.Handler) http.Handler {
 	})
 }
 
-// rateLimitMiddleware applies a per-client-IP token bucket to mutating
-// methods. SSE and WebSocket paths are exempt. A non-positive rps or burst
-// disables the limiter. X-Forwarded-For is consulted only for trusted peers.
-func rateLimitMiddleware(rps float64, burst int, trusted []*net.IPNet, next http.Handler) http.Handler {
-	if rps <= 0 || burst <= 0 {
+// a2aPath is the A2A JSON-RPC endpoint. Its errors use the JSON-RPC
+// envelope so A2A clients can parse a 413 like any other error.
+const a2aPath = "/a2a"
+
+const errBodyTooLarge = "request body too large"
+
+// writeTooLarge writes the 413 in the shape the target route speaks.
+func writeTooLarge(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == a2aPath {
+		var data any
+		if id := w.Header().Get(authz.RequestIDHeader); id != "" {
+			data = map[string]string{"request_id": id}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		if err := json.NewEncoder(w).Encode(a2a.JSONRPCResponse{
+			JSONRPC: "2.0",
+			Error: &a2a.JSONRPCError{
+				Code:    a2a.ErrCodeInvalidRequest,
+				Message: errBodyTooLarge,
+				Data:    data,
+			},
+		}); err != nil {
+			slog.ErrorContext(r.Context(), "write 413 failed", "error", err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": errBodyTooLarge})
+}
+
+// rateLimitMiddleware applies the per-client token bucket to mutating
+// methods before the body is read. A nil limiter disables it. Stream routes
+// are GET and therefore never reach the limiter.
+func rateLimitMiddleware(limiter *ipRateLimiter, trusted []*net.IPNet, next http.Handler) http.Handler {
+	if limiter == nil {
 		return next
 	}
-	limiter := newIPRateLimiter(rps, burst, rateLimitIdleTTL, rateLimitMaxBuckets)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isStreamingEndpoint(r) || !isMutatingMethod(r.Method) {
+		if !isMutatingMethod(r.Method) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		allowed, retryAfter := limiter.allow(clientIP(r, trusted))
-		if !allowed {
-			w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
-			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded"})
+		if !allowRequest(limiter, trusted, w, r) {
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requireRateLimit throttles every request to next, whatever its method.
+// Admin routes use it ahead of authentication so bearer-token guessing is
+// throttled on reads as well as writes. A nil limiter disables it.
+func requireRateLimit(limiter *ipRateLimiter, trusted []*net.IPNet, next http.HandlerFunc) http.HandlerFunc {
+	if limiter == nil {
+		return next
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		if allowRequest(limiter, trusted, w, r) {
+			next(w, r)
+		}
+	}
+}
+
+// newRateLimiter returns nil when either setting is non-positive, which
+// disables limiting.
+func newRateLimiter(rps float64, burst int) *ipRateLimiter {
+	if rps <= 0 || burst <= 0 {
+		return nil
+	}
+	return newIPRateLimiter(rps, burst, rateLimitMaxBuckets)
+}
+
+// allowRequest consumes a token for the client, or writes 429 and returns
+// false.
+func allowRequest(limiter *ipRateLimiter, trusted []*net.IPNet, w http.ResponseWriter, r *http.Request) bool {
+	allowed, retryAfter := limiter.allow(clientIP(r, trusted))
+	if allowed {
+		return true
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+	writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded"})
+	return false
 }
 
 func isMutatingMethod(method string) bool {
@@ -310,45 +379,72 @@ func isMutatingMethod(method string) bool {
 	}
 }
 
-// clientIP returns the address the rate limiter keys on.
-// X-Forwarded-For is used only when RemoteAddr is inside a trusted proxy
-// CIDR, so a client cannot choose its own bucket by setting the header.
-// The leftmost address is the client. A trusted proxy must overwrite the
-// header rather than append an untrusted prefix.
+// clientIP returns the key the rate limiter buckets on.
+//
+// X-Forwarded-For is consulted only when the socket peer is inside
+// TRUSTED_PROXIES. The chain is then walked right to left across every
+// header line, skipping trusted hops, and the first untrusted address is the
+// client. Entries left of that point are client-supplied and ignored, so a
+// client cannot pick its own bucket by prefixing the header. A malformed
+// hop, or a chain made only of trusted hops, falls back to the socket peer.
+//
+// IPv6 clients are bucketed by their /64. One /64 is the usual allocation
+// for a single subscriber, so keying on the full address would let one host
+// rotate through 2^64 buckets. The cost is that distinct hosts sharing one
+// /64 (some carrier and hosting networks) share a budget.
 func clientIP(r *http.Request, trusted []*net.IPNet) string {
-	remote := parseRemoteIP(r.RemoteAddr)
-	if remote != nil && ipInNets(remote, trusted) {
-		if forwarded := forwardedClientIP(r.Header.Get("X-Forwarded-For")); forwarded != nil {
-			return forwarded.String()
+	remote := parseIP(r.RemoteAddr)
+	if remote == nil {
+		if r.RemoteAddr != "" {
+			return r.RemoteAddr
+		}
+		return "unknown"
+	}
+	ip := remote
+	if ipInNets(remote, trusted) {
+		if forwarded := forwardedClientIP(r.Header.Values("X-Forwarded-For"), trusted); forwarded != nil {
+			ip = forwarded
 		}
 	}
-	if remote != nil {
-		return remote.String()
-	}
-	if r.RemoteAddr != "" {
-		return r.RemoteAddr
-	}
-	return "unknown"
+	return bucketKey(ip)
 }
 
-func parseRemoteIP(remoteAddr string) net.IP {
-	host := remoteAddr
-	if parsed, _, err := net.SplitHostPort(remoteAddr); err == nil {
-		host = parsed
+// forwardedClientIP returns the rightmost untrusted X-Forwarded-For hop,
+// or nil when the chain is malformed or holds only trusted hops.
+func forwardedClientIP(values []string, trusted []*net.IPNet) net.IP {
+	for i := len(values) - 1; i >= 0; i-- {
+		hops := strings.Split(values[i], ",")
+		for j := len(hops) - 1; j >= 0; j-- {
+			ip := parseIP(strings.TrimSpace(hops[j]))
+			if ip == nil {
+				return nil
+			}
+			if !ipInNets(ip, trusted) {
+				return ip
+			}
+		}
 	}
-	return net.ParseIP(strings.Trim(host, "[]"))
+	return nil
 }
 
-func forwardedClientIP(header string) net.IP {
-	first, _, _ := strings.Cut(header, ",")
-	first = strings.TrimSpace(first)
-	if first == "" {
+// parseIP accepts "ip", "ip:port", "[ipv6]" and "[ipv6]:port".
+func parseIP(addr string) net.IP {
+	if addr == "" {
 		return nil
 	}
-	if host, _, err := net.SplitHostPort(first); err == nil {
-		first = host
+	host := addr
+	if parsed, _, err := net.SplitHostPort(addr); err == nil {
+		host = parsed
 	}
-	return net.ParseIP(strings.Trim(first, "[]"))
+	return net.ParseIP(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"))
+}
+
+// bucketKey is the IPv4 address, or the IPv6 /64 prefix.
+func bucketKey(ip net.IP) string {
+	if v4 := ip.To4(); v4 != nil {
+		return v4.String()
+	}
+	return (&net.IPNet{IP: ip.Mask(net.CIDRMask(64, 128)), Mask: net.CIDRMask(64, 128)}).String()
 }
 
 func ipInNets(ip net.IP, nets []*net.IPNet) bool {
