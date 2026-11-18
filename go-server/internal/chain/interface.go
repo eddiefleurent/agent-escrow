@@ -41,6 +41,7 @@ type ChainClient interface {
 	Status(ctx context.Context, escrow common.Address) (uint8, error)
 
 	// Milestone-specific operations (V2 multi-milestone)
+	MilestoneCount(ctx context.Context, escrow common.Address) (uint8, error)
 	MilestoneStatus(ctx context.Context, escrow common.Address, milestoneIndex uint8) (uint8, error)
 	SubmitMilestone(ctx context.Context, escrow common.Address, milestoneIndex uint8, submissionHash [32]byte, submissionURI string, proofHash [32]byte) (*types.Transaction, error)
 	VerifyAndApproveMilestone(ctx context.Context, escrow common.Address, milestoneIndex uint8, proof []byte) (*types.Transaction, error)

@@ -1098,6 +1098,9 @@ func (s *Service) ClaimArbitratorTimeout(ctx context.Context, escrow *storage.Es
 }
 
 func (s *Service) ExpireNoQuorum(ctx context.Context, escrow *storage.Escrow, milestoneIndex *int, reasonURI string) (string, error) {
+	if len(reasonURI) > 2048 {
+		return "", fmt.Errorf("%w: reason_uri must be at most 2048 bytes", ErrValidation)
+	}
 	return s.recoverEscrow(ctx, escrow, milestoneIndex, recoveryAction{
 		name:           "expire no quorum",
 		escrowState:    recoveryState{2, "submitted"},
@@ -1112,8 +1115,11 @@ func (s *Service) ExpireNoQuorum(ctx context.Context, escrow *storage.Escrow, mi
 }
 
 func (s *Service) CancelBeforeFunding(ctx context.Context, escrow *storage.Escrow) (string, error) {
-	addr, err := s.requireRecoveryState(ctx, escrow, recoveryState{0, "created"})
+	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
 	if err != nil {
+		return "", err
+	}
+	if err := s.requireRecoveryState(ctx, addr, recoveryState{0, "created"}); err != nil {
 		return "", err
 	}
 	tx, err := s.Chain.CancelBeforeFunding(ctx, addr)
@@ -1121,13 +1127,24 @@ func (s *Service) CancelBeforeFunding(ctx context.Context, escrow *storage.Escro
 }
 
 func (s *Service) recoverEscrow(ctx context.Context, escrow *storage.Escrow, milestoneIndex *int, action recoveryAction) (string, error) {
-	index, err := validateOptionalMilestoneIndex(escrow.MilestoneCount, milestoneIndex)
+	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
+	if err != nil {
+		return "", err
+	}
+	// Indexed escrow records can default to one milestone before full reconciliation.
+	count, err := s.Chain.MilestoneCount(ctx, addr)
+	if err != nil {
+		return "", fmt.Errorf("read escrow milestone count: %w", err)
+	}
+	if count == 0 {
+		return "", errors.New("invalid on-chain escrow milestone count: 0")
+	}
+	index, err := validateMilestoneIndex(int(count), milestoneIndex)
 	if err != nil {
 		return "", err
 	}
 	if index == nil {
-		addr, err := s.requireRecoveryState(ctx, escrow, action.escrowState)
-		if err != nil {
+		if err := s.requireRecoveryState(ctx, addr, action.escrowState); err != nil {
 			return "", err
 		}
 		tx, err := action.send(ctx, addr)
@@ -1138,8 +1155,7 @@ func (s *Service) recoverEscrow(ctx context.Context, escrow *storage.Escrow, mil
 	if err != nil {
 		return "", err
 	}
-	addr, err := s.requireRecoveryState(ctx, escrow, recoveryState{1, "funded"})
-	if err != nil {
+	if err := s.requireRecoveryState(ctx, addr, recoveryState{1, "funded"}); err != nil {
 		return "", err
 	}
 	state, err := s.Chain.MilestoneStatus(ctx, addr, idx)
@@ -1154,19 +1170,15 @@ func (s *Service) recoverEscrow(ctx context.Context, escrow *storage.Escrow, mil
 	return s.confirmRecovery(ctx, action.name, tx, err)
 }
 
-func (s *Service) requireRecoveryState(ctx context.Context, escrow *storage.Escrow, want recoveryState) (common.Address, error) {
-	addr, err := parseAddress("escrow_address", escrow.EscrowAddress)
-	if err != nil {
-		return common.Address{}, err
-	}
+func (s *Service) requireRecoveryState(ctx context.Context, addr common.Address, want recoveryState) error {
 	state, err := s.Chain.Status(ctx, addr)
 	if err != nil {
-		return common.Address{}, fmt.Errorf("read escrow status: %w", err)
+		return fmt.Errorf("read escrow status: %w", err)
 	}
 	if state != want.code {
-		return common.Address{}, fmt.Errorf("%w: escrow must be %s", ErrValidation, want.name)
+		return fmt.Errorf("%w: escrow must be %s", ErrValidation, want.name)
 	}
-	return addr, nil
+	return nil
 }
 
 func (s *Service) confirmRecovery(ctx context.Context, action string, tx *types.Transaction, sendErr error) (string, error) {
@@ -1234,13 +1246,6 @@ func validateMilestoneIndex(milestoneCount int, milestoneIndex *int) (*int, erro
 		return nil, fmt.Errorf("%w: milestone_index is not valid for single-milestone escrows", ErrValidation)
 	}
 	return nil, nil
-}
-
-func validateOptionalMilestoneIndex(milestoneCount int, milestoneIndex *int) (*int, error) {
-	if milestoneIndex == nil {
-		return nil, nil
-	}
-	return validateMilestoneIndex(milestoneCount, milestoneIndex)
 }
 
 type validatedAttestationChain struct {

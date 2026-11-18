@@ -158,23 +158,35 @@ func (c *Client) ClaimArbitratorTimeout(ctx context.Context, escrow common.Addre
 }
 
 func (c *Client) Status(ctx context.Context, escrow common.Address) (uint8, error) {
-	data, err := EscrowABI.Pack("status")
+	return c.readEscrowUint8(ctx, escrow, "status")
+}
+
+// MilestoneCount reads the immutable milestone count from the contract.
+func (c *Client) MilestoneCount(ctx context.Context, escrow common.Address) (uint8, error) {
+	return c.readEscrowUint8(ctx, escrow, "milestoneCount")
+}
+
+func (c *Client) readEscrowUint8(ctx context.Context, escrow common.Address, getter string) (uint8, error) {
+	data, err := EscrowABI.Pack(getter)
 	if err != nil {
-		return 0, fmt.Errorf("pack status: %w", err)
+		return 0, fmt.Errorf("pack %s: %w", getter, err)
 	}
 	result, err := c.CallContract(ctx, escrow, data)
 	if err != nil {
-		return 0, fmt.Errorf("call status: %w", err)
+		return 0, fmt.Errorf("call %s: %w", getter, err)
 	}
-	values, err := EscrowABI.Unpack("status", result)
+	values, err := EscrowABI.Unpack(getter, result)
 	if err != nil {
-		return 0, fmt.Errorf("unpack status: %w", err)
+		return 0, fmt.Errorf("unpack %s: %w", getter, err)
 	}
-	status, ok := values[0].(uint8)
+	if len(values) != 1 {
+		return 0, fmt.Errorf("unexpected %s result length: %d", getter, len(values))
+	}
+	value, ok := values[0].(uint8)
 	if !ok {
-		return 0, fmt.Errorf("unexpected status type: %T", values[0])
+		return 0, fmt.Errorf("unexpected %s type: %T", getter, values[0])
 	}
-	return status, nil
+	return value, nil
 }
 
 // Milestone-specific operations (V2 multi-milestone)

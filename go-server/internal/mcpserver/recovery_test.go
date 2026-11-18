@@ -15,6 +15,7 @@ import (
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/chain"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/cli"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/config"
+	"github.com/eddiefleurent/agent-escrow/go-server/internal/indexer"
 	"github.com/eddiefleurent/agent-escrow/go-server/internal/storage"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -90,6 +91,8 @@ func TestRecoveryTransports(t *testing.T) {
 							}
 
 							mock := chain.NewMockClient()
+							mock.BlockNum = 123
+							mock.MilestoneCountVal = uint8(count)
 							mock.StatusVal = tc.escrowStatus
 							mock.MilestoneStatusVal = tc.milestoneStatus
 							mock.Receipt = &types.Receipt{Status: types.ReceiptStatusSuccessful}
@@ -118,10 +121,23 @@ func TestRecoveryTransports(t *testing.T) {
 								wantTx.MilestoneIndex = 1
 							}
 							if tc.reason {
-								input["reason_uri"] = "ipfs://dispute-reason"
-								wantTx.ReasonURI = "ipfs://dispute-reason"
+								reason := strings.Repeat("é", 1024)
+								input["reason_uri"] = reason
+								wantTx.ReasonURI = reason
 							}
-							output := callRecoveryTransport(t, &Server{db: db, chain: mock, cfg: cfg}, transport, tc.command, tc.tool, rec, input, wantStatus)
+							idx := indexer.New(db, mock, cfg.FactoryAddress)
+							output := callRecoveryTransport(t, &Server{db: db, chain: mock, cfg: cfg, idx: idx}, transport, tc.command, tc.tool, rec, input, wantStatus)
+							cursor, err := db.GetCursor(ctx, cfg.ChainID, "indexer")
+							if err != nil {
+								t.Fatal(err)
+							}
+							var wantCursor int64
+							if scenario == "confirmed" {
+								wantCursor = 123
+							}
+							if cursor != wantCursor {
+								t.Fatalf("indexer cursor = %d, want %d", cursor, wantCursor)
+							}
 
 							switch scenario {
 							case "wrong-state":
@@ -149,6 +165,60 @@ func TestRecoveryTransports(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestRecoveryTransportValidation(t *testing.T) {
+	cases := []struct {
+		name, command, tool, wantError string
+		dbCount                        int
+		chainCount, state              uint8
+		input                          map[string]any
+	}{
+		{"timeout", "claim-timeout", "claim_timeout_refund", "milestone_index required for multi-milestone escrow", 2, 2, 1, nil},
+		{"timeout-stale-db", "claim-timeout", "claim_timeout_refund", "milestone_index required for multi-milestone escrow", 1, 2, 1, nil},
+		{"arbitrator-timeout", "claim-arbitrator-timeout", "claim_arbitrator_timeout", "milestone_index required for multi-milestone escrow", 1, 2, 4, nil},
+		{"no-quorum", "expire-no-quorum", "expire_no_quorum", "milestone_index required for multi-milestone escrow", 1, 2, 2, map[string]any{"reason_uri": "ipfs://reason"}},
+		{"single-shot", "claim-milestone-timeout", "claim_milestone_timeout_refund", "milestone_index is not valid for single-milestone escrows", 2, 1, 1, map[string]any{"milestone_index": 0}},
+		{"negative-index", "claim-milestone-timeout", "claim_milestone_timeout_refund", "milestone_index -1 out of range [0, 2)", 1, 2, 1, map[string]any{"milestone_index": -1}},
+		{"index-at-count", "claim-milestone-timeout", "claim_milestone_timeout_refund", "milestone_index 2 out of range [0, 2)", 3, 2, 1, map[string]any{"milestone_index": 2}},
+		{"reason-too-long", "expire-no-quorum", "expire_no_quorum", "reason_uri must be at most 2048 bytes", 1, 1, 2, map[string]any{"reason_uri": strings.Repeat("é", 1024) + "x"}},
+		{"milestone-reason-too-long", "expire-milestone-no-quorum", "expire_milestone_no_quorum", "reason_uri must be at most 2048 bytes", 2, 2, 1, map[string]any{"milestone_index": 0, "reason_uri": strings.Repeat("é", 1024) + "x"}},
+	}
+	for _, tc := range cases {
+		for _, transport := range []string{"http", "mcp", "cli"} {
+			t.Run(tc.name+"/"+transport, func(t *testing.T) {
+				ctx := t.Context()
+				db, err := storage.Open(":memory:")
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = db.Close() })
+				task, err := db.CreateTask(ctx, "Recover funds", "", "recovery-spec")
+				if err != nil {
+					t.Fatal(err)
+				}
+				cfg := &config.Config{ChainID: 84532, RequestTimeout: time.Second, TxTimeout: 5 * time.Second}
+				rec, err := db.CreateEscrow(ctx, &storage.Escrow{
+					TaskID: task.ID, ChainID: cfg.ChainID, EscrowAddress: common.HexToAddress("0x123456").Hex(),
+					Amount: "100", Status: "created", MilestoneCount: tc.dbCount,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				mock := chain.NewMockClient()
+				mock.StatusVal = tc.state
+				mock.MilestoneCountVal = tc.chainCount
+				input := make(map[string]any, len(tc.input))
+				for key, value := range tc.input {
+					input[key] = value
+				}
+				output := callRecoveryTransport(t, &Server{db: db, chain: mock, cfg: cfg}, transport, tc.command, tc.tool, rec, input, http.StatusBadRequest)
+				if !strings.Contains(output, tc.wantError) || len(mock.SentTxs) != 0 {
+					t.Fatalf("response %q, want %q; sent transactions %+v", output, tc.wantError, mock.SentTxs)
+				}
+			})
+		}
 	}
 }
 

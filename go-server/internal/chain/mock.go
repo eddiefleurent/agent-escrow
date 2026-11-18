@@ -69,6 +69,8 @@ type MockClient struct {
 	ApproveMilestoneBuyerErr        error
 	CastMilestoneVerifierVoteErr    error
 	DisputeMilestoneErr             error
+	MilestoneCountVal               uint8
+	MilestoneCountErr               error
 	MilestoneStatusVal              uint8
 	MilestoneStatusErr              error
 	ExpireMilestoneNoQuorumErr      error
@@ -101,8 +103,9 @@ type MockTxRecord struct {
 
 func NewMockClient() *MockClient {
 	return &MockClient{
-		addr:    common.HexToAddress("0x1111111111111111111111111111111111111111"),
-		chainID: big.NewInt(84532),
+		addr:              common.HexToAddress("0x1111111111111111111111111111111111111111"),
+		chainID:           big.NewInt(84532),
+		MilestoneCountVal: 1,
 	}
 }
 
@@ -385,6 +388,12 @@ func (m *MockClient) Status(_ context.Context, _ common.Address) (uint8, error) 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.StatusVal, m.StatusErr
+}
+
+func (m *MockClient) MilestoneCount(_ context.Context, _ common.Address) (uint8, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.MilestoneCountVal, m.MilestoneCountErr
 }
 
 func (m *MockClient) MilestoneStatus(_ context.Context, _ common.Address, _ uint8) (uint8, error) {
