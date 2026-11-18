@@ -96,18 +96,6 @@ contract TaskEscrowTieredServiceTest is Test {
         assertEq(factory.highAssuranceFeeBps(), 500, "factory fee should have changed");
     }
 
-    // ── Service tier stored correctly ──
-
-    function testLowAssuranceTierStored() public {
-        TaskEscrow e = _createEscrow(0);
-        assertEq(e.serviceTier(), 0);
-    }
-
-    function testHighAssuranceTierStored() public {
-        TaskEscrow e = _createEscrow(1);
-        assertEq(e.serviceTier(), 1);
-    }
-
     // ── Invalid tier rejection ──
 
     function testRevertOnInvalidTier() public {

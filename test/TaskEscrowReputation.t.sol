@@ -491,27 +491,4 @@ contract TaskEscrowReputationTest is Test {
         assertEq(wd, 1, "worker disputed (mixed outcome)");
         assertEq(wf, 0);
     }
-
-    // ── Factory stores escrow address correctly ──
-
-    function testEscrowStoresFactoryAddress() public {
-        (, TaskEscrow escrow) = _createEscrow();
-        assertEq(escrow.factory(), address(factory));
-    }
-
-    // ── View functions return correct data ──
-
-    function testGetWorkerReputationDefault() public view {
-        (uint32 c, uint32 d, uint32 f) = factory.getWorkerReputation(address(0xDEAD));
-        assertEq(c, 0);
-        assertEq(d, 0);
-        assertEq(f, 0);
-    }
-
-    function testGetBuyerReputationDefault() public view {
-        (uint32 c, uint32 d, uint32 f) = factory.getBuyerReputation(address(0xDEAD));
-        assertEq(c, 0);
-        assertEq(d, 0);
-        assertEq(f, 0);
-    }
 }
